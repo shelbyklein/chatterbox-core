@@ -241,14 +241,28 @@ struct ChatHomeView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 26) {
                     let groups = HomeThreads.groups(model, page: page, search: search, filter: filter)
-                    ForEach(groups) { group in
-                        VStack(alignment: .leading, spacing: 12) {
-                            HStack {
-                                Text(group.title).font(.title2.weight(.semibold))
-                                Text("\(group.threads.count)").font(.subheadline).foregroundStyle(.secondary)
+                    if page == .studios {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 440), spacing: 20, alignment: .top)], alignment: .leading, spacing: 20) {
+                            ForEach(groups) { group in
+                                VStack(alignment: .leading, spacing: 14) {
+                                    groupHeading(group)
+                                    LazyVGrid(columns: [GridItem(.flexible(minimum: 0)), GridItem(.flexible(minimum: 0))], alignment: .leading, spacing: 12) {
+                                        ForEach(group.threads) { card($0) }
+                                    }
+                                }
+                                .padding(16)
+                                .frame(maxWidth: .infinity, alignment: .topLeading)
+                                .background(Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 16))
+                                .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.primary.opacity(0.10)))
                             }
-                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 260, maximum: 440), spacing: 16)], alignment: .leading, spacing: 16) {
-                                ForEach(group.threads) { card($0) }
+                        }
+                    } else {
+                        ForEach(groups) { group in
+                            VStack(alignment: .leading, spacing: 12) {
+                                groupHeading(group)
+                                LazyVGrid(columns: [GridItem(.adaptive(minimum: 260, maximum: 440), spacing: 16)], alignment: .leading, spacing: 16) {
+                                    ForEach(group.threads) { card($0) }
+                                }
                             }
                         }
                     }
@@ -262,6 +276,12 @@ struct ChatHomeView: View {
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .accessibilityLabel("Home \(page.rawValue.lowercased()) page")
+    }
+    private func groupHeading(_ group: HomeThreadGroup) -> some View {
+        HStack {
+            Text(group.title).font(.title2.weight(.semibold))
+            Text("\(group.threads.count)").font(.subheadline).foregroundStyle(.secondary)
+        }
     }
     private var searchField: some View {
         HStack(spacing: 8) {
