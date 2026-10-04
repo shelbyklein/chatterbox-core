@@ -1,0 +1,10 @@
+Chatterbox
+Copyright 2026 Shelby Klein
+
+This project is based on ideas and patterns from OpenAI Codex
+(https://github.com/openai/codex), licensed under the Apache License 2.0.
+OpenAI Codex
+Copyright 2025 OpenAI
+
+Chatterbox's prompts are rewritten and its mechanics are reimplemented in
+Swift; no Codex source files are included.
