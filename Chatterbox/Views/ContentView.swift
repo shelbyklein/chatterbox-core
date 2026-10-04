@@ -567,6 +567,10 @@ extension ContentView {
                         projectNickname = session.projectName
                         renamingProject = session
                     }
+                    Button("Set Project Icon\u{2026}") { ProjectIcons.shared.choose(for: folder) }
+                    if ProjectIcons.shared.hasCustom(folder) {
+                        Button("Remove Project Icon") { ProjectIcons.shared.remove(for: folder) }
+                    }
                     if session.record.worktreeOf == nil, session.record.archivedAt == nil {
                         Button("Convert to Studio\u{2026}") { beginNewStudio(from: session) }
                             .disabled(session.isRunning || session.isRestartingThread)
@@ -806,11 +810,20 @@ private struct SidebarRow: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Image(session.record.backend.iconName)
-                .resizable().scaledToFit().frame(width: 11, height: 11)
-                .accessibilityLabel(session.record.backend.label)
-                .foregroundStyle(.secondary)
-                .help(session.record.backend.label)
+            if let folder = session.record.projectFolder, let icon = ProjectIcons.shared.icons[folder] {
+                // The project's logo stands in for the agent's mark.
+                Image(nsImage: icon).resizable().scaledToFit().frame(width: 15, height: 15)
+                    .clipShape(RoundedRectangle(cornerRadius: 3.5, style: .continuous))
+                    .alignmentGuide(.firstTextBaseline) { $0.height / 2 + 4 }
+                    .accessibilityLabel("\(session.projectName), \(session.record.backend.label)")
+                    .help(session.record.backend.label)
+            } else {
+                Image(session.record.backend.iconName)
+                    .resizable().scaledToFit().frame(width: 11, height: 11)
+                    .accessibilityLabel(session.record.backend.label)
+                    .foregroundStyle(.secondary)
+                    .help(session.record.backend.label)
+            }
             if session.record.projectFolder != nil {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(session.projectName).lineLimit(1)
@@ -828,6 +841,7 @@ private struct SidebarRow: View {
                     }
                 }
                 .help(session.record.projectFolder ?? "")
+                .task(id: session.record.projectFolder) { ProjectIcons.shared.load(session.record.projectFolder) }
             } else {
                 Text(session.title)
                     .lineLimit(1)

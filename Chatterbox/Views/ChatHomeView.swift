@@ -34,25 +34,42 @@ struct ThreadCard: View {
         return nil
     }
 
-    private var backendIcon: some View {
-        Image(session.record.backend.iconName).resizable().scaledToFit()
-            .frame(width: expanded ? 19 : 13, height: expanded ? 19 : 13)
-            .foregroundStyle(tint)
+    @ViewBuilder private var backendIcon: some View {
+        if let folder = session.record.projectFolder, let icon = ProjectIcons.shared.icons[folder] {
+            Image(nsImage: icon).resizable().scaledToFit()
+                .frame(width: expanded ? 24 : 16, height: expanded ? 24 : 16)
+                .clipShape(RoundedRectangle(cornerRadius: expanded ? 5 : 3.5, style: .continuous))
+                .help(session.record.backend.label)
+        } else {
+            Image(session.record.backend.iconName).resizable().scaledToFit()
+                .frame(width: expanded ? 19 : 13, height: expanded ? 19 : 13)
+                .foregroundStyle(tint)
+                .task(id: session.record.projectFolder) { ProjectIcons.shared.load(session.record.projectFolder) }
+        }
     }
 
-    /// The thread's newest image when it has one, with its agent in the corner; else the agent.
+    private var agentBadge: some View {
+        Image(session.record.backend.iconName).resizable().scaledToFit()
+            .foregroundStyle(tint).frame(width: 11, height: 11)
+            .padding(4)
+            .background(Circle().fill(Color.black.opacity(0.72)))
+            .overlay(Circle().strokeBorder(Color.white.opacity(0.18)))
+            .padding(4)
+    }
+
+    /// The project's logo, else the thread's newest image, with its agent in the corner; else the agent.
     @ViewBuilder private var tileFace: some View {
-        if let thumbnail = ThreadThumbnails.shared.images[session.id] {
+        if let folder = session.record.projectFolder, let icon = ProjectIcons.shared.icons[folder] {
+            // A project's logo comes first: it says which project at a glance.
+            Image(nsImage: icon).resizable().scaledToFit()
+                .frame(width: 44, height: 44)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .frame(width: 64, height: 64)
+                .overlay(alignment: .bottomTrailing) { agentBadge }
+        } else if let thumbnail = ThreadThumbnails.shared.images[session.id] {
             Image(nsImage: thumbnail).resizable().scaledToFill()
                 .frame(width: 64, height: 64)
-                .overlay(alignment: .bottomTrailing) {
-                    Image(session.record.backend.iconName).resizable().scaledToFit()
-                        .foregroundStyle(tint).frame(width: 11, height: 11)
-                        .padding(4)
-                        .background(Circle().fill(Color.black.opacity(0.72)))
-                        .overlay(Circle().strokeBorder(Color.white.opacity(0.18)))
-                        .padding(4)
-                }
+                .overlay(alignment: .bottomTrailing) { agentBadge }
         } else {
             Image(session.record.backend.iconName).resizable().scaledToFit()
                 .foregroundStyle(tint).frame(width: 28, height: 28)
@@ -76,6 +93,7 @@ struct ThreadCard: View {
                         .multilineTextAlignment(.center).frame(height: 30, alignment: .top)
                 }.frame(width: 96, height: 104)
                     .task(id: ThreadThumbnails.key(session)) { ThreadThumbnails.shared.refresh(session) }
+                    .task(id: session.record.projectFolder) { ProjectIcons.shared.load(session.record.projectFolder) }
                     .background(selected && !session.isWaitingOnYou ? Color.white : Color.clear, in: RoundedRectangle(cornerRadius: 14))
                     .contentShape(Rectangle())
             } else {
