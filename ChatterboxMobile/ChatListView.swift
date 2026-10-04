@@ -14,11 +14,13 @@ struct ChatListView: View {
     var hidesAssistant = true
     /// Tells the iPhone's home whether a chat is open (its edge swipe yields to Back then).
     var onShowingChat: (Bool) -> Void = { _ in }
+    /// Set when the list is one of the home's bottom tabs: only that page, no page switcher.
+    var fixedPage: Page? = nil
     @Environment(MobileStore.self) private var store
     /// List rows, or cards two to a row.
     @AppStorage("mobileChatListCards") private var showsCards = false
     @AppStorage("mobileChatListPage") private var pageName = Page.projects.rawValue
-    private var page: Page { Page(rawValue: pageName) ?? .projects }
+    private var page: Page { fixedPage ?? Page(rawValue: pageName) ?? .projects }
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var savedPDFs = false
@@ -38,11 +40,11 @@ struct ChatListView: View {
     var body: some View {
         NavigationSplitView(columnVisibility: $columns, preferredCompactColumn: $compactColumn) {
             sidebar
-                .safeAreaInset(edge: .top, spacing: 0) { pagePicker }
-                .navigationTitle(store.connection?.macName ?? "Chatterbox")
+                .safeAreaInset(edge: .top, spacing: 0) { if fixedPage == nil { pagePicker } }
+                .navigationTitle(fixedPage?.title ?? store.connection?.macName ?? "Chatterbox")
                 .navigationBarTitleDisplayMode(.inline)
                 .refreshable { await store.loadChats() }
-                .searchable(text: $search, prompt: "Search chats")
+                .searchable(text: $search, prompt: fixedPage.map { "Search \($0.title)" } ?? "Search chats")
                 .sheet(item: $editingStudio) { group in
                     if let id = group.studioID {
                         StudioInstructionsEditor(title: group.title, studio: id, initial: group.instructions ?? "")
@@ -75,6 +77,10 @@ struct ChatListView: View {
         .task(id: "\(MobilePushNotifications.shared.pendingChat?.uuidString ?? "")|\(scenePhase)") {
             guard let id = MobilePushNotifications.shared.pendingChat else { return }
             await store.loadChats()
+            if let fixedPage {
+                let kind = store.chatList?.groups.first { $0.chats.contains { $0.id == id } }?.kind
+                guard kind == fixedPage.kind || (kind == nil && fixedPage == .chats) else { return }
+            }
             if let chat = allChats.first(where: { $0.id == id }) {
                 open(chat); MobilePushNotifications.shared.pendingChat = nil
             } else if let result = try? await store.detail(id, since: nil), case .detail(let detail) = result {
@@ -132,12 +138,13 @@ struct ChatListView: View {
     /// The page's groups; a search looks through every page. Golem is never listed here.
     private var groups: [Companion.ChatGroup] {
         let all = (store.chatList?.groups ?? []).filter { $0.kind != .dot || !hidesAssistant }
-        return filtered(search.isEmpty ? all.filter { $0.kind == page.kind } : all.filter { $0.kind != .dot })
+        // A tab searches its own page; the switcher's search looks through every page.
+        return filtered(search.isEmpty || fixedPage != nil ? all.filter { $0.kind == page.kind } : all.filter { $0.kind != .dot })
     }
 
     /// Each Studio is named; the Projects and Chats pages are their own heading, except in a search.
     private func showsHeader(_ group: Companion.ChatGroup) -> Bool {
-        group.kind != .dot && (group.kind == .studio || !search.isEmpty)
+        group.kind != .dot && (group.kind == .studio || (!search.isEmpty && fixedPage == nil))
     }
 
     private func waiting(on page: Page) -> Int {
