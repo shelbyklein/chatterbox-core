@@ -21,6 +21,9 @@ final class GolemMiniWindow: NSObject, NSWindowDelegate {
     /// height either way, so he never moves between states.
     static let barHeight: CGFloat = 50
     static let transition = 0.34
+    static let dismissalDuration = 0.18
+    private(set) var dismissing = false
+    @ObservationIgnored private var dismissal: Task<Void, Never>?
     var collapsedSize: NSSize { NSSize(width: max(characterSize + 24, 170), height: 12 + Self.barHeight - 10 * scale + characterSize + 12) }
     /// Golem's middle in a panel of this size, from its bottom-left: the layout is bottom-up.
     func characterCenter(in size: NSSize) -> CGPoint { CGPoint(x: size.width / 2, y: 12 + Self.barHeight + gapBelow + characterSize / 2) }
@@ -61,7 +64,7 @@ final class GolemMiniWindow: NSObject, NSWindowDelegate {
     @ObservationIgnored private var fittingReply = false
 
     func fitReply(height: CGFloat, reserve: CGFloat) {
-        guard let panel, !collapsed, !bubbleExpanded, height.isFinite, height > 0 else { return }
+        guard let panel, !collapsed, !dismissing, !bubbleExpanded, height.isFinite, height > 0 else { return }
         let screen = panel.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? panel.frame
         let available = max(0, screen.maxY - panel.frame.minY - 12)
         let desired = min(max(expandedSize.height, ceil(height + reserve)), available)
@@ -162,6 +165,9 @@ final class GolemMiniWindow: NSObject, NSWindowDelegate {
 
     func hide() {
         cancelAcknowledgement()
+        dismissal?.cancel()
+        dismissal = nil
+        dismissing = false
         rememberFrame()
         panel?.orderOut(nil)
         // Release hosted chat/media views while hidden. Drafts belong to the session.
@@ -172,11 +178,33 @@ final class GolemMiniWindow: NSObject, NSWindowDelegate {
     /// Golem's middle, in the open panel: measured, or where the layout puts him.
     private var openCharacterCenter: CGPoint { characterCenter(in: expandedSize) }
 
-    func toggleCollapsed() { setCollapsed(!collapsed) }
+    func toggleCollapsed() { setCollapsed(dismissing ? false : !collapsed) }
 
-    /// Opens or minimizes in one motion: the window glides to its new size around Golem, who
-    /// stays exactly where he is, while the bar under him morphs and the bubble rises.
+    /// Fade the outgoing content at its existing size before trimming transparent bounds.
+    /// Keeping layout intact avoids reflow and clipping during dismissal.
     func setCollapsed(_ value: Bool) {
+        dismissal?.cancel()
+        dismissal = nil
+        if dismissing {
+            withAnimation(.easeOut(duration: Self.dismissalDuration)) { dismissing = false }
+        }
+        guard value != collapsed, panel != nil else { return }
+        guard value, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            applyCollapsed(value)
+            return
+        }
+        cancelAcknowledgement()
+        withAnimation(.easeOut(duration: Self.dismissalDuration)) { dismissing = true }
+        dismissal = Task { @MainActor [weak self] in
+            do { try await Task.sleep(for: .seconds(Self.dismissalDuration)) } catch { return }
+            guard let self, !Task.isCancelled else { return }
+            self.applyCollapsed(true)
+            self.dismissing = false
+            self.dismissal = nil
+        }
+    }
+
+    private func applyCollapsed(_ value: Bool) {
         guard value != collapsed, let panel else { return }
         cancelAcknowledgement()
         openedAt = value ? nil : Date()
@@ -193,9 +221,15 @@ final class GolemMiniWindow: NSObject, NSWindowDelegate {
         let size = value ? collapsedSize : expandedSize
         let there = characterCenter(in: size)
         let frame = NSRect(origin: NSPoint(x: center.x - there.x, y: center.y - there.y), size: size)
-        withAnimation(.smooth(duration: Self.transition)) { collapsed = value }
+        let animate = !value && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        withAnimation(animate ? .easeOut(duration: Self.dismissalDuration) : nil) { collapsed = value }
         defaults.set(value, forKey: Self.collapsedKey)
-        configure(frame: frame, animated: true)
+        // Layout may measure the reply synchronously while restoring the window.
+        // Treat that height as temporary, never as a new user-selected baseline.
+        let baselineSize = expandedSize
+        if !value { fittingReply = true }
+        configure(frame: frame)
+        expandedSize = baselineSize
         if value { panel.resignKey(); panel.orderFrontRegardless() }
         else { panel.makeKeyAndOrderFront(nil) }
         if isReading, let dot = model?.dot { Attention.shared.markSeen(dot.id) }
@@ -316,7 +350,7 @@ final class GolemMiniWindow: NSObject, NSWindowDelegate {
     }
 
     private func rememberFrame() {
-        guard !positioning, !bubbleExpanded, !fittingReply, let panel else { return }
+        guard !positioning, !dismissing, !bubbleExpanded, !fittingReply, let panel else { return }
         defaults.set(NSStringFromRect(panel.frame), forKey: collapsed ? Self.avatarFrameKey : Self.expandedFrameKey)
         if !collapsed { expandedSize = panel.frame.size }
     }
@@ -400,8 +434,8 @@ private struct GolemMiniContent: View {
                         // Tucked down behind his top stone, like a speech bubble.
                         .padding(.bottom, -controller.bubbleOverlap)
                         .zIndex(0)
-                        .transition(.asymmetric(insertion: .scale(scale: 0.6, anchor: .bottom).combined(with: .opacity),
-                                                removal: .scale(scale: 0.8, anchor: .bottom).combined(with: .opacity)))
+                        .transition(.opacity)
+                        .opacity(controller.dismissing ? 0 : 1)
                 }
                 if open, !attachments.isEmpty { attachmentStrip.padding(.bottom, 8).transition(.opacity) }
                 if open, let attachmentError { Text(attachmentError).font(.caption).foregroundStyle(.orange).lineLimit(2).padding(.bottom, 8) }
@@ -412,6 +446,7 @@ private struct GolemMiniContent: View {
                     .padding(.bottom, controller.gapBelow)
                     .zIndex(1)
                 bottomBar.frame(height: GolemMiniWindow.barHeight).zIndex(2)
+                    .opacity(controller.dismissing ? 0 : 1)
             }
             .padding(12)
             .frame(width: geometry.size.width, height: geometry.size.height, alignment: .bottom)
