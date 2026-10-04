@@ -116,8 +116,14 @@ final class ChatSession: Identifiable {
     @ObservationIgnored var draftAttachments: [Attachment] = [] {didSet{syncRemoteDraft()}}
     /// Typing sends the background service the newest draft at most every 0.3 s, not every keystroke.
     @ObservationIgnored private var remoteDraftScheduled=false
+    /// A draft the background service hasn't confirmed yet: a reconnect mustn't replace it
+    /// with the service's older copy, and it's sent again once the list reloads.
+    @ObservationIgnored var draftUnsynced=false
+    func resendDraftIfUnsynced(){ if draftUnsynced { syncRemoteDraft() } }
     private func syncRemoteDraft(){
-        guard !applyingRemoteState,remoteCommand != nil,!remoteDraftScheduled else{return}
+        guard !applyingRemoteState,remoteCommand != nil else{return}
+        draftUnsynced=true
+        guard !remoteDraftScheduled else{return}
         remoteDraftScheduled=true
         DispatchQueue.main.asyncAfter(deadline:.now()+0.3){[weak self] in
             guard let self else{return};self.remoteDraftScheduled=false

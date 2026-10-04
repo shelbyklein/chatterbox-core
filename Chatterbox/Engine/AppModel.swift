@@ -699,9 +699,19 @@ final class AppModel {
     }
     private func bindProjection(_ session: ChatSession) {
         let chatID=session.id
-        session.remoteCommand = { operation, payload in
+        session.remoteCommand = { [weak session] operation, payload in
             var body=payload.object ?? [:];body["chatID"] = .string(chatID.uuidString)
-            RuntimeClient.shared.command(operation,body:.object(body))
+            guard operation=="setDraft" else { RuntimeClient.shared.command(operation,body:.object(body)); return }
+            // A draft counts as saved only once the service confirms this exact text.
+            let text=payload["text"]?.string
+            Task {
+                do {
+                    _ = try await RuntimeClient.shared.request(operation,body:.object(body))
+                    if let session, session.draft==text { session.draftUnsynced=false }
+                } catch {
+                    NSLog("Chatterbox: draft not saved yet; will resend: \(error.localizedDescription)")
+                }
+            }
         }
         session.onChange = { [weak self] changed in
             guard self?.projecting == false else{return}
@@ -720,7 +730,8 @@ final class AppModel {
             if let total=state.totalCount,total>record.items.count,let first=record.items.first?.id,
                let index=session.items.firstIndex(where:{$0.id==first}) {record.items=Array(session.items.prefix(index))+record.items}
             session.record=record;session.isRunning=state.running
-            if let draft=state.draft{session.draft=draft.text;session.draftAttachments=draft.attachments}
+            // Never over a draft typed here that the service hasn't confirmed yet.
+            if let draft=state.draft, !session.draftUnsynced {session.draft=draft.text;session.draftAttachments=draft.attachments}
             session.applyingRemoteState=false
             Attention.shared.update(session,model:self)
         }else{
@@ -729,6 +740,46 @@ final class AppModel {
             bindProjection(session);sessions.append(session)
         }
         if selectedID==nil {selectedID=sessions.first(where:{!$0.isDot})?.id}
+    }
+    /// Reloads the chat list from the background service. One at a time: a request during a
+    /// reload runs once after it. A failed reload retries (1, 2, 4 s, then every 10 s) while
+    /// connected; it used to give up, leaving the sidebar empty until something else changed.
+    @ObservationIgnored private var resyncing=false
+    @ObservationIgnored private var resyncAgain=false
+    private func requestResync() {
+        guard !resyncing else { resyncAgain=true; return }
+        resyncing=true
+        Task {
+            var attempt=0
+            repeat {
+                resyncAgain=false
+                while !(await resyncOnce()) {
+                    guard RuntimeClient.shared.connected else { break }
+                    try? await Task.sleep(for:.seconds(attempt < 3 ? Double(1 << attempt) : 10))
+                    attempt += 1
+                }
+            } while resyncAgain && RuntimeClient.shared.connected
+            resyncing=false
+        }
+    }
+    private func resyncOnce() async -> Bool {
+        let started=Date()
+        do {
+            // The list is the largest reply; give it longer than the usual 15 s.
+            let states=try await RuntimeClient.shared.request("list",timeout:.seconds(60)).decode([RuntimeChatState].self)
+            studios=try await RuntimeClient.shared.request("getStudios").decode([Studio].self)
+            await RuntimePreferenceProjection.shared.start()
+            PinStore.shared.applyRuntimePins(try await RuntimeClient.shared.request("getPins").decode([Pin].self))
+            let ids=Set(states.map{ $0.record.id });sessions.removeAll{!ids.contains($0.id)}
+            for state in states {applyProjection(state)}
+            for session in sessions { session.resendDraftIfUnsynced() }
+            let elapsed=Date().timeIntervalSince(started)
+            if elapsed > 2 { Diagnostics.note("Chat list took \(String(format:"%.1f",elapsed)) s to load from the background service (\(states.count) chats)") }
+            return true
+        } catch {
+            Diagnostics.note("Couldn't load the chat list from the background service; retrying: \(error.localizedDescription)")
+            return false
+        }
     }
     private func runtimeEvent(_ event:RuntimeEvent) {
         #if GOLEM_APP
@@ -745,16 +796,7 @@ final class AppModel {
         if event.kind=="pin.open",let raw=event.payload,let pin=try? raw.decode(Pin.self){PinStore.shared.open(pin);return}
         #endif
         if event.kind=="runtime.resync" || event.kind=="runtime.configuration" || event.kind=="chat.created" || event.kind=="chat.deleted" {
-            Task {
-                do {
-                    let states=try await RuntimeClient.shared.request("list").decode([RuntimeChatState].self)
-                    studios=try await RuntimeClient.shared.request("getStudios").decode([Studio].self)
-                    await RuntimePreferenceProjection.shared.start()
-                    PinStore.shared.applyRuntimePins(try await RuntimeClient.shared.request("getPins").decode([Pin].self))
-                    let ids=Set(states.map{ $0.record.id });sessions.removeAll{!ids.contains($0.id)}
-                    for state in states {applyProjection(state)}
-                }catch{Diagnostics.note(error.localizedDescription)}
-            }
+            requestResync()
         }else if let id=event.chatID {
             guard refreshTasks[id]==nil else{return}
             refreshTasks[id]=Task {
