@@ -51,6 +51,12 @@ final class GolemMiniWindow: NSObject, NSWindowDelegate {
     @ObservationIgnored private var screenObserver: NSObjectProtocol?
     @ObservationIgnored private var hoveredReply: UUID?
     @ObservationIgnored private var acknowledgement: Task<Void, Never>?
+    /// When the mini last opened. The pointer that clicked it open hasn't read anything yet.
+    @ObservationIgnored private var openedAt: Date?
+    /// The bubble grown to show a long message whole: the panel stretches up as far as the
+    /// screen allows, Golem staying where he is. Its usual size comes back afterwards.
+    private(set) var bubbleExpanded = false
+    @ObservationIgnored private var unexpandedSize: NSSize?
 
     /// One hover region covers the bubble, body and composer, including their gaps.
     /// Only a completed reply actually hovered by the reader can be acknowledged.
@@ -58,7 +64,8 @@ final class GolemMiniWindow: NSObject, NSWindowDelegate {
         acknowledgement?.cancel()
         acknowledgement = nil
         if inside {
-            hoveredReply = collapsed ? nil : replyID
+            let justOpened = openedAt.map { Date().timeIntervalSince($0) < Self.transition + 0.15 } ?? false
+            hoveredReply = collapsed || justOpened ? nil : replyID
             return
         }
         guard !collapsed, let replyID, hoveredReply == replyID else {
@@ -69,6 +76,8 @@ final class GolemMiniWindow: NSObject, NSWindowDelegate {
         acknowledgement = Task { @MainActor [weak self] in
             do { try await Task.sleep(for: .milliseconds(180)) } catch { return }
             guard let self, !Task.isCancelled, !self.collapsed, NSApp.modalWindow == nil,
+                  // Hover tracking can blink out over the composer; only a pointer that really left counts.
+                  let panel = self.panel, !panel.frame.contains(NSEvent.mouseLocation),
                   let dot = self.model?.dot, !dot.isRunning, !dot.isWaitingOnYou,
                   dot.items.last(where: { $0.kind == .assistant && $0.phase != .commentary && !$0.text.isEmpty })?.id == replyID
             else { return }
@@ -155,8 +164,14 @@ final class GolemMiniWindow: NSObject, NSWindowDelegate {
     func setCollapsed(_ value: Bool) {
         guard value != collapsed, let panel else { return }
         cancelAcknowledgement()
-        if !collapsed { expandedSize = panel.frame.size }
+        openedAt = value ? nil : Date()
+        if !collapsed, !bubbleExpanded { expandedSize = panel.frame.size }
         rememberFrame()
+        if bubbleExpanded {
+            bubbleExpanded = false
+            if let unexpandedSize { expandedSize = unexpandedSize }
+            unexpandedSize = nil
+        }
         let here = characterCenter(in: panel.frame.size)
         let center = NSPoint(x: panel.frame.minX + here.x, y: panel.frame.minY + here.y)
         let size = value ? collapsedSize : expandedSize
@@ -171,6 +186,22 @@ final class GolemMiniWindow: NSObject, NSWindowDelegate {
     }
 
     func closeMini() { model?.showingDot = false }
+
+    func setBubbleExpanded(_ value: Bool) {
+        guard value != bubbleExpanded, let panel, !collapsed else { return }
+        var frame = panel.frame
+        if value {
+            unexpandedSize = frame.size
+            let screen = NSScreen.screens.map(\.visibleFrame).first { $0.contains(NSPoint(x: frame.midX, y: frame.minY)) }
+                ?? NSScreen.main?.visibleFrame ?? frame
+            frame.size.height = max(frame.height, screen.maxY - frame.minY - 12)
+        } else {
+            frame.size.height = unexpandedSize?.height ?? expandedSize.height
+            unexpandedSize = nil
+        }
+        withAnimation(.smooth(duration: Self.transition)) { bubbleExpanded = value }
+        configure(frame: frame, animated: true)
+    }
 
     /// A new size keeps Golem centered where he is.
     func setScale(_ value: CGFloat) {
@@ -215,7 +246,7 @@ final class GolemMiniWindow: NSObject, NSWindowDelegate {
         if collapsed { panel.styleMask.remove(.resizable) } else { panel.styleMask.insert(.resizable) }
         let extra = characterSize - 124
         let minSize = collapsed ? collapsedSize : NSSize(width: 320, height: 360 + max(0, extra))
-        let maxSize = collapsed ? collapsedSize : NSSize(width: 560, height: 480 + max(0, extra))
+        let maxSize = collapsed ? collapsedSize : NSSize(width: 560, height: bubbleExpanded ? 10_000 : 480 + max(0, extra))
         var fitted = frame
         fitted.size.width = min(max(fitted.width, minSize.width), maxSize.width)
         fitted.size.height = min(max(fitted.height, minSize.height), maxSize.height)
@@ -269,7 +300,7 @@ final class GolemMiniWindow: NSObject, NSWindowDelegate {
     }
 
     private func rememberFrame() {
-        guard !positioning, let panel else { return }
+        guard !positioning, !bubbleExpanded, let panel else { return }
         defaults.set(NSStringFromRect(panel.frame), forKey: collapsed ? Self.avatarFrameKey : Self.expandedFrameKey)
         if !collapsed { expandedSize = panel.frame.size }
     }
@@ -309,6 +340,7 @@ private struct GolemMiniContent: View {
     @State private var showingModels = false
     @State private var composerWidth: CGFloat = 300
     @State private var focused = false
+    @State private var bubbleTextHeight: CGFloat = 0
 
     init(session: ChatSession, controller: GolemMiniWindow) {
         self.session = session
@@ -339,7 +371,8 @@ private struct GolemMiniContent: View {
             VStack(spacing: 0) {
                 Spacer(minLength: 0)
                 if open, bubbleShow, let text = updateText {
-                    bubble(text, maxHeight: max(48, min(140, geometry.size.height - 260)))
+                    bubble(text, maxHeight: max(48, controller.bubbleExpanded ? geometry.size.height - bubbleReserve : min(140, geometry.size.height - bubbleReserve)),
+                           overflows: bubbleTextHeight > min(140, geometry.size.height - bubbleReserve) + 1)
                         // Tucked down behind his top stone, like a speech bubble.
                         .padding(.bottom, -controller.bubbleOverlap)
                         .zIndex(0)
@@ -377,7 +410,10 @@ private struct GolemMiniContent: View {
                 if !controller.collapsed { focused = true }
             } }
         }
-        .onChange(of: latestReply?.id) { if controller.isReading { Attention.shared.markSeen(session.id) } }
+        .onChange(of: latestReply?.id) {
+            if controller.isReading { Attention.shared.markSeen(session.id) }
+            controller.setBubbleExpanded(false)
+        }
         .onChange(of: ChatCommands.shared.modelPopoverRequests) {
             if showingModels || controller.panel?.isKeyWindow == true { showingModels.toggle() }
         }
@@ -546,13 +582,25 @@ private struct GolemMiniContent: View {
         }
     }
 
-    private func bubble(_ text: String, maxHeight: CGFloat) -> some View {
+    /// Room the rest of the open mini needs below and around the bubble.
+    private var bubbleReserve: CGFloat { 172 + controller.characterSize - 36 * controller.scale }
+
+    private func bubble(_ text: String, maxHeight: CGFloat, overflows: Bool) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text(session.isWaitingOnYou ? "Needs you" : session.isRunning ? "Working" : session.title)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(session.isWaitingOnYou ? Color.yellow : .secondary)
                 Spacer()
+                if overflows || controller.bubbleExpanded {
+                    Button { controller.setBubbleExpanded(!controller.bubbleExpanded) } label: {
+                        Image(systemName: controller.bubbleExpanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+                            .font(.system(size: 11, weight: .medium)).frame(width: 22, height: 18).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).foregroundStyle(.secondary)
+                    .help(controller.bubbleExpanded ? "Show less" : "Show the whole message")
+                    .accessibilityLabel(controller.bubbleExpanded ? "Show less" : "Show the whole message")
+                }
                 Button(action: controller.openFullChat) {
                     Label(session.isWaitingOnYou ? "Answer in chat" : "Open chat", systemImage: "arrow.up.right").font(.system(size: 11))
                 }.buttonStyle(.plain).foregroundStyle(.secondary)
@@ -564,6 +612,7 @@ private struct GolemMiniContent: View {
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { bubbleTextHeight = $0 }
             }
             .frame(maxHeight: maxHeight)
         }
