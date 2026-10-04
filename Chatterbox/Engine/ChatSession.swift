@@ -114,9 +114,15 @@ final class ChatSession: Identifiable {
         RuntimeHooks.turnEnded(self)
     }
     @ObservationIgnored var draftAttachments: [Attachment] = [] {didSet{syncRemoteDraft()}}
+    /// Typing sends the background service the newest draft at most every 0.3 s, not every keystroke.
+    @ObservationIgnored private var remoteDraftScheduled=false
     private func syncRemoteDraft(){
-        guard !applyingRemoteState,let remoteCommand else{return}
-        remoteCommand("setDraft",["text":.string(draft),"attachments":(try? .value(draftAttachments)) ?? []])
+        guard !applyingRemoteState,remoteCommand != nil,!remoteDraftScheduled else{return}
+        remoteDraftScheduled=true
+        DispatchQueue.main.asyncAfter(deadline:.now()+0.3){[weak self] in
+            guard let self else{return};self.remoteDraftScheduled=false
+            self.remoteCommand?("setDraft",["text":.string(self.draft),"attachments":(try? .value(self.draftAttachments)) ?? []])
+        }
     }
     /// The chat's page on claude.ai while Remote Control is on (see ChatSession+Remote).
     var remoteURL: URL?

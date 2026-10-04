@@ -85,6 +85,10 @@ struct ChatView: View {
     @State private var projectConflict: ChatSession?
     @State private var reviewing: Attachment?
     @State private var showingImages = false
+    @Environment(\.chatToolbarBridge) private var windowToolbar
+    /// A window without its own chat toolbar (no ContentView) still gets the controls.
+    @State private var ownToolbar = ChatToolbarBridge()
+    @State private var toolbarOwner = UUID()
     @State private var showingTerminal = false
     @State private var terminalCommand: String?
     @AppStorage("terminalPanelHeight") private var terminalHeight = 260.0
@@ -137,8 +141,13 @@ struct ChatView: View {
                             inspectorMinimum: 360, inspectorIdeal: 420, inspectorMaximum: 640, closeInspector: closeInspector)
             } else { chatContent }
         }
-        .modifier(ChatWindowTitle(title: session.title, embedded: tileContext != nil))
-        .toolbar { if tileContext == nil { toolbarContent } }
+        // The title and toolbar are the window's (see ChatToolbar.swift): this chat only tells
+        // it what's open. Any toolbar or title modifier in here would make SwiftUI rebuild the
+        // whole toolbar each time a chat replaces this view.
+        .modifier(OwnChatToolbar(enabled: tileContext == nil && windowToolbar == nil, bridge: ownToolbar))
+        .modifier(ChatWindowTitle(title: session.title, embedded: tileContext != nil || windowToolbar != nil))
+        .onAppear { attachToolbar() }
+        .onDisappear { (windowToolbar ?? ownToolbar).detach(owner: toolbarOwner) }
         .background(ChatWindowReader { windowNumber = $0.windowNumber })
         // Agents often link files by bare path ("/Users/…/Print.pdf"), which macOS can't open as a URL.
         .environment(\.chatFolder, session.workingFolder)
@@ -882,117 +891,6 @@ struct ChatView: View {
         .background(Color.orange.opacity(0.15))
     }
 
-    // MARK: - Toolbar
-
-    @ToolbarContentBuilder
-    private var toolbarContent: some ToolbarContent {
-        ToolbarItemGroup {
-            ToneMenu(session: session)
-
-            if let studio = model.studio(for: session) { studioButton(studio) } else { projectButton }
-            if let status = GitStatusStore.shared.status(for: session.record.projectFolder),
-               let remote = status.remote(preferring: session.record.gitRemote), let repo = remote.repo {
-                RepoChip(repo: repo, remote: remote, status: status, folder: session.record.projectFolder ?? "",
-                         onSelectRemote: session.setGitRemote, onShowIssues: { issuesPanel.show() })
-                IssueToolbarItems(session: session, panel: issuesPanel, repo: repo, branch: status.branch)
-            }
-
-            if session.isDot {
-                Button { withAnimation(.smooth(duration: 0.25)) { golemPanelOpen.toggle() } } label: {
-                    Image(systemName: "sidebar.right")
-                }
-                .help(golemPanelOpen ? "Hide \(session.title)\u{2019}s activity, decisions and schedule" : "Show \(session.title)\u{2019}s activity, decisions and schedule")
-                .accessibilityLabel("\(session.title) Panel")
-                Button { model.showingDot = true } label: { ToolbarLabel("Mini", systemImage: "pip") }
-                    .help("Keep \(session.title) above other apps (⌘J)")
-                Button { model.editingDotMemory = true } label: { ToolbarLabel("Memory", systemImage: "brain") }
-                    .help("What Dot remembers about you and your work (MEMORY.md)")
-            }
-            if session.record.backend == .claude { remoteButton }
-
-            Button { showingImages = true } label: { Image(systemName: "photo.on.rectangle.angled") }
-                .help("Every image made in this chat").accessibilityLabel("Images")
-            Button { withAnimation(.smooth(duration: 0.25)) { showingTerminal.toggle() } } label: {
-                Image(systemName: "terminal")
-            }
-            .keyboardShortcut("`", modifiers: .control)
-            .help("A terminal in this chat's folder, at the bottom of the window (\u{2303}`)").accessibilityLabel("Terminal")
-        }
-    }
-
-    // MARK: - Project
-
-    private var projectFolderName: String? {
-        session.record.projectFolder == nil ? nil : session.projectName
-    }
-
-    private var projectButton: some View {
-        Menu {
-            Button(session.record.projectFolder == nil ? "Bind to Folder\u{2026}" : "Change Folder\u{2026}") { chooseProject() }
-            if let folder = session.record.projectFolder {
-                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: folder)]) }
-                Button("Open Terminal Here  \u{2325}\u{2318}T") { model.openTerminal() }
-                Divider()
-                Button("Edit AGENTS.md") { openForEditing(folder + "/AGENTS.md") }
-                Button("Edit CLAUDE.md") { openForEditing(folder + "/CLAUDE.md") }
-                Divider()
-                Button("Unbind from Folder") { session.unbindProject() }
-            }
-        } label: {
-            ToolbarLabel(projectFolderName ?? "No Project", systemImage: session.record.projectFolder == nil ? "folder.badge.plus" : "folder.fill")
-        }
-        .help(session.record.projectFolder.map { "This chat is bound to \($0). Claude and Codex work in this folder." }
-              ?? "Bind this chat to a project folder so Claude or Codex can work in it. Each folder gets one chat.")
-    }
-
-    /// Remote Control: whether this chat can be opened on claude.ai and in the Claude app.
-    private var remoteButton: some View {
-        Menu {
-            if let url = session.remoteURL {
-                Button("Open on claude.ai") { NSWorkspace.shared.open(url) }
-                Button("Copy Link") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(url.absoluteString, forType: .string)
-                }
-                Divider()
-                Button("Turn Off Remote Control") { session.setRemoteControl(false) }
-            } else if session.wantsRemoteControl {
-                Text("Connecting\u{2026}")
-                Button("Turn Off Remote Control") { session.setRemoteControl(false) }
-            } else {
-                Button("Turn On Remote Control") { session.setRemoteControl(true) }
-            }
-        } label: {
-            Image(systemName: "antenna.radiowaves.left.and.right")
-                .foregroundStyle(session.remoteURL != nil ? Color.green : Color.secondary)
-        }
-        .help(session.remoteURL != nil
-              ? "Remote Control is on: this chat is on claude.ai and in the Claude app."
-              : "Remote Control: open this chat on claude.ai or in the Claude app")
-    }
-
-    /// Stands in for the project button in a Studio chat.
-    private func studioButton(_ studio: Studio) -> some View {
-        Menu {
-            Button("Studio Instructions\u{2026}") { model.editingStudioInstructions = studio.id }
-            Button("Fork This Chat") { model.fork(session) }
-                .disabled(!model.canFork(session))
-            Divider()
-            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: studio.folder)]) }
-            Button("Open Terminal Here  \u{2325}\u{2318}T") { model.openTerminal() }
-            Divider()
-            Button("Edit design.md") { studio.ensureDesignFile(); openForEditing(studio.designFile) }
-            Button("Edit AGENTS.md") { openForEditing(studio.folder + "/AGENTS.md") }
-            Button("Edit CLAUDE.md") { openForEditing(studio.folder + "/CLAUDE.md") }
-            Divider()
-            Button("Remove from Studio") { model.move(session, to: nil) }
-                .disabled(session.isRunning)
-        } label: {
-            ToolbarLabel(studio.name, systemImage: "paintpalette")
-        }
-        .help("This chat is in the \(studio.name) Studio. Its chats share \(studio.folder).")
-    }
-
     private func openSelectedPreview() {
         guard let (url, destination) = selectedPreview else { return }
         selectedPreview = nil
@@ -1011,6 +909,14 @@ struct ChatView: View {
                 if let error { Task { @MainActor in previewOpenError = error.localizedDescription } }
             }
         }
+    }
+
+    private func attachToolbar() {
+        guard tileContext == nil else { return }
+        (windowToolbar ?? ownToolbar).attach(session, owner: toolbarOwner, issuesPanel: issuesPanel,
+            showImages: { showingImages = true },
+            toggleTerminal: { withAnimation(.smooth(duration: 0.25)) { showingTerminal.toggle() } },
+            chooseProject: { chooseProject() })
     }
 
     private func chooseProject() {
@@ -1420,7 +1326,7 @@ private struct ModeRow: View {
 }
 
 /// The project's GitHub repo in the toolbar: branch and sync state, with links out.
-private struct RepoChip: View {
+struct RepoChip: View {
     let repo: String
     let remote: GitRemote
     let status: GitStatus

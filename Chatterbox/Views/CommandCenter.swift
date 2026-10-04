@@ -126,7 +126,6 @@ struct CommandCenterView: View {
             .frame(width: geometry.size.width, height: geometry.size.height)
         }
         .background(Color(nsColor: .windowBackgroundColor))
-        .navigationTitle("Command Center")
         .onAppear { layout.reconcile(available: Set(model.activeSessions.map(\.id))) }
         .onChange(of: model.activeSessions.map(\.id)) { _, ids in layout.reconcile(available: Set(ids)) }
         .sheet(item: $choice) { request in

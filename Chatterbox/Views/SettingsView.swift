@@ -359,12 +359,11 @@ struct SettingsPage: View {
     var body: some View {
         SettingsView()
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .navigationTitle("Settings")
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    Button("Done") { model.showingSettings = false }
-                        .keyboardShortcut(.cancelAction)
-                }
+            // The window's toolbar is AppKit's (WindowToolbar.swift), so Done sits on the page.
+            .overlay(alignment: .topTrailing) {
+                Button("Done") { model.showingSettings = false }
+                    .keyboardShortcut(.cancelAction)
+                    .padding(12)
             }
     }
 }

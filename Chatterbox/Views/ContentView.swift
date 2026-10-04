@@ -6,6 +6,8 @@ struct ContentView: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var chatToolbar = ChatToolbarBridge()
+    @State private var windowToolbarOwner: WindowToolbar?
     @State private var chatSwitch: ChatSwitchTransition
     @State private var commandCenter: CommandCenterLayout
     @AppStorage("macSidebarCards") private var sidebarCards = false
@@ -154,60 +156,11 @@ struct ContentView: View {
             }
         }
         .environment(\.chatSwitchCoordinator, chatSwitch)
+        .environment(\.chatToolbarBridge, chatToolbar)
         .task(id: mainChatID) { await chatSwitch.show(mainChatID, reduceMotion: reduceMotion, waitForMount: true) }
-        .toolbar {
-                ToolbarItem(placement: .navigation) {
-                    Button { model.showingHome.toggle(); model.showingSettings = false } label: {
-                        Label(model.showingHome ? "Back to Chat" : "Home", systemImage: model.showingHome ? "arrow.left" : "house")
-                    }
-                    .help(model.showingHome ? "Return to the open thread" : "Home: full-window thread cards")
-                    .accessibilityLabel(model.showingHome ? "Back to Chat" : "Home")
-                }
-                ToolbarItem(placement: .navigation) {
-                    Button { model.showingCommandCenter.toggle() } label: {
-                        Label("Command Center", systemImage: "rectangle.split.2x2")
-                    }.help("Several live chats in one window").accessibilityLabel("Command Center")
-                }
-                ToolbarItem(placement: .navigation) {
-                    Button { model.showingSettings.toggle() } label: { Label("Settings", systemImage: "gearshape") }
-                        .help("Settings (\u{2318},)")
-                }
-                ToolbarItem(placement: .navigation) {
-                    Menu {
-                        if let studio = model.selected.flatMap(model.studio(for:)), studio.archivedAt == nil {
-                            Button("New Chat in \u{201C}\(studio.name)\u{201D}") { model.newChat(in: studio) }
-                            Divider()
-                        }
-                        Button("New Claude Chat") { model.newChat(backend: .claude) }
-                        Button("New Codex Chat") { model.newChat(backend: .codex) }
-                        Divider()
-                        Button("New Project\u{2026}") { model.showingNewProject = true }
-                        Button("Open Project\u{2026}") { model.chooseAndOpenProject() }
-                        Button("New Project from GitHub\u{2026}") { model.showingCloneFromGitHub = true }
-                        Divider()
-                        if !model.activeStudios.isEmpty {
-                            Menu("New Chat in Studio") {
-                                ForEach(model.activeStudios) { studio in
-                                    Button(studio.name) { model.newChat(in: studio) }
-                                }
-                            }
-                        }
-                        Button("New Studio\u{2026}") { beginNewStudio() }
-                    } label: {
-                        Label("New Chat", systemImage: "square.and.pencil")
-                    } primaryAction: {
-                        model.newChat()
-                    }
-                    .help("New chat (\u{2318}N). Hold to pick Claude, Codex, or a project folder.")
-                }
-            }
-        .toolbar {
-            ToolbarItem(placement: .navigation) {
-                Button { model.sidebarToggleRequest += 1 } label: { Image(systemName: "sidebar.left") }
-                    .help("Show or hide sidebar").accessibilityLabel("Toggle sidebar")
-                    .keyboardShortcut("s", modifiers: [.command, .control])
-            }
-        }
+        // The window's toolbar and title are AppKit's (WindowToolbar.swift): SwiftUI rebuilt
+        // every toolbar item each time a chat switch replaced the chat view.
+        .background { WindowToolbarShortcuts(bridge: chatToolbar) }
     }
 
     private var splitView: some View {
@@ -215,7 +168,13 @@ struct ContentView: View {
         return AnyView(columnRoot)
         .modifier(ThemedWindow(scheme: themeScheme, background: themeBackground, highlight: themeHighlight))
         .frame(minWidth: 640, minHeight: 520)
-        .background(ChatWindowReader { model.mainChatWindow = $0 })
+        .background(ChatWindowReader { window in
+            model.mainChatWindow = window
+            if windowToolbarOwner == nil {
+                windowToolbarOwner = WindowToolbar(model: model, bridge: chatToolbar, newStudio: { beginNewStudio() })
+            }
+            windowToolbarOwner?.install(in: window)
+        })
         .onAppear { model.revealMainChatWindow = { openWindow(id: "main") } }
         .sheet(isPresented: $model.showingCloneFromGitHub) { CloneFromGitHubView() }
         .sheet(isPresented: $model.showingNewProject) { NewProjectSheet().environment(model) }

@@ -131,10 +131,27 @@ struct CommandReceipt: Codable {
         try FileManager.default.removeItem(at: file(id))
         publish(s,kind:"chat.deleted");try persistState()
     }
-    func updateDraft(_ s: ChatSession, text: String, attachments: [Attachment]) throws {
+    func updateDraft(_ s: ChatSession, text: String, attachments: [Attachment]) {
         s.draft=text;s.draftAttachments=attachments
         state.draftByChat[s.id.uuidString]=RuntimeDraft(text:text,attachments:attachments)
-        publish(s,kind:"draft.changed");try persistState()
+        publish(s,kind:"draft.changed");schedulePersist()
+    }
+    /// One state save for a burst of changes (typing), half a second after the last.
+    private var persistScheduled=false
+    private func schedulePersist() {
+        guard !persistScheduled else{return}
+        persistScheduled=true
+        DispatchQueue.main.asyncAfter(deadline:.now()+0.5) { [weak self] in
+            guard let self else{return};self.persistScheduled=false
+            do{try self.persistState()}catch{RuntimeHooks.note("Runtime save failed: \(error.localizedDescription)")}
+        }
+    }
+    /// Receipts let a retried request be recognised. Old completed ones are never retried,
+    /// and keeping every one made each save rewrite megabytes.
+    private func pruneReceipts() {
+        guard state.commands.count > 2000 else{return}
+        let keep=Set(state.commands.sorted{$0.value.date > $1.value.date}.prefix(1000).map(\.key))
+        state.commands=state.commands.filter{keep.contains($0.key) || $0.value.state != "completed"}
     }
     func snapshots() -> [RuntimeChatState] {
         sessions.map { s in
@@ -170,7 +187,7 @@ struct CommandReceipt: Codable {
         do {
             let result=try body();try flush()
             state.commands[id]?.result=result;state.commands[id]?.state="completed"
-            try persistState();return result
+            pruneReceipts();try persistState();return result
         } catch {
             state.commands[id]?.state="delivery_uncertain";try? persistState();throw error
         }
@@ -188,7 +205,7 @@ struct CommandReceipt: Codable {
         do {
             let result=try await body();try flush()
             state.commands[id]?.result=result;state.commands[id]?.state="completed"
-            try persistState();return result
+            pruneReceipts();try persistState();return result
         } catch {
             state.commands[id]?.state="delivery_uncertain";try? persistState();throw error
         }

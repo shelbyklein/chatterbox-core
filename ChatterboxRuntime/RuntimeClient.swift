@@ -99,9 +99,18 @@ import Darwin
         }
     }
     func command(_ operation:String,body:JSON=[:]){
-        Task {do{_ = try await request(operation,body:body)}catch{problem=error.localizedDescription}}
+        Task {
+            do{_ = try await request(operation,body:body)}
+            catch{
+                // Drafts and chat metadata are re-sent with the next change, so a slow reply
+                // to one isn't worth interrupting you; failed commands still show.
+                if Self.backgroundSyncs.contains(operation){NSLog("Chatterbox: background sync \(operation) failed: \(error.localizedDescription)")}
+                else{problem=error.localizedDescription}
+            }
+        }
     }
     func clearProblem(){problem=nil}
+    private static let backgroundSyncs:Set<String>=["setDraft","metadata","preferences","pins","studios"]
     private func receive(_ reply:RuntimeReply){
         if let event=reply.event{deliver(event);return}
         guard let id=reply.id,let waiter=waiters.removeValue(forKey:id) else{return}

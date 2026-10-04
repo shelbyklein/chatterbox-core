@@ -17,7 +17,6 @@ struct IssueToolbarItems: View {
             Button { panel.toggle() } label: {
                 Label("Issues", systemImage: "exclamationmark.bubble")
             }
-            .keyboardShortcut("i", modifiers: [.command, .shift])
             .help("Show or hide \(repo)'s open issues (\u{2318}\u{21E7}I)")
         }
         // Like the git status, re-check after each turn: the agent may have opened a PR.
