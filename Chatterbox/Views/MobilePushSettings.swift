@@ -12,7 +12,29 @@ struct MobilePushSettings: View {
     @AppStorage("mobilePush_golem") private var golem = true
     @AppStorage("mobilePush_email") private var email = true
     @State private var error: String?
+    /// What the background service said about its own Keychain access.
+    @State private var serviceStatus: String?
+    @State private var authorizing = false
     private var push: MobilePush { .shared }
+    /// Pushes are signed by whichever process sends them. With the background service that's
+    /// chatterboxd, whose Keychain access is its own, so it asks (and shows the prompt) itself.
+    private func authorizeKeychain() {
+        guard RuntimeClient.usesDaemon else { push.authorizeKeychain(); return }
+        authorizing = true
+        serviceStatus = "macOS may ask for your login password for \u{201C}chatterboxd\u{201D}. Choose Always Allow."
+        Task {
+            defer { authorizing = false }
+            do {
+                let reply = try await RuntimeClient.shared.request("authorizePush", timeout: .seconds(180))
+                serviceStatus = reply["status"]?.string ?? "The background service didn't say."
+            } catch {
+                let text = error.localizedDescription
+                serviceStatus = text.contains("unsupported") || text.contains("unknown")
+                    ? "The background service is out of date. Restart it, then try again." : text
+            }
+        }
+    }
+
     var body: some View {
         Section {
             Toggle("Send updates to my iPhone and iPad", isOn: $enabled)
@@ -26,7 +48,9 @@ struct MobilePushSettings: View {
             Text(push.configured ? "Signing key stored in this Mac’s Keychain." : "Create an APNs key in your Apple Developer account, then import its .p8 file.")
                 .font(.caption).foregroundStyle(.secondary)
             if push.configured {
-                Button("Authorize Keychain Access") { push.authorizeKeychain() }
+                Button(authorizing ? "Waiting for Keychain\u{2026}" : "Authorize Keychain Access") { authorizeKeychain() }
+                    .disabled(authorizing)
+                if let serviceStatus { Text(serviceStatus).font(.caption).foregroundStyle(.secondary).textSelection(.enabled) }
                 Toggle("Approvals and questions", isOn: $needs)
                 Toggle("Finished replies", isOn: $replies)
                 Toggle("Golem briefings", isOn: $golem)

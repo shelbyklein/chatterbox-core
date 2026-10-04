@@ -73,7 +73,9 @@ import Darwin
         let pending=waiters;waiters.removeAll()
         for w in pending.values{w.resume(throwing:RuntimeFailure("Connection lost; command delivery may be uncertain. Reconnect and inspect before resending."))}
     }
-    func request(_ operation:String,body:JSON=[:],id:String=UUID().uuidString) async throws -> JSON {
+    /// `timeout`: how long to wait for the reply. A request that waits on you (a system
+    /// prompt) needs longer than the usual 15 seconds.
+    func request(_ operation:String,body:JSON=[:],id:String=UUID().uuidString,timeout:Duration = .seconds(15)) async throws -> JSON {
         guard let connection=socket,connection.active else{throw RuntimeFailure("Background service disconnected; nothing was sent")}
         let request=RuntimeRequest(id:id,operation:operation,body:body)
         var data=try JSONEncoder().encode(request);data.append(10)
@@ -93,7 +95,7 @@ import Darwin
                 if !succeeded{DispatchQueue.main.async {MainActor.assumeIsolated {guard self.generation==generation else{return};self.disconnect()}}}
             }
             Task { [weak self] in
-                try? await Task.sleep(for:.seconds(15))
+                try? await Task.sleep(for:timeout)
                 if let w=self?.waiters.removeValue(forKey:id){w.resume(throwing:RuntimeFailure("Runtime request timed out; inspect the chat before retrying"))}
             }
         }
