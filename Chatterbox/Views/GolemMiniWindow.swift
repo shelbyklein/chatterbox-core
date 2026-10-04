@@ -57,6 +57,21 @@ final class GolemMiniWindow: NSObject, NSWindowDelegate {
     /// screen allows, Golem staying where he is. Its usual size comes back afterwards.
     private(set) var bubbleExpanded = false
     @ObservationIgnored private var unexpandedSize: NSSize?
+    /// Content-driven height is temporary; it must not replace the user's normal mini size.
+    @ObservationIgnored private var fittingReply = false
+
+    func fitReply(height: CGFloat, reserve: CGFloat) {
+        guard let panel, !collapsed, !bubbleExpanded, height.isFinite, height > 0 else { return }
+        let screen = panel.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? panel.frame
+        let available = max(0, screen.maxY - panel.frame.minY - 12)
+        let desired = min(max(expandedSize.height, ceil(height + reserve)), available)
+        fittingReply = true
+        guard abs(panel.frame.height - desired) > 1 else { return }
+        var frame = panel.frame
+        frame.size.height = desired
+        // Grow upwards: the avatar and composer retain their position.
+        configure(frame: frame)
+    }
 
     /// One hover region covers the bubble, body and composer, including their gaps.
     /// Only a completed reply actually hovered by the reader can be acknowledged.
@@ -165,13 +180,14 @@ final class GolemMiniWindow: NSObject, NSWindowDelegate {
         guard value != collapsed, let panel else { return }
         cancelAcknowledgement()
         openedAt = value ? nil : Date()
-        if !collapsed, !bubbleExpanded { expandedSize = panel.frame.size }
+        if !collapsed, !bubbleExpanded, !fittingReply { expandedSize = panel.frame.size }
         rememberFrame()
         if bubbleExpanded {
             bubbleExpanded = false
             if let unexpandedSize { expandedSize = unexpandedSize }
             unexpandedSize = nil
         }
+        fittingReply = false
         let here = characterCenter(in: panel.frame.size)
         let center = NSPoint(x: panel.frame.minX + here.x, y: panel.frame.minY + here.y)
         let size = value ? collapsedSize : expandedSize
@@ -246,7 +262,7 @@ final class GolemMiniWindow: NSObject, NSWindowDelegate {
         if collapsed { panel.styleMask.remove(.resizable) } else { panel.styleMask.insert(.resizable) }
         let extra = characterSize - 124
         let minSize = collapsed ? collapsedSize : NSSize(width: 320, height: 360 + max(0, extra))
-        let maxSize = collapsed ? collapsedSize : NSSize(width: 560, height: bubbleExpanded ? 10_000 : 480 + max(0, extra))
+        let maxSize = collapsed ? collapsedSize : NSSize(width: 560, height: bubbleExpanded || fittingReply ? 10_000 : 480 + max(0, extra))
         var fitted = frame
         fitted.size.width = min(max(fitted.width, minSize.width), maxSize.width)
         fitted.size.height = min(max(fitted.height, minSize.height), maxSize.height)
@@ -300,7 +316,7 @@ final class GolemMiniWindow: NSObject, NSWindowDelegate {
     }
 
     private func rememberFrame() {
-        guard !positioning, !bubbleExpanded, let panel else { return }
+        guard !positioning, !bubbleExpanded, !fittingReply, let panel else { return }
         defaults.set(NSStringFromRect(panel.frame), forKey: collapsed ? Self.avatarFrameKey : Self.expandedFrameKey)
         if !collapsed { expandedSize = panel.frame.size }
     }
@@ -367,12 +383,20 @@ private struct GolemMiniContent: View {
     }
 
     var body: some View {
+        miniLayout
+            .onChange(of: updateText) { fitReply() }
+            .onChange(of: controller.bubbleExpanded) { fitReply() }
+            .onChange(of: bubbleShow) { fitReply() }
+            .onChange(of: attachments.count) { fitReply() }
+    }
+
+    private var miniLayout: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
                 Spacer(minLength: 0)
                 if open, bubbleShow, let text = updateText {
-                    bubble(text, maxHeight: max(48, controller.bubbleExpanded ? geometry.size.height - bubbleReserve : min(140, geometry.size.height - bubbleReserve)),
-                           overflows: bubbleTextHeight > min(140, geometry.size.height - bubbleReserve) + 1)
+                    bubble(text, maxHeight: max(48, geometry.size.height - bubbleReserve),
+                           overflows: bubbleTextHeight > geometry.size.height - bubbleReserve + 1)
                         // Tucked down behind his top stone, like a speech bubble.
                         .padding(.bottom, -controller.bubbleOverlap)
                         .zIndex(0)
@@ -407,7 +431,7 @@ private struct GolemMiniContent: View {
         .onChange(of: controller.collapsed) { _, collapsed in
             if collapsed { focused = false }
             if !collapsed { DispatchQueue.main.asyncAfter(deadline: .now() + GolemMiniWindow.transition) {
-                if !controller.collapsed { focused = true }
+                if !controller.collapsed { focused = true; fitReply() }
             } }
         }
         .onChange(of: latestReply?.id) {
@@ -583,7 +607,15 @@ private struct GolemMiniContent: View {
     }
 
     /// Room the rest of the open mini needs below and around the bubble.
-    private var bubbleReserve: CGFloat { 172 + controller.characterSize - 36 * controller.scale }
+    private var bubbleReserve: CGFloat {
+        172 + controller.characterSize - 36 * controller.scale
+            + (attachments.isEmpty ? 0 : 38) + (attachmentError == nil ? 0 : 42)
+    }
+
+    private func fitReply() {
+        guard bubbleShow else { return }
+        controller.fitReply(height: bubbleTextHeight, reserve: bubbleReserve)
+    }
 
     private func bubble(_ text: String, maxHeight: CGFloat, overflows: Bool) -> some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -606,15 +638,15 @@ private struct GolemMiniContent: View {
                 }.buttonStyle(.plain).foregroundStyle(.secondary)
             }
             ScrollView {
-                Text(MessageClipboard.plain(String(text.prefix(8_000))))
+                Text(MessageClipboard.plain(text))
                     .font(.system(size: bubbleTextSize))
                     .lineSpacing(4)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
-                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { bubbleTextHeight = $0 }
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { bubbleTextHeight = $0; fitReply() }
             }
-            .frame(maxHeight: maxHeight)
+            .frame(height: min(max(bubbleTextHeight, 20), maxHeight))
         }
         .padding(16)
         .background(RoundedRectangle(cornerRadius: 20).fill(bubbleFill))
