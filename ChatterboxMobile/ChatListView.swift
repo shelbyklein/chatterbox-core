@@ -1,8 +1,15 @@
 import SwiftUI
 
-/// The Mac's chats, grouped like its sidebar: projects, each Studio, then other chats. On
-/// iPad the open chat sits beside them; on iPhone it opens over them.
+/// The Mac's chats on three pages, like the Mac's Home: Projects, Studios, and other Chats.
+/// On iPad the open chat sits beside them; on iPhone it opens over them.
 struct ChatListView: View {
+    enum Page: String, CaseIterable, Identifiable {
+        case projects, studios, chats
+        var id: String { rawValue }
+        var title: String { rawValue.capitalized }
+        var icon: String { self == .projects ? "folder" : self == .studios ? "paintpalette" : "bubble.left.and.bubble.right" }
+        var kind: Companion.ChatGroup.Kind { self == .projects ? .projects : self == .studios ? .studio : .chats }
+    }
     /// On iPhone Golem has his own tab, so the list leaves him out.
     var hidesAssistant = true
     /// Tells the iPhone's home whether a chat is open (its edge swipe yields to Back then).
@@ -10,6 +17,8 @@ struct ChatListView: View {
     @Environment(MobileStore.self) private var store
     /// List rows, or cards two to a row.
     @AppStorage("mobileChatListCards") private var showsCards = false
+    @AppStorage("mobileChatListPage") private var pageName = Page.projects.rawValue
+    private var page: Page { Page(rawValue: pageName) ?? .projects }
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var savedPDFs = false
@@ -29,6 +38,7 @@ struct ChatListView: View {
     var body: some View {
         NavigationSplitView(columnVisibility: $columns, preferredCompactColumn: $compactColumn) {
             sidebar
+                .safeAreaInset(edge: .top, spacing: 0) { pagePicker }
                 .navigationTitle(store.connection?.macName ?? "Chatterbox")
                 .navigationBarTitleDisplayMode(.inline)
                 .refreshable { await store.loadChats() }
@@ -119,8 +129,49 @@ struct ChatListView: View {
         }
     }
 
+    /// The page's groups; a search looks through every page. Golem is never listed here.
     private var groups: [Companion.ChatGroup] {
-        filtered((store.chatList?.groups ?? []).filter { !hidesAssistant || $0.kind != .dot })
+        let all = (store.chatList?.groups ?? []).filter { $0.kind != .dot || !hidesAssistant }
+        return filtered(search.isEmpty ? all.filter { $0.kind == page.kind } : all.filter { $0.kind != .dot })
+    }
+
+    /// Each Studio is named; the Projects and Chats pages are their own heading, except in a search.
+    private func showsHeader(_ group: Companion.ChatGroup) -> Bool {
+        group.kind != .dot && (group.kind == .studio || !search.isEmpty)
+    }
+
+    private func waiting(on page: Page) -> Int {
+        (store.chatList?.groups ?? []).filter { $0.kind == page.kind }.flatMap(\.chats).filter(\.isWaitingOnYou).count
+    }
+
+    /// Projects · Studios · Chats, with a count of chats waiting on you on each.
+    private var pagePicker: some View {
+        Picker("Page", selection: Binding(get: { page }, set: { new in withAnimation(.easeOut(duration: 0.2)) { pageName = new.rawValue } })) {
+            ForEach(Page.allCases) { page in
+                let count = waiting(on: page)
+                Text(count > 0 ? "\(page.title) \(count)" : page.title).tag(page)
+            }
+        }
+        .pickerStyle(.segmented)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(.bar)
+        .accessibilityIdentifier("home-pages")
+    }
+
+    /// Nothing on this page (or nothing found).
+    @ViewBuilder
+    private var emptyPage: some View {
+        if store.chatList != nil, groups.isEmpty {
+            if search.isEmpty {
+                ContentUnavailableView("No \(page.title)", systemImage: page.icon,
+                                       description: Text(page == .studios ? "Studios you make on the Mac show up here." :
+                                                         page == .projects ? "Projects you open on the Mac show up here." :
+                                                         "Chats outside a project or Studio show up here."))
+            } else {
+                ContentUnavailableView.search(text: search)
+            }
+        }
     }
 
     /// The same chats as the list, as cards two to a row under the same headings.
@@ -132,9 +183,10 @@ struct ChatListView: View {
                 }
                 if let list = store.chatList {
                     if search.isEmpty, let pins = list.pins, !pins.isEmpty { MobilePinPills(pins: pins) }
+                    emptyPage
                     ForEach(groups) { group in
                         VStack(alignment: .leading, spacing: 8) {
-                            if group.kind != .dot { header(group).font(.footnote.weight(.semibold)).foregroundStyle(.secondary).textCase(.uppercase) }
+                            if showsHeader(group) { header(group).font(.footnote.weight(.semibold)).foregroundStyle(.secondary).textCase(.uppercase) }
                             LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
                                 ForEach(group.chats) { chat in
                                     ChatCard(chat: chat, selected: sizeClass == .regular && selection == chat.id) { open(chat) }
@@ -178,7 +230,8 @@ struct ChatListView: View {
                 if search.isEmpty, let pins = list.pins, !pins.isEmpty {
                     Section("Pins") { MobilePinPills(pins: pins) }
                 }
-                ForEach(filtered(list.groups.filter { !hidesAssistant || $0.kind != .dot })) { group in
+                emptyPage.listRowBackground(Color.clear)
+                ForEach(groups) { group in
                     Section {
                         if search.isEmpty, let pins = group.pins, !pins.isEmpty {
                             MobilePinPills(pins: pins)
@@ -191,7 +244,7 @@ struct ChatListView: View {
                                 }
                         }
                     } header: {
-                        if group.kind != .dot {
+                        if showsHeader(group) {
                             HStack {
                                 Label(group.title, systemImage: group.kind == .studio ? "paintpalette" : group.kind == .projects ? "folder" : "bubble.left.and.bubble.right")
                                 Spacer()
