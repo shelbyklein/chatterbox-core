@@ -143,7 +143,7 @@ struct ContentView: View {
             if model.showingCommandCenter {
                 CommandCenterView(layout: commandCenter)
             } else if model.showingHome {
-                ChatHomeView { session in AnyView(row(session, number: nil, card: true, expanded: true)) }
+                ChatHomeView { session, icons in AnyView(row(session, number: nil, card: true, expanded: !icons, iconOnly: icons)) }
             } else if mainChatID != nil, let session = model.sessions.first(where: {
                 $0.id == (chatSwitch.initialized ? chatSwitch.displayedID : model.selectedID)
             }) {
@@ -163,16 +163,16 @@ struct ContentView: View {
                     .help(model.showingHome ? "Return to the open thread" : "Home: full-window thread cards")
                     .accessibilityLabel(model.showingHome ? "Back to Chat" : "Home")
                 }
-                ToolbarItem {
+                ToolbarItem(placement: .navigation) {
                     Button { model.showingCommandCenter.toggle() } label: {
                         Label("Command Center", systemImage: "rectangle.split.2x2")
                     }.help("Several live chats in one window").accessibilityLabel("Command Center")
                 }
-                ToolbarItem {
+                ToolbarItem(placement: .navigation) {
                     Button { model.showingSettings.toggle() } label: { Label("Settings", systemImage: "gearshape") }
                         .help("Settings (\u{2318},)")
                 }
-                ToolbarItem {
+                ToolbarItem(placement: .navigation) {
                     Menu {
                         if let studio = model.selected.flatMap(model.studio(for:)), studio.archivedAt == nil {
                             Button("New Chat in \u{201C}\(studio.name)\u{201D}") { model.newChat(in: studio) }
@@ -552,11 +552,11 @@ extension ContentView {
         }
     }
 
-    private func row(_ session: ChatSession, number: Int?, card: Bool = false, expanded: Bool = false) -> some View {
+    private func row(_ session: ChatSession, number: Int?, card: Bool = false, expanded: Bool = false, iconOnly: Bool = false) -> some View {
         let place = session.record.projectFolder != nil ? model.pinPlace(for: session) : nil
         return Group {
             if card || sidebarCards {
-                ThreadCard(session: session, expanded: expanded, selected: model.selectedID == session.id) {
+                ThreadCard(session: session, expanded: expanded, iconOnly: iconOnly, selected: model.selectedID == session.id) {
                     model.selectedID = session.id
                 }
             } else {

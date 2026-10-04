@@ -44,6 +44,13 @@ final class CommandCenterLayout {
         if activeID == slotID { activeID = slots.first?.id }
         save()
     }
+    @discardableResult func move(_ slotID: UUID, by offset: Int) -> Bool {
+        guard abs(offset) == 1, let index = slots.firstIndex(where: { $0.id == slotID }),
+              slots.indices.contains(index + offset) else { return false }
+        slots.swapAt(index, index + offset)
+        save()
+        return true
+    }
     func reconcile(available: Set<UUID>) {
         let missing = slots.filter { !available.contains($0.sessionID) }.map(\.id)
         for id in missing { remove(id) }
@@ -73,6 +80,7 @@ private struct ThreadChoice: Identifiable {
 
 struct CommandCenterView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Bindable var layout: CommandCenterLayout
     @State private var choice: ThreadChoice?
 
@@ -134,6 +142,11 @@ struct CommandCenterView: View {
                 CommandCenterTile(session: session, active: layout.activeID == slot.id,
                     activate: { layout.activeID = slot.id },
                     switchThread: { choice = ThreadChoice(slotID: slot.id) },
+                    canMoveEarlier: layout.slots.first?.id != slot.id,
+                    canMoveLater: layout.slots.last?.id != slot.id,
+                    move: { offset in
+                        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) { _ = layout.move(slot.id, by: offset) }
+                    },
                     remove: { layout.remove(slot.id) })
                     .frame(width: width, height: height)
                     .id(slot.id)
@@ -181,6 +194,9 @@ struct CommandCenterTile: View {
     let active: Bool
     let activate: () -> Void
     let switchThread: () -> Void
+    let canMoveEarlier: Bool
+    let canMoveLater: Bool
+    let move: (Int) -> Void
     let remove: () -> Void
     private var title: String { session.record.projectFolder != nil ? session.projectName : session.title }
 
@@ -202,6 +218,15 @@ struct CommandCenterTile: View {
                 Spacer(minLength: 4)
                 if session.isWaitingOnYou { Image(systemName: "questionmark.circle.fill").foregroundStyle(.orange).help("Needs you") }
                 else if session.isRunning { ActivitySpinner(color: session.record.backend == .codex ? .green : .orange).frame(width: 12, height: 12) }
+                Button { move(-1) } label: { Image(systemName: "arrow.left") }
+                    .disabled(!canMoveEarlier).help("Move this chat one position earlier")
+                    .accessibilityLabel("Move \(title) earlier")
+                    #if DEBUG
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { CommandCenterDebug.moveEarlier[session.id] = $0 }
+                    #endif
+                Button { move(1) } label: { Image(systemName: "arrow.right") }
+                    .disabled(!canMoveLater).help("Move this chat one position later")
+                    .accessibilityLabel("Move \(title) later")
                 Button { model.selectedID = session.id } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
                     .help("Open this thread in the full chat view").accessibilityLabel("Expand \(title)")
                 Button(action: remove) { Image(systemName: "xmark") }
@@ -288,6 +313,7 @@ struct CommandCenterThreadChooser: View {
 
 #if DEBUG
 @MainActor enum CommandCenterDebug {
+    static var moveEarlier: [UUID: CGRect] = [:]
     static var tiles: [UUID: CGRect] = [:]
     static var choices: [UUID: CGRect] = [:]
     static var switches: [UUID: CGRect] = [:]

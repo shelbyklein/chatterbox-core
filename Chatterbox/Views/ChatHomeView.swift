@@ -5,6 +5,7 @@ import SwiftUI
 struct ThreadCard: View {
     let session: ChatSession
     var expanded = false
+    var iconOnly = false
     var selected = false
     let open: () -> Void
     @State private var hovered = false
@@ -40,6 +41,23 @@ struct ThreadCard: View {
 
     var body: some View {
         Button(action: open) {
+            if iconOnly {
+                VStack(spacing: 8) {
+                    ZStack(alignment: .topTrailing) {
+                        Image(session.record.backend.iconName).resizable().scaledToFit()
+                            .foregroundStyle(tint).frame(width: 28, height: 28)
+                            .frame(width: 64, height: 64)
+                            .background(selected && !session.isWaitingOnYou ? Color.white : Color.primary.opacity(hovered ? 0.10 : 0.055), in: RoundedRectangle(cornerRadius: 14))
+                            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(session.isWaitingOnYou ? Color.orange : Color.primary.opacity(0.16)))
+                        Circle().fill(session.isWaitingOnYou ? .orange : session.isRunning ? tint : Attention.shared.unread.contains(session.id) ? .blue : .secondary.opacity(0.4))
+                            .frame(width: 6, height: 6).padding(8)
+                    }
+                    Text(title).font(.caption.weight(.medium)).lineLimit(2)
+                        .multilineTextAlignment(.center).frame(height: 30, alignment: .top)
+                }.frame(width: 96, height: 104)
+                    .background(selected && !session.isWaitingOnYou ? Color.white : Color.clear, in: RoundedRectangle(cornerRadius: 14))
+                    .contentShape(Rectangle())
+            } else {
             VStack(alignment: .leading, spacing: expanded ? 12 : 7) {
                 HStack(spacing: 6) {
                     #if GOLEM_APP
@@ -83,6 +101,7 @@ struct ThreadCard: View {
                 RoundedRectangle(cornerRadius: 12).strokeBorder(session.isWaitingOnYou ? Color.orange : Color.primary.opacity(hovered ? 0.28 : 0.12), lineWidth: 1)
             }
             .contentShape(RoundedRectangle(cornerRadius: 12))
+            }
         }
         .buttonStyle(.plain)
         .environment(\.colorScheme, selected && !session.isWaitingOnYou ? .light : colorScheme)
@@ -198,9 +217,8 @@ struct ChatHomeView: View {
     @Environment(AppModel.self) private var model
     @State private var search = ""
     @State private var filter: HomeThreadFilter = .all
-    let card: (ChatSession) -> AnyView
+    let card: (ChatSession, Bool) -> AnyView
 
-    @State private var availableWidth: CGFloat = 1000
     @AppStorage("macHomePage") private var savedPage = HomeThreadPage.projects.rawValue
     private var page: HomeThreadPage { HomeThreadPage(rawValue: savedPage) ?? .projects }
 
@@ -243,26 +261,20 @@ struct ChatHomeView: View {
                 VStack(alignment: .leading, spacing: 26) {
                     let groups = HomeThreads.groups(model, page: page, search: search, filter: filter)
                     if page == .studios {
-                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 0), spacing: 20, alignment: .top), count: min(4, max(1, Int((availableWidth - 56 + 20) / 460)))), alignment: .leading, spacing: 20) {
-                            ForEach(groups) { group in
-                                VStack(alignment: .leading, spacing: 14) {
-                                    groupHeading(group)
-                                    LazyVGrid(columns: [GridItem(.flexible(minimum: 0)), GridItem(.flexible(minimum: 0))], alignment: .leading, spacing: 12) {
-                                        ForEach(group.threads) { card($0) }
-                                    }
-                                }
-                                .padding(16)
-                                .frame(maxWidth: .infinity, alignment: .topLeading)
-                                .background(Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 16))
-                                .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.primary.opacity(0.10)))
-                            }
+                        ForEach(groups) { group in
+                            VStack(alignment: .leading, spacing: 14) {
+                                groupHeading(group)
+                                LazyVGrid(columns: Array(repeating: GridItem(.fixed(96), spacing: 16), count: 4), alignment: .leading, spacing: 16) {
+                                    ForEach(group.threads) { card($0, true) }
+                                }.frame(width: 432, alignment: .leading)
+                            }.frame(maxWidth: .infinity, alignment: .leading)
                         }
                     } else {
                         ForEach(groups) { group in
                             VStack(alignment: .leading, spacing: 12) {
                                 groupHeading(group)
                                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 260, maximum: 440), spacing: 16)], alignment: .leading, spacing: 16) {
-                                    ForEach(group.threads) { card($0) }
+                                    ForEach(group.threads) { card($0, false) }
                                 }
                             }
                         }
@@ -276,7 +288,6 @@ struct ChatHomeView: View {
             }.id(page)
         }
         .background(Color(nsColor: .windowBackgroundColor))
-        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { availableWidth = $0 }
         .accessibilityLabel("Home \(page.rawValue.lowercased()) page")
     }
     private func groupHeading(_ group: HomeThreadGroup) -> some View {
