@@ -328,12 +328,6 @@ enum Companion {
         var revision: Int
     }
 
-    /// Dot's computer: running, stopped, starting, and so on, with what it's doing.
-    struct ComputerStatus: Codable {
-        var state: String
-        var detail: String
-    }
-
     struct ErrorResponse: Codable {
         var error: String
     }

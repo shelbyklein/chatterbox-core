@@ -33,25 +33,6 @@ extension AppModel {
         return insertSession(record)
     }
 
-    /// Starts Dot's computer, and makes Dot's next message pick up its browser tools.
-    func startDotComputer() async {
-        if RuntimeClient.usesDaemon{RuntimeClient.shared.command("computer",body:["action":"start"]);return}
-        await DotComputer.shared.start()
-        dot?.restartClaudeForNewTools()
-    }
-
-    func setUpDotComputer() async {
-        if RuntimeClient.usesDaemon{RuntimeClient.shared.command("computer",body:["action":"setUp"]);return}
-        await DotComputer.shared.setUp()
-        dot?.restartClaudeForNewTools()
-    }
-
-    func stopDotComputer() async {
-        if RuntimeClient.usesDaemon{RuntimeClient.shared.command("computer",body:["action":"stop"]);return}
-        await DotComputer.shared.stop()
-        dot?.restartClaudeForNewTools()
-    }
-
     /// A requested default applies once to the existing assistant, after host reconnection.
     /// Later manual model choices remain intact across launches.
     func applyRequestedDotDefault() {

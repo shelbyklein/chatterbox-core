@@ -136,7 +136,6 @@ final class AppModel {
         record.claudeFastMode = parent.record.claudeFastMode
         record.claudeMode = parent.record.claudeMode
         record.claudeCanEdit = parent.record.claudeCanEdit
-        record.useComputer = parent.record.useComputer
         record.tags = parent.record.tags
         record.studioID = parent.record.studioID
         record.studioFolder = parent.record.studioFolder
@@ -247,7 +246,6 @@ final class AppModel {
         CompanionServer.shared.startAgentListener()
         // Dot needs to know at once whether its computer is up, so its next session has the
         // browser tools without anyone opening the Computer panel first.
-        Task { await DotComputer.shared.refresh() }
         if CompanionServer.shared.isEnabled { CompanionServer.shared.start() }
         // Chats look their Studio up when they talk to their agent.
         ChatSession.studioLookup = { [weak self] id in self?.studio(id) }
@@ -273,7 +271,6 @@ final class AppModel {
         #endif
         load()
         KeepAwake.shared.apply()
-        PreviewRelays.shared.start()
         if dot?.record.claudeHost?.running != true, dot?.record.codexHost?.running != true {
             applyRequestedDotDefault()
         }
@@ -644,7 +641,7 @@ final class AppModel {
         if record.effort != (defaults.string(forKey: "defaultEffort") ?? "") { return true }
         if record.personality != (Personality(rawValue: defaults.string(forKey: "defaultPersonality") ?? "") ?? .friendly) { return true }
         if record.claudeModeID != PermissionModes.defaultClaude || record.claudeFastMode == true { return true }
-        if record.remoteControl != nil || record.useComputer == true || record.currentIssue != nil { return true }
+        if record.remoteControl != nil || record.currentIssue != nil { return true }
         if let codex = record.codex {
             let model = defaults.string(forKey: "codexDefaultModel").flatMap { $0.isEmpty ? nil : $0 }
             let effort = defaults.string(forKey: "codexDefaultEffort").flatMap { $0.isEmpty ? nil : $0 }

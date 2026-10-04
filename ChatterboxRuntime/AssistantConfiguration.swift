@@ -8,13 +8,10 @@ import Foundation
 extension ChatSession {
     var isDot: Bool { record.isDot == true }
 
-    /// The tools Dot may use without asking: reading and messaging chats, and everything in
-    /// its own computer's browser (which is walled off from the Mac).
+    /// The assistant tools available to Golem.
     static let dotTools = ["list_chats", "read_chat", "send_message", "start_chat", "wait_for_reply", "stop_chat",
-                                    "suggest_answer", "record_decision",
-                                    "computer_status", "start_computer", "stop_computer", "show_computer",
-                                    "list_computer_downloads", "hand_off_download", "list_previews"]
-        .map { "mcp__chatterbox__" + $0 } + ["mcp__computer"]
+                                    "suggest_answer", "record_decision"]
+        .map { "mcp__chatterbox__" + $0 }
 
     /// chatterbox-mcp, bundled next to the app.
     static var dotToolServer: String? {
@@ -29,9 +26,7 @@ extension ChatSession {
         for key in ["CHATTERBOX_DATA_DIR", "CHATTERBOX_AGENT_PORT"] {
             if let value = ProcessInfo.processInfo.environment[key] { env[key] = value }
         }
-        var servers: [String: Any] = ["chatterbox": ["command": server, "args": [String](), "env": env]]
-        // Its own computer's browser, while that's running.
-        if DotComputer.shared.isRunning { servers["computer"] = ["type": "http", "url": DotComputer.shared.toolsURL] }
+        let servers: [String: Any] = ["chatterbox": ["command": server, "args": [String](), "env": env]]
         let config: [String: Any] = ["mcpServers": servers]
         guard let data = try? JSONSerialization.data(withJSONObject: config) else { return nil }
         return String(data: data, encoding: .utf8)
@@ -47,9 +42,9 @@ extension ChatSession {
         var config: [String: JSON] = [
             "mcp_servers.chatterbox": ["command": .string(server), "args": [], "env": .object(env),
                                       "enabled": true, "default_tools_approval_mode": "approve"],
-            // Explicitly disable a previously configured computer after it stops.
-            "mcp_servers.computer": ["url": .string(DotComputer.shared.toolsURL),
-                                    "enabled": .bool(DotComputer.shared.isRunning),
+            // Explicitly disable a previously configured computer from older sessions. This is not native computer-use.
+            "mcp_servers.computer": ["url": .string("http://127.0.0.1:47332/mcp"),
+                                    "enabled": .bool(false),
                                     "default_tools_approval_mode": "approve"],
         ]
         // The direct ChatGPT connection when Codex has one: through a proxy, Codex loses its
