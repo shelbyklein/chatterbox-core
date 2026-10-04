@@ -1,3 +1,4 @@
+import ImageIO
 import SwiftUI
 
 /// Shared by the compact sidebar and full-window overview. Opening a card selects the
@@ -39,15 +40,34 @@ struct ThreadCard: View {
             .foregroundStyle(tint)
     }
 
+    /// The thread's newest image when it has one, with its agent in the corner; else the agent.
+    @ViewBuilder private var tileFace: some View {
+        if let thumbnail = ThreadThumbnails.shared.images[session.id] {
+            Image(nsImage: thumbnail).resizable().scaledToFill()
+                .frame(width: 64, height: 64)
+                .overlay(alignment: .bottomTrailing) {
+                    Image(session.record.backend.iconName).resizable().scaledToFit()
+                        .foregroundStyle(tint).frame(width: 11, height: 11)
+                        .padding(4)
+                        .background(Circle().fill(Color.black.opacity(0.72)))
+                        .overlay(Circle().strokeBorder(Color.white.opacity(0.18)))
+                        .padding(4)
+                }
+        } else {
+            Image(session.record.backend.iconName).resizable().scaledToFit()
+                .foregroundStyle(tint).frame(width: 28, height: 28)
+        }
+    }
+
     var body: some View {
         Button(action: open) {
             if iconOnly {
                 VStack(spacing: 8) {
                     ZStack(alignment: .topTrailing) {
-                        Image(session.record.backend.iconName).resizable().scaledToFit()
-                            .foregroundStyle(tint).frame(width: 28, height: 28)
+                        tileFace
                             .frame(width: 64, height: 64)
                             .background(selected && !session.isWaitingOnYou ? Color.white : Color.primary.opacity(hovered ? 0.10 : 0.055), in: RoundedRectangle(cornerRadius: 14))
+                            .clipShape(RoundedRectangle(cornerRadius: 14))
                             .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(session.isWaitingOnYou ? Color.orange : Color.primary.opacity(0.16)))
                         Circle().fill(session.isWaitingOnYou ? .orange : session.isRunning ? tint : Attention.shared.unread.contains(session.id) ? .blue : .secondary.opacity(0.4))
                             .frame(width: 6, height: 6).padding(8)
@@ -55,6 +75,7 @@ struct ThreadCard: View {
                     Text(title).font(.caption.weight(.medium)).lineLimit(2)
                         .multilineTextAlignment(.center).frame(height: 30, alignment: .top)
                 }.frame(width: 96, height: 104)
+                    .task(id: ThreadThumbnails.key(session)) { ThreadThumbnails.shared.refresh(session) }
                     .background(selected && !session.isWaitingOnYou ? Color.white : Color.clear, in: RoundedRectangle(cornerRadius: 14))
                     .contentShape(Rectangle())
             } else {
@@ -377,3 +398,71 @@ struct DesktopOverviewControls: View {
     static var tabs: [HomeThreadPage: CGRect] = [:]
 }
 #endif
+
+
+/// Each thread's newest image, as a small thumbnail for its Home tile: one it generated, one a
+/// reply pointed to, or one you attached. Found from the end of the chat, only when the chat
+/// has changed, and decoded small off the main thread.
+@MainActor
+@Observable
+final class ThreadThumbnails {
+    static let shared = ThreadThumbnails()
+    private(set) var images: [UUID: NSImage] = [:]
+    @ObservationIgnored private var keys: [UUID: String] = [:]
+    @ObservationIgnored private var sources: [UUID: URL] = [:]
+
+    /// Changes when the chat gains a row, not while a reply streams into the last one.
+    static func key(_ session: ChatSession) -> String {
+        "\(session.id)|\(session.items.count)|\(session.items.last?.id.uuidString ?? "")"
+    }
+
+    func refresh(_ session: ChatSession) {
+        let key = Self.key(session)
+        guard keys[session.id] != key else { return }
+        keys[session.id] = key
+        let id = session.id
+        guard let url = Self.latestImage(in: session) else {
+            sources[id] = nil
+            if images[id] != nil { images[id] = nil }
+            return
+        }
+        guard sources[id] != url else { return }
+        sources[id] = url
+        Task.detached(priority: .utility) {
+            let image = Self.thumbnail(url, side: 160)
+            await MainActor.run {
+                guard self.sources[id] == url else { return }
+                self.images[id] = image
+            }
+        }
+    }
+
+    /// The newest image in the last 300 rows that still exists on disk.
+    private static func latestImage(in session: ChatSession) -> URL? {
+        let fm = FileManager.default
+        func usable(_ url: URL) -> Bool {
+            (MediaKind.isStillImage(url.path) || url.pathExtension.lowercased() == "gif") && fm.fileExists(atPath: url.path)
+        }
+        for item in session.items.suffix(300).reversed() {
+            switch item.kind {
+            case .image, .user:
+                if let url = item.attachments?.map(\.url).last(where: usable) { return url }
+            case .assistant where item.phase == .final:
+                if let url = ChatSession.referencedImages(in: item.text, folder: session.workingFolder).last(where: usable) { return url }
+            default:
+                break
+            }
+        }
+        return nil
+    }
+
+    nonisolated private static func thumbnail(_ url: URL, side: Int) -> NSImage? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: side,
+              ] as CFDictionary) else { return nil }
+        return NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
+    }
+}
