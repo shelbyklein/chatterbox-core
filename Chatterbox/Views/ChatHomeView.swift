@@ -213,6 +213,39 @@ enum HomeThreads {
 
 }
 
+/// Keep each Studio together, using its own width rather than equal-width columns.
+private struct StudioGroupFlow: Layout {
+    let spacing: CGFloat
+    private func arrangement(_ subviews: Subviews, width: CGFloat) -> (size: CGSize, origins: [CGPoint], sizes: [CGSize]) {
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        var origins: [CGPoint] = []
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var usedWidth: CGFloat = 0
+        for size in sizes {
+            if x > 0, x + size.width > width {
+                x = 0; y += rowHeight + spacing; rowHeight = 0
+            }
+            origins.append(CGPoint(x: x, y: y))
+            usedWidth = max(usedWidth, x + size.width)
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+        return (CGSize(width: usedWidth, height: y + rowHeight), origins, sizes)
+    }
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        arrangement(subviews, width: proposal.width ?? .infinity).size
+    }
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let layout = arrangement(subviews, width: bounds.width)
+        for index in subviews.indices {
+            subviews[index].place(at: CGPoint(x: bounds.minX + layout.origins[index].x, y: bounds.minY + layout.origins[index].y),
+                                  anchor: .topLeading, proposal: ProposedViewSize(layout.sizes[index]))
+        }
+    }
+}
+
 struct ChatHomeView: View {
     @Environment(AppModel.self) private var model
     @State private var search = ""
@@ -261,14 +294,21 @@ struct ChatHomeView: View {
                 VStack(alignment: .leading, spacing: 26) {
                     let groups = HomeThreads.groups(model, page: page, search: search, filter: filter)
                     if page == .studios {
-                        ForEach(groups) { group in
-                            VStack(alignment: .leading, spacing: 14) {
-                                groupHeading(group)
-                                LazyVGrid(columns: Array(repeating: GridItem(.fixed(96), spacing: 16), count: 4), alignment: .leading, spacing: 16) {
-                                    ForEach(group.threads) { card($0, true) }
-                                }.frame(width: 432, alignment: .leading)
-                            }.frame(maxWidth: .infinity, alignment: .leading)
-                        }
+                        StudioGroupFlow(spacing: 32) {
+                            ForEach(groups) { group in
+                                let columns = min(4, group.threads.count)
+                                let width = max(160, CGFloat(columns * 96 + (columns - 1) * 16))
+                                VStack(alignment: .leading, spacing: 14) {
+                                    groupHeading(group)
+                                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(96), spacing: 16), count: columns), alignment: .leading, spacing: 16) {
+                                        ForEach(group.threads) { card($0, true) }
+                                    }
+                                }.frame(width: width, alignment: .topLeading)
+                                #if DEBUG
+                                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { MacHomeDebug.studioGroups[group.id] = $0 }
+                                #endif
+                            }
+                        }.frame(maxWidth: .infinity, alignment: .leading)
                     } else {
                         ForEach(groups) { group in
                             VStack(alignment: .leading, spacing: 12) {
@@ -332,6 +372,7 @@ struct DesktopOverviewControls: View {
 #if DEBUG
 @MainActor enum MacHomeDebug {
     static var cards: [UUID: CGRect] = [:]
+    static var studioGroups: [String: CGRect] = [:]
     static var home: CGRect = .zero
     static var tabs: [HomeThreadPage: CGRect] = [:]
 }
