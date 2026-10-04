@@ -1168,18 +1168,9 @@ private struct EmptyChatView: View {
     let onPick: (String) -> Void
 
     private var suggestions: [String] {
-        if session.record.backend == .codex {
-            return [
-                "Give me a quick tour of what's in this folder",
-                "What looks unfinished or broken in this project?",
-                "Explain how the main pieces of this code fit together",
-            ]
-        }
-        return [
-            "Help me plan a relaxed weekend in a city I've never been to",
-            "What's actually new in the latest macOS release?",
-            "I need to write a tricky email. Can you help me think it through?",
-        ]
+        let isProject = session.record.projectFolder != nil || session.record.worktreeOf != nil || session.record.sidechatProjectFolder != nil || session.record.convertedProjectFolder != nil
+        let project = isProject ? (session.projectName.isEmpty ? URL(fileURLWithPath: session.workingFolder).lastPathComponent : session.projectName) : nil
+        return StarterPrompts.suggestions(project: project, studio: session.studio?.name, backend: session.record.backend)
     }
 
     var body: some View {
