@@ -200,6 +200,7 @@ struct ChatHomeView: View {
     @State private var filter: HomeThreadFilter = .all
     let card: (ChatSession) -> AnyView
 
+    @State private var availableWidth: CGFloat = 1000
     @AppStorage("macHomePage") private var savedPage = HomeThreadPage.projects.rawValue
     private var page: HomeThreadPage { HomeThreadPage(rawValue: savedPage) ?? .projects }
 
@@ -242,7 +243,7 @@ struct ChatHomeView: View {
                 VStack(alignment: .leading, spacing: 26) {
                     let groups = HomeThreads.groups(model, page: page, search: search, filter: filter)
                     if page == .studios {
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 440), spacing: 20, alignment: .top)], alignment: .leading, spacing: 20) {
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 0), spacing: 20, alignment: .top), count: min(4, max(1, Int((availableWidth - 56 + 20) / 460)))), alignment: .leading, spacing: 20) {
                             ForEach(groups) { group in
                                 VStack(alignment: .leading, spacing: 14) {
                                     groupHeading(group)
@@ -275,6 +276,7 @@ struct ChatHomeView: View {
             }.id(page)
         }
         .background(Color(nsColor: .windowBackgroundColor))
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { availableWidth = $0 }
         .accessibilityLabel("Home \(page.rawValue.lowercased()) page")
     }
     private func groupHeading(_ group: HomeThreadGroup) -> some View {
