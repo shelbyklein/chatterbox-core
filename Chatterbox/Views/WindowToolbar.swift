@@ -41,6 +41,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
     #if DEBUG
     /// For tests: every toolbar made, and what each has attached.
     static var made: [WindowToolbar] = []
+    static var reinstalls = 0
     var debugState: String { "session=\(bridge.session?.title ?? "nil") installed=\(window?.toolbar === toolbar)" }
     #endif
 
@@ -70,6 +71,17 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
                 guard let self, window.toolbar !== self.toolbar else { return }
                 DispatchQueue.main.async { [weak self, weak window] in
                     guard let self, let window, window.toolbar !== self.toolbar else { return }
+                    // Never a tug-of-war: if something keeps replacing it, stop for a moment
+                    // (a page that wants its own toolbar) rather than freeze the window.
+                    let now = Date()
+                    self.recentReinstalls = self.recentReinstalls.filter { now.timeIntervalSince($0) < 2 } + [now]
+                    guard self.recentReinstalls.count <= 3 else {
+                        NSLog("Chatterbox: the window toolbar keeps being replaced; leaving it for now.")
+                        return
+                    }
+                    #if DEBUG
+                    Self.reinstalls += 1
+                    #endif
                     window.toolbar = self.toolbar
                     self.apply()
                 }
@@ -78,6 +90,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         track()
     }
     private var replaced: NSKeyValueObservation?
+    private var recentReinstalls: [Date] = []
 
     // MARK: - Keeping it current
 

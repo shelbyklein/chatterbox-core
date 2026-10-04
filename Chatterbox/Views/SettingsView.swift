@@ -358,6 +358,7 @@ struct SettingsPage: View {
 
     var body: some View {
         SettingsView()
+            .modifier(InPageTabs())
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             // The window's toolbar is AppKit's (WindowToolbar.swift), so Done sits on the page.
             .overlay(alignment: .topTrailing) {
@@ -365,6 +366,14 @@ struct SettingsPage: View {
                     .keyboardShortcut(.cancelAction)
                     .padding(12)
             }
+    }
+}
+
+/// Settings' tabs drawn in the page. In the chat window the toolbar is AppKit's; a TabView
+/// that put its tabs in the window toolbar made SwiftUI keep replacing it while Settings was open.
+private struct InPageTabs: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, *) { content.tabViewStyle(.grouped) } else { content }
     }
 }
 
