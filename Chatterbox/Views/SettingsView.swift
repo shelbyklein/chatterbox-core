@@ -243,6 +243,7 @@ struct SettingsView: View {
     private var proxyPane: some View {
         Form {
             ProxySection()
+            Section { ProxyQuotaView() }
         }
         .formStyle(.grouped)
         .frame(maxWidth: 680)

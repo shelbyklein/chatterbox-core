@@ -25,10 +25,11 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         static let golem = NSToolbarItem.Identifier("chatterbox.golem")
         static let remote = NSToolbarItem.Identifier("chatterbox.remote")
         static let images = NSToolbarItem.Identifier("chatterbox.images")
+        static let usage = NSToolbarItem.Identifier("chatterbox.usage")
         static let terminal = NSToolbarItem.Identifier("chatterbox.terminal")
         static let all: [NSToolbarItem.Identifier] = [sidebar, home, commandCenter, settings, newChat, .flexibleSpace,
-                                                       tone, place, repo, golem, remote, images, terminal]
-        static let chat: [NSToolbarItem.Identifier] = [tone, place, repo, golem, remote, images, terminal]
+                                                       tone, place, repo, golem, remote, usage, images, terminal]
+        static let chat: [NSToolbarItem.Identifier] = [tone, place, repo, golem, remote, usage, images, terminal]
     }
 
     private let model: AppModel
@@ -178,6 +179,8 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
             item = hosted(id, "Golem", GolemSlot(bridge: bridge))
         case ID.remote:
             item = hosted(id, "Remote Control", RemoteSlot(bridge: bridge))
+        case ID.usage:
+            item = hosted(id, "Account Usage", ProxyQuotaToolbarButton(bridge: bridge))
         case ID.images:
             item = button(id, "photo.on.rectangle.angled", "Images", "Every image made in this chat", #selector(showImages))
         case ID.terminal:
