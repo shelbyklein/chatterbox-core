@@ -44,7 +44,9 @@ struct ContentView: View {
     /// The Studio a dragged chat is over, which lights up.
     @State private var dropStudio: UUID?
     /// Show only projects with this tag; empty shows everything.
+    /// Active tag pills, comma-separated (a single tag, as before, still works).
     @AppStorage("sidebarTagFilter") private var tagFilter = ""
+    @AppStorage("sidebarTagPills") private var showsTagPills = true
     @AppStorage(Theme.schemeKey) private var themeScheme = "system"
     @AppStorage(Theme.backgroundKey) private var themeBackground = "standard"
     @AppStorage(Theme.highlightKey) private var themeHighlight = "default"
@@ -274,9 +276,52 @@ struct ContentView: View {
 }
 
 extension ContentView {
-    /// The tag filter, ignored once no chat has that tag anymore.
-    private var activeTag: String? {
-        tagFilter.isEmpty ? nil : model.allTags.first { $0.caseInsensitiveCompare(tagFilter) == .orderedSame }
+    /// The active tags, ignoring any no chat has anymore.
+    private var activeTags: [String] {
+        let picked = tagFilter.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+        return model.allTags.filter { tag in picked.contains { $0.caseInsensitiveCompare(tag) == .orderedSame } }
+    }
+    private var activeTag: String? { activeTags.isEmpty ? nil : activeTags.joined(separator: ", ") }
+
+    private func isActive(_ tag: String) -> Bool { activeTags.contains(tag) }
+
+    private func toggleTag(_ tag: String) {
+        var tags = activeTags
+        if let index = tags.firstIndex(of: tag) { tags.remove(at: index) } else { tags.append(tag) }
+        tagFilter = tags.joined(separator: ",")
+    }
+
+    /// Every tag as a pill: tap to show only projects with it (several: any of them).
+    private var tagPills: some View {
+        FlowLayout(spacing: 5) {
+            ForEach(model.allTags, id: \.self) { tag in
+                let on = isActive(tag)
+                let color = TagPills.color(for: tag)
+                Button { withAnimation(.easeOut(duration: 0.15)) { toggleTag(tag) } } label: {
+                    Text(tag)
+                        .font(.system(size: 11, weight: .medium))
+                        .lineLimit(1)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .foregroundStyle(on ? Color.white : color)
+                        .background(Capsule().fill(on ? color : color.opacity(0.14)))
+                        .overlay(Capsule().strokeBorder(color.opacity(on ? 0 : 0.35)))
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help(on ? "Stop filtering by \(tag)" : "Show projects tagged \(tag)")
+                .accessibilityLabel(tag)
+                .accessibilityAddTraits(on ? [.isButton, .isSelected] : .isButton)
+            }
+            if !activeTags.isEmpty {
+                Button("Clear") { withAnimation(.easeOut(duration: 0.15)) { tagFilter = "" } }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6).padding(.vertical, 3)
+            }
+        }
+        .padding(.vertical, 2)
     }
 
     private var isFiltering: Bool {
@@ -287,7 +332,7 @@ extension ContentView {
     private func isShown(_ session: ChatSession) -> Bool {
         if session.record.sidechatOf == nil, model.sidechats(of: session).contains(where: isShown) { return true }
         if session.record.convertedProjectFolder != nil, model.worktrees(of: session).contains(where: isShown) { return true }
-        if let tag = activeTag, !session.tags.contains(where: { $0.caseInsensitiveCompare(tag) == .orderedSame }) {
+        if !activeTags.isEmpty, !session.tags.contains(where: { tag in activeTags.contains { $0.caseInsensitiveCompare(tag) == .orderedSame } }) {
             return false
         }
         let text = ([session.title, session.projectName, model.studio(for: session)?.name ?? ""] + session.tags).joined(separator: " ")
@@ -462,11 +507,14 @@ extension ContentView {
                 ForEach(ProjectActivity.allCases, id: \.self) { Text($0.label).tag($0) }
             }
             .pickerStyle(.inline)
-            Picker("Tags", selection: Binding(get: { activeTag ?? "" }, set: { tagFilter = $0 })) {
-                Text("All Tags").tag("")
-                ForEach(model.allTags, id: \.self) { Text($0).tag($0) }
+            Section("Tags") {
+                Button("All Tags") { tagFilter = "" }
+                ForEach(model.allTags, id: \.self) { tag in
+                    Toggle(tag, isOn: Binding(get: { isActive(tag) }, set: { _ in toggleTag(tag) }))
+                }
+                Divider()
+                Toggle("Show Tag Pills", isOn: $showsTagPills)
             }
-            .pickerStyle(.inline)
         } label: {
             Image(systemName: activeTag == nil && projectActivity == .all
                   ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
@@ -1176,6 +1224,9 @@ extension ContentView {
             switch section {
             case .projects:
                 let projects = model.sidebarProjects.filter(isShown).filter(projectActivity.includes)
+                if showsTagPills, !model.allTags.isEmpty {
+                    tagPills.listRowSeparator(.hidden)
+                }
                 ForEach(projects) { session in
                     rowWithSidechats(session, numbers: numbers)
                     // Its worktrees, indented beneath it.
