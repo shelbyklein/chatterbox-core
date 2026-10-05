@@ -766,7 +766,7 @@ enum CompanionMapper {
         }
         let presets = ModelPresets.shared.presets.map {
             Companion.PresetOption(id: $0.id, title: $0.title, backend: $0.backend.rawValue, isActive: ModelPresets.shared.matches($0, session: session),
-                                   nickname: $0.nickname)
+                                   nickname: $0.nickname, provider: $0.provider.rawValue)
         }
         return .init(backend: session.record.backend.rawValue,
                      // The phone matches by id: name the chat's model as the list does

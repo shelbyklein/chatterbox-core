@@ -113,13 +113,15 @@ private struct PresetBubble: View {
 
     var body: some View {
         let isCodex = preset.backend == "codex"
+        let provider = preset.provider ?? preset.backend
+        let agentLabel = isCodex && provider == "claude" ? "Claude via Codex" : (isCodex ? "Codex" : "Claude")
         Button(action: choose) {
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
-                    Image(isCodex ? "AgentCodex" : "AgentClaude")
+                    Image(provider == "codex" ? "AgentCodex" : "AgentClaude")
                         .resizable().scaledToFit()
                         .frame(width: 18, height: 18)
-                        .foregroundStyle(preset.isActive ? Color.white : MobileConversationStyle.accent(for: preset.backend))
+                        .foregroundStyle(preset.isActive ? Color.white : MobileConversationStyle.accent(for: provider))
                     Spacer()
                     if preset.isActive { Image(systemName: "checkmark.circle.fill").font(.subheadline) }
                 }
@@ -128,7 +130,7 @@ private struct PresetBubble: View {
                     .font(.headline)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
-                Text(preset.nickname != nil ? "\(preset.title) \u{00B7} \(isCodex ? "Codex" : "Claude")" : (isCodex ? "Codex" : "Claude"))
+                Text(preset.nickname != nil ? "\(preset.title) \u{00B7} \(agentLabel)" : agentLabel)
                     .lineLimit(2)
                     .font(.caption)
                     .opacity(0.75)
@@ -148,7 +150,7 @@ private struct PresetBubble: View {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(preset.nickname.map { "\($0), " } ?? "")\(preset.title), \(isCodex ? "Codex" : "Claude") preset")
+        .accessibilityLabel("\(preset.nickname.map { "\($0), " } ?? "")\(preset.title), \(agentLabel) preset")
         .accessibilityAddTraits(preset.isActive ? [.isButton, .isSelected] : .isButton)
     }
 }
