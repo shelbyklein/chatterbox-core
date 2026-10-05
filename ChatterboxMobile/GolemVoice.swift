@@ -237,12 +237,13 @@ final class GolemVoice: NSObject {
         replace("`([^`]+)`", "$1")
         replace("!\\[[^\\]]*\\]\\([^)]*\\)", "")                   // images
         replace("\\[([^\\]]+)\\]\\([^)]*\\)", "$1")                // links → their text
-        replace("https?://\\S+", "a link")
+        replace("https?://\\S+?(?=[.,;:!?)]*(?:\\s|$))", "a link")
         replace("(?<![\\w.])(?:~|/[\\w.-]+)(?:/[\\w .-]+)+/([\\w.-]+)", "$1")   // paths → file name
-        replace("^\\s*\\|?\\s*:?-{3,}.*$", "", .anchorsMatchLines)  // table rules
-        replace("\\|", ", ")
-        replace("^#{1,6}\\s*", "", .anchorsMatchLines)
-        replace("^\\s*[-*+]\\s+", "", .anchorsMatchLines)
+        replace("^[ \\t]*\\|?[ \\t]*:?-{3,}.*$", "", .anchorsMatchLines)  // table rules
+        replace("^[ \\t]*\\|[ \\t]*(.*?)[ \\t]*\\|[ \\t]*$", "$1.", .anchorsMatchLines)   // table rows → "a, b."
+        replace("[ \\t]*\\|[ \\t]*", ", ")
+        replace("^#{1,6}[ \\t]*", "", .anchorsMatchLines)
+        replace("^[ \\t]*[-*+][ \\t]+", "", .anchorsMatchLines)
         replace("(\\*\\*|__|\\*|_)(\\S[^*_]*?\\S|\\S)\\1", "$2")
         replace("[ \\t]+", " ")
         replace("\\n{3,}", "\n\n")
