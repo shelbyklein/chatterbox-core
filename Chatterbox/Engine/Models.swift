@@ -161,6 +161,8 @@ struct ConversationRecord: Codable {
     var worktreeBranch: String?
     /// A temporary independent conversation sharing its parent's working folder.
     var sidechatOf: UUID?
+    /// Set on a project's Automation thread: the automation it runs (see ProjectAutomations).
+    var automationID: UUID?
     var sidechatFolder: String?
     /// Parent project scope for existing project-only secrets; no new access is granted.
     var sidechatProjectFolder: String?

@@ -39,6 +39,7 @@ struct ThreadCard: View {
         return ChatSession.firstSentence(of: text, limit: expanded ? 320 : 110) ?? "Open to view the conversation"
     }
     private var relation: String? {
+        if session.record.automationID != nil { return "Automation" }
         if session.record.sidechatOf != nil { return "Temporary" }
         if let branch = session.record.worktreeBranch { return branch }
         return nil

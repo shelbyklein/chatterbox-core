@@ -20,6 +20,8 @@ struct ContentView: View {
     @State private var dragStartWeights: [Double]?
     @State private var pendingDelete: ChatSession?
     @State private var renamingProject: ChatSession?
+    /// The project whose Automations window is open.
+    @State private var automationsFor: ChatSession?
     @State private var worktreeParent: ChatSession?
     @State private var worktreeName = ""
     @State private var removingWorktree: ChatSession?
@@ -187,6 +189,11 @@ struct ContentView: View {
         .sheet(isPresented: $model.editingDotMemory) { DotMemorySheet() }
         // Dot asked to show you its computer.
         .sheet(item: $model.pinSheet) { AddPinSheet(request: $0) }
+        .sheet(item: $automationsFor) { project in
+            if let folder = project.record.projectFolder {
+                AutomationsSheet(projectFolder: folder, projectName: project.projectName).environment(model)
+            }
+        }
         .sheet(isPresented: Binding(get: { model.editingStudioInstructions != nil },
                                     set: { if !$0 { model.editingStudioInstructions = nil } })) {
             if let studio = model.studio(model.editingStudioInstructions) {
@@ -615,6 +622,9 @@ extension ContentView {
                     } else {
                         Button("Remove Worktree\u{2026}") { removingWorktree = session }
                     }
+                    if session.record.worktreeOf == nil, session.record.sidechatOf == nil {
+                        Button("Automations\u{2026}") { automationsFor = session }
+                    }
                     Button("Rename Project\u{2026}") {
                         projectNickname = session.projectName
                         renamingProject = session
@@ -656,7 +666,7 @@ extension ContentView {
                 }
                 if session.record.archivedAt == nil {
                     NewSidechatControl(parent: session)
-                    Button(session.record.sidechatOf != nil ? "End Sidechat" : "Archive Chat") { model.archive(session) }
+                    Button(session.record.automationID != nil ? "End Automation Thread" : session.record.sidechatOf != nil ? "End Sidechat" : "Archive Chat") { model.archive(session) }
                 } else {
                     Button("Unarchive Chat") { model.unarchive(session) }
                 }
@@ -898,7 +908,10 @@ private struct SidebarRow: View {
                 Text(session.title)
                     .lineLimit(1)
             }
-            if session.record.sidechatOf != nil {
+            if session.record.automationID != nil {
+                Label("Automation", systemImage: "clock.arrow.circlepath").font(.caption2).foregroundStyle(.secondary)
+                    .help("This project's Automation thread: its scheduled runs report and ask here.")
+            } else if session.record.sidechatOf != nil {
                 Text("Temporary").font(.caption2).foregroundStyle(.secondary)
                     .help("A sidechat sharing its parent's folder. End Sidechat archives its history.")
             }
