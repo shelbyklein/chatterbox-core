@@ -116,8 +116,10 @@ private struct PresetBubble: View {
         Button(action: choose) {
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
-                    Image(systemName: isCodex ? "chevron.left.forwardslash.chevron.right" : "sparkle")
-                        .font(.subheadline.weight(.semibold))
+                    Image(isCodex ? "AgentCodex" : "AgentClaude")
+                        .resizable().scaledToFit()
+                        .frame(width: 18, height: 18)
+                        .foregroundStyle(preset.isActive ? Color.white : MobileConversationStyle.accent(for: preset.backend))
                     Spacer()
                     if preset.isActive { Image(systemName: "checkmark.circle.fill").font(.subheadline) }
                 }
