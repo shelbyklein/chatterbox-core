@@ -64,6 +64,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         self.window = window
         window.toolbar = toolbar
         window.toolbarStyle = .unified
+        applyTheme()
         // Some SwiftUI pages (Settings' tabs) put a toolbar of their own on the window, which
         // would drop this one; put it back.
         replaced = window.observe(\.toolbar, options: [.new]) { [weak self] window, _ in
@@ -91,6 +92,19 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
     }
     private var replaced: NSKeyValueObservation?
     private var recentReinstalls: [Date] = []
+
+    /// The theme's background (Settings → Appearance) behind the toolbar too, as the SwiftUI
+    /// toolbar's background used to be; the system's window color for Standard.
+    func applyTheme() {
+        guard let window else { return }
+        if let color = Theme.currentBackground {
+            window.backgroundColor = NSColor(color)
+            window.titlebarAppearsTransparent = true
+        } else {
+            window.backgroundColor = .windowBackgroundColor
+            window.titlebarAppearsTransparent = false
+        }
+    }
 
     // MARK: - Keeping it current
 

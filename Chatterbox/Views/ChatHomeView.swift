@@ -3,6 +3,15 @@ import SwiftUI
 
 /// Shared by the compact sidebar and full-window overview. Opening a card selects the
 /// existing session; it never creates, copies or submits a conversation.
+private struct ThreadCardScaleKey: EnvironmentKey { static let defaultValue: CGFloat = 1 }
+extension EnvironmentValues {
+    /// Home's card size (its slider): every size in a thread's card or tile is multiplied by it.
+    var threadCardScale: CGFloat {
+        get { self[ThreadCardScaleKey.self] }
+        set { self[ThreadCardScaleKey.self] = newValue }
+    }
+}
+
 struct ThreadCard: View {
     let session: ChatSession
     var expanded = false
@@ -10,6 +19,7 @@ struct ThreadCard: View {
     var selected = false
     let open: () -> Void
     @State private var hovered = false
+    @Environment(\.threadCardScale) private var scale
     @Environment(\.colorScheme) private var colorScheme
     @Environment(AppModel.self) private var model
 
@@ -37,12 +47,12 @@ struct ThreadCard: View {
     @ViewBuilder private var backendIcon: some View {
         if let folder = session.record.projectFolder, let icon = ProjectIcons.shared.icons[folder] {
             Image(nsImage: icon).resizable().scaledToFit()
-                .frame(width: expanded ? 24 : 16, height: expanded ? 24 : 16)
+                .frame(width: (expanded ? 24 : 16) * scale, height: (expanded ? 24 : 16) * scale)
                 .clipShape(RoundedRectangle(cornerRadius: expanded ? 5 : 3.5, style: .continuous))
                 .help(session.record.backend.label)
         } else {
             Image(session.record.backend.iconName).resizable().scaledToFit()
-                .frame(width: expanded ? 19 : 13, height: expanded ? 19 : 13)
+                .frame(width: (expanded ? 19 : 13) * scale, height: (expanded ? 19 : 13) * scale)
                 .foregroundStyle(tint)
                 .task(id: session.record.projectFolder) { ProjectIcons.shared.load(session.record.projectFolder) }
         }
@@ -50,7 +60,7 @@ struct ThreadCard: View {
 
     private var agentBadge: some View {
         Image(session.record.backend.iconName).resizable().scaledToFit()
-            .foregroundStyle(tint).frame(width: 11, height: 11)
+            .foregroundStyle(tint).frame(width: 11 * scale, height: 11 * scale)
             .padding(4)
             .background(Circle().fill(Color.black.opacity(0.72)))
             .overlay(Circle().strokeBorder(Color.white.opacity(0.18)))
@@ -62,17 +72,17 @@ struct ThreadCard: View {
         if let folder = session.record.projectFolder, let icon = ProjectIcons.shared.icons[folder] {
             // A project's logo comes first: it says which project at a glance.
             Image(nsImage: icon).resizable().scaledToFit()
-                .frame(width: 44, height: 44)
+                .frame(width: 44 * scale, height: 44 * scale)
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .frame(width: 64, height: 64)
+                .frame(width: 64 * scale, height: 64 * scale)
                 .overlay(alignment: .bottomTrailing) { agentBadge }
         } else if let thumbnail = ThreadThumbnails.shared.images[session.id] {
             Image(nsImage: thumbnail).resizable().scaledToFill()
-                .frame(width: 64, height: 64)
+                .frame(width: 64 * scale, height: 64 * scale)
                 .overlay(alignment: .bottomTrailing) { agentBadge }
         } else {
             Image(session.record.backend.iconName).resizable().scaledToFit()
-                .foregroundStyle(tint).frame(width: 28, height: 28)
+                .foregroundStyle(tint).frame(width: 28 * scale, height: 28 * scale)
         }
     }
 
@@ -82,16 +92,16 @@ struct ThreadCard: View {
                 VStack(spacing: 8) {
                     ZStack(alignment: .topTrailing) {
                         tileFace
-                            .frame(width: 64, height: 64)
+                            .frame(width: 64 * scale, height: 64 * scale)
                             .background(selected && !session.isWaitingOnYou ? Color.white : Color.primary.opacity(hovered ? 0.10 : 0.055), in: RoundedRectangle(cornerRadius: 14))
                             .clipShape(RoundedRectangle(cornerRadius: 14))
                             .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(session.isWaitingOnYou ? Color.orange : Color.primary.opacity(0.16)))
                         Circle().fill(session.isWaitingOnYou ? .orange : session.isRunning ? tint : Attention.shared.unread.contains(session.id) ? .blue : .secondary.opacity(0.4))
                             .frame(width: 6, height: 6).padding(8)
                     }
-                    Text(title).font(.caption.weight(.medium)).lineLimit(2)
-                        .multilineTextAlignment(.center).frame(height: 30, alignment: .top)
-                }.frame(width: 96, height: 104)
+                    Text(title).font(.system(size: 10.5 * scale, weight: .medium)).lineLimit(2)
+                        .multilineTextAlignment(.center).frame(height: 30 * scale, alignment: .top)
+                }.frame(width: 96 * scale, height: 104 * scale)
                     .task(id: ThreadThumbnails.key(session)) { ThreadThumbnails.shared.refresh(session) }
                     .task(id: session.record.projectFolder) { ProjectIcons.shared.load(session.record.projectFolder) }
                     .background(selected && !session.isWaitingOnYou ? Color.white : Color.clear, in: RoundedRectangle(cornerRadius: 14))
@@ -106,11 +116,11 @@ struct ThreadCard: View {
                     backendIcon
                     #endif
                     Spacer(minLength: 0)
-                    if expanded { Text(status).font(.caption.weight(.medium)).lineLimit(1) }
+                    if expanded { Text(status).font(.system(size: 10.5 * scale, weight: .medium)).lineLimit(1) }
                     Circle().fill(session.isWaitingOnYou ? .orange : session.isRunning ? tint : Attention.shared.unread.contains(session.id) ? .blue : .secondary.opacity(0.4))
                         .frame(width: 6, height: 6)
                 }
-                Text(title).font(expanded ? .title3.weight(.semibold) : .subheadline.weight(.semibold))
+                Text(title).font(.system(size: (expanded ? 15 : 11.5) * scale, weight: .semibold))
                     .lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
                 if let relation {
                     Label(relation, systemImage: session.record.sidechatOf != nil ? "bubble.left.and.bubble.right" : "arrow.triangle.branch")
@@ -119,7 +129,7 @@ struct ThreadCard: View {
                 if expanded, let parentID = session.record.sidechatOf {
                     ParentThreadLabel(parentID: parentID)
                 }
-                Text(preview).font(expanded ? .body : .caption).foregroundStyle(.secondary)
+                Text(preview).font(.system(size: (expanded ? 13 : 10.5) * scale)).foregroundStyle(.secondary)
                     .lineLimit(expanded ? 4 : 2).frame(maxWidth: .infinity, alignment: .leading)
                 Spacer(minLength: 0)
                 HStack {
@@ -131,10 +141,10 @@ struct ThreadCard: View {
                     if !expanded { Spacer(minLength: 0) }
                 }
             }
-            .padding(expanded ? 18 : 10)
+            .padding((expanded ? 18 : 10) * scale)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .frame(minHeight: expanded ? 250 : 144)
-            .frame(height: expanded ? nil : 144)
+            .frame(minHeight: (expanded ? 250 : 144) * scale)
+            .frame(height: expanded ? nil : 144 * scale)
             .background(selected && !session.isWaitingOnYou ? Color.white : Color.primary.opacity(hovered ? 0.10 : 0.055), in: RoundedRectangle(cornerRadius: 12))
             .overlay {
                 RoundedRectangle(cornerRadius: 12).strokeBorder(session.isWaitingOnYou ? Color.orange : Color.primary.opacity(hovered ? 0.28 : 0.12), lineWidth: 1)
@@ -292,6 +302,7 @@ struct ChatHomeView: View {
     let card: (ChatSession, Bool) -> AnyView
 
     @AppStorage("macHomePage") private var savedPage = HomeThreadPage.projects.rawValue
+    @AppStorage("homeCardScale") private var cardScale = 1.0
     private var page: HomeThreadPage { HomeThreadPage(rawValue: savedPage) ?? .projects }
 
     var body: some View {
@@ -300,6 +311,7 @@ struct ChatHomeView: View {
                 HStack(alignment: .firstTextBaseline) {
                     Text("Home").font(.largeTitle.weight(.bold))
                     Spacer()
+                    cardSizeControl
                     Button("Command Center", systemImage: "rectangle.split.2x2") { model.showingCommandCenter = true }
                     Button("Back to Chat", systemImage: "arrow.left") { model.showingHome = false }
                 }
@@ -333,26 +345,12 @@ struct ChatHomeView: View {
                 VStack(alignment: .leading, spacing: 26) {
                     let groups = HomeThreads.groups(model, page: page, search: search, filter: filter)
                     if page == .studios {
-                        StudioGroupFlow(spacing: 32) {
-                            ForEach(groups) { group in
-                                let columns = min(4, group.threads.count)
-                                let width = max(160, CGFloat(columns * 96 + (columns - 1) * 16))
-                                VStack(alignment: .leading, spacing: 14) {
-                                    groupHeading(group)
-                                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(96), spacing: 16), count: columns), alignment: .leading, spacing: 16) {
-                                        ForEach(group.threads) { card($0, true) }
-                                    }
-                                }.frame(width: width, alignment: .topLeading)
-                                #if DEBUG
-                                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { MacHomeDebug.studioGroups[group.id] = $0 }
-                                #endif
-                            }
-                        }.frame(maxWidth: .infinity, alignment: .leading)
+                        studioGroups(groups)
                     } else {
                         ForEach(groups) { group in
                             VStack(alignment: .leading, spacing: 12) {
                                 groupHeading(group)
-                                LazyVGrid(columns: [GridItem(.adaptive(minimum: 260, maximum: 440), spacing: 16)], alignment: .leading, spacing: 16) {
+                                LazyVGrid(columns: [GridItem(.adaptive(minimum: CGFloat(260 * cardScale), maximum: CGFloat(440 * cardScale)), spacing: 16)], alignment: .leading, spacing: 16) {
                                     ForEach(group.threads) { card($0, false) }
                                 }
                             }
@@ -365,10 +363,44 @@ struct ChatHomeView: View {
                     }
                 }.padding(28).frame(maxWidth: .infinity, alignment: .leading)
             }.id(page)
+            .environment(\.threadCardScale, cardScale)
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        // The window's theme (Settings → Appearance), else the system's window color.
+        .background(Theme.currentBackground ?? Color(nsColor: .windowBackgroundColor))
         .accessibilityLabel("Home \(page.rawValue.lowercased()) page")
     }
+    private func studioGroups(_ groups: [HomeThreadGroup]) -> some View {
+        StudioGroupFlow(spacing: 32) {
+            ForEach(groups) { group in
+                let columns = min(4, group.threads.count)
+                let tile = CGFloat(96 * cardScale)
+                let width = max(160, CGFloat(columns) * tile + CGFloat(columns - 1) * 16)
+                VStack(alignment: .leading, spacing: 14) {
+                    groupHeading(group)
+                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(tile), spacing: 16), count: columns), alignment: .leading, spacing: 16) {
+                        ForEach(group.threads) { card($0, true) }
+                    }
+                }.frame(width: width, alignment: .topLeading)
+                #if DEBUG
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { MacHomeDebug.studioGroups[group.id] = $0 }
+                #endif
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Card size: smaller to the left, larger to the right.
+    private var cardSizeControl: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "square.grid.3x3").font(.caption).foregroundStyle(.secondary)
+            Slider(value: $cardScale, in: 0.7...1.6).frame(width: 130).controlSize(.small)
+            Image(systemName: "square.grid.2x2").foregroundStyle(.secondary)
+        }
+        .help("Card size")
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Card size")
+        .padding(.trailing, 8)
+    }
+
     private func groupHeading(_ group: HomeThreadGroup) -> some View {
         HStack {
             Text(group.title).font(.title2.weight(.semibold))

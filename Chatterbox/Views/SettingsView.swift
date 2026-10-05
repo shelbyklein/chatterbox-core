@@ -477,6 +477,7 @@ struct SettingsPage: View {
     var body: some View {
         SettingsView()
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Theme.currentBackground ?? Color.clear)
             // The window's toolbar is AppKit's (WindowToolbar.swift), so Done sits on the page.
             .overlay(alignment: .topTrailing) {
                 Button("Done") { model.showingSettings = false }

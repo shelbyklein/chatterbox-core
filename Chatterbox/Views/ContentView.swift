@@ -178,6 +178,7 @@ struct ContentView: View {
             }
             windowToolbarOwner?.install(in: window)
         })
+        .onChange(of: themeBackground) { windowToolbarOwner?.applyTheme() }
         .onAppear { model.revealMainChatWindow = { openWindow(id: "main") } }
         .sheet(isPresented: $model.showingCloneFromGitHub) { CloneFromGitHubView() }
         .sheet(isPresented: $model.showingNewProject) { NewProjectSheet().environment(model) }

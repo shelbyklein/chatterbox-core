@@ -125,7 +125,7 @@ struct CommandCenterView: View {
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Theme.currentBackground ?? Color(nsColor: .windowBackgroundColor))
         .onAppear { layout.reconcile(available: Set(model.activeSessions.map(\.id))) }
         .onChange(of: model.activeSessions.map(\.id)) { _, ids in layout.reconcile(available: Set(ids)) }
         .sheet(item: $choice) { request in
@@ -252,7 +252,7 @@ struct CommandCenterTile: View {
                     .environment(\.chatSwitchCoordinator, nil)
             }
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Theme.currentBackground ?? Color(nsColor: .windowBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay { RoundedRectangle(cornerRadius: 12).strokeBorder(active ? Color.accentColor : Color.primary.opacity(0.16), lineWidth: active ? 2 : 1) }
         .accessibilityElement(children: .contain)
