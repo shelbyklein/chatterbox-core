@@ -1167,7 +1167,20 @@ extension ContentView {
             .accessibilityHint(collapsed ? "Shows the section" : "Collapses the section")
             Spacer()
             switch section {
-            case .projects: tagFilterMenu
+            case .projects:
+                tagFilterMenu
+                Menu {
+                    Button("New Project\u{2026}") { model.showingNewProject = true }
+                    Button("Open Project\u{2026}") { model.chooseAndOpenProject() }
+                    Button("New Project from GitHub\u{2026}") { model.showingCloneFromGitHub = true }
+                } label: { Image(systemName: "plus") } primaryAction: {
+                    model.showingNewProject = true
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("New project (hold for Open Project or GitHub)")
+                .accessibilityLabel("New Project")
             case .studios:
                 Button { beginNewStudio() } label: { Image(systemName: "plus") }
                     .buttonStyle(.borderless).help("New Studio").accessibilityLabel("New Studio")
