@@ -279,8 +279,10 @@ struct ChatDetailView: View {
             // "Read new replies aloud": each finished reply that arrives while this chat is open.
             .onChange(of: latestFinishedReply?.id) { old, new in
                 guard let new, old != nil, new != old, GolemVoice.shared.autoRead, scenePhase == .active,
-                      let reply = latestFinishedReply else { return }
-                GolemVoice.shared.speak(new, text: reply.text)
+                      !dictation.isListening, let reply = latestFinishedReply else { return }
+                GolemVoice.shared.speak(new, text: reply.text) {
+                    if GolemVoice.shared.listensAfter { listenForReply() }
+                }
             }
             #endif
             .onChange(of: scenePhase) { _, phase in
@@ -327,8 +329,21 @@ struct ChatDetailView: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Message \(summary.title)")
             .accessibilityHint("Shows the message box")
-            Text("Tap to chat").font(.caption).foregroundStyle(.secondary)
-                .accessibilityHidden(true)
+            if dictation.isListening {
+                Button { dictation.stop() } label: {
+                    Label(draft.isEmpty ? "Listening\u{2026}" : draft, systemImage: "mic.fill")
+                        .lineLimit(3)
+                        .font(.callout)
+                        .padding(.horizontal, 14).padding(.vertical, 8)
+                        .background(Color(uiColor: .secondarySystemBackground), in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Listening. Pause to send, or tap to stop.")
+                Text("Pause to send \u{00B7} tap to stop").font(.caption).foregroundStyle(.secondary)
+            } else {
+                Text("Tap to chat").font(.caption).foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.bottom, 8)
@@ -587,6 +602,25 @@ struct ChatDetailView: View {
             }
         }
     }
+
+    #if GOLEM_APP
+    /// The back-and-forth: after Golem reads a reply, listen for yours and send it when you
+    /// pause. Saying nothing ends it. Never sends over something you'd already typed.
+    private func listenForReply() {
+        guard isConversation, scenePhase == .active, !dictation.isListening,
+              draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, pendingImages.isEmpty else { return }
+        let state = composerState
+        let generation = state.inputGeneration
+        Task {
+            await dictation.start(onPause: { spoken in
+                guard !spoken.isEmpty, state.inputGeneration == generation else { return }
+                Task { await send() }
+            }) { spoken in
+                state.applyTranscription(spoken, prefix: "", generation: generation)
+            }
+        }
+    }
+    #endif
 
     /// From the + menu. iOS may ask "Allow Paste?" first.
     private func pasteImages() {

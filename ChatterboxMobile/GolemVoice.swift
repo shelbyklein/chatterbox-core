@@ -29,6 +29,11 @@ final class GolemVoice: NSObject {
         get { access(keyPath: \.autoRead); return AppPreferences.defaults.bool(forKey: "golemVoiceAutoRead") }
         set { withMutation(keyPath: \.autoRead) { AppPreferences.defaults.set(newValue, forKey: "golemVoiceAutoRead") } }
     }
+    /// After reading a reply aloud, listen for yours and send it when you pause.
+    var listensAfter: Bool {
+        get { access(keyPath: \.listensAfter); return AppPreferences.defaults.object(forKey: "golemVoiceListensAfter") as? Bool ?? true }
+        set { withMutation(keyPath: \.listensAfter) { AppPreferences.defaults.set(newValue, forKey: "golemVoiceListensAfter") } }
+    }
     var voiceID: String {
         get { access(keyPath: \.voiceID); return AppPreferences.defaults.string(forKey: "golemVoiceID") ?? Self.defaultVoice }
         set { withMutation(keyPath: \.voiceID) { AppPreferences.defaults.set(newValue, forKey: "golemVoiceID") } }
@@ -57,7 +62,8 @@ final class GolemVoice: NSObject {
         if speakingID == id { stop() } else { speak(id, text: text) }
     }
 
-    func speak(_ id: UUID, text: String) {
+    /// `then` runs only if the reply was read to the end, not when it's stopped.
+    func speak(_ id: UUID, text: String, then: (() -> Void)? = nil) {
         stop()
         let spoken = Self.spoken(text)
         guard !spoken.isEmpty else { return }
@@ -65,9 +71,10 @@ final class GolemVoice: NSObject {
         problem = nil
         task = Task { [weak self] in
             await self?.read(spoken)
-            guard let self, self.speakingID == id else { return }
+            guard let self, self.speakingID == id, !Task.isCancelled else { return }
             self.speakingID = nil
             self.deactivate()
+            then?()
         }
     }
 
@@ -292,6 +299,9 @@ struct GolemVoiceSettings: View {
     var body: some View {
         Section {
             Toggle("Read new replies aloud", isOn: Binding(get: { voice.autoRead }, set: { voice.autoRead = $0 }))
+            if voice.autoRead {
+                Toggle("Then listen for my reply", isOn: Binding(get: { voice.listensAfter }, set: { voice.listensAfter = $0 }))
+            }
             if voice.hasKey {
                 if voice.voices.isEmpty {
                     LabeledContent("Voice", value: "Loading\u{2026}")
@@ -316,9 +326,9 @@ struct GolemVoiceSettings: View {
         } header: {
             Text("Voice")
         } footer: {
-            Text(voice.hasKey
+            Text((voice.autoRead && voice.listensAfter ? "After reading a reply, Golem listens for yours and sends it when you pause. Stay quiet to end the conversation. " : "") + (voice.hasKey
                  ? "Replies are spoken with ElevenLabs: their text is sent to ElevenLabs and uses your plan's credits. The key stays on this iPhone."
-                 : "Without a key, Golem uses this iPhone's own voice. Add an ElevenLabs API key for a natural voice; a key limited to text to speech, with a credit limit, is enough.")
+                 : "Without a key, Golem uses this iPhone's own voice. Add an ElevenLabs API key for a natural voice; a key limited to text to speech, with a credit limit, is enough."))
         }
         .task(id: voice.hasKey) { if voice.hasKey && voice.voices.isEmpty { await voice.loadVoices() } }
     }
