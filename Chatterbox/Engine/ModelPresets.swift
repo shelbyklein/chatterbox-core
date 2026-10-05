@@ -121,8 +121,8 @@ final class ModelPresets {
                 : info.displayName
         case .codex:
             let models = CodexAppServer.shared.models
-            model = preset.model.flatMap { id in models.first { $0.model == id }?.displayName }
-                ?? models.first(where: \.isDefault)?.displayName ?? preset.model ?? "Codex"
+            model = preset.model.map { CodexModelCatalog.name($0, models: models) }
+                ?? models.first(where: \.isDefault)?.displayName ?? "Codex"
         }
         return model + (preset.effort.map { " \u{00B7} " + RuntimePaths.effortLabel($0) } ?? "")
     }
@@ -190,7 +190,7 @@ final class ModelPresets {
         let model: String
         switch preset.backend {
         case .claude: model = preset.model.map { ClaudeModels.shared.info($0).displayName } ?? "Claude"
-        case .codex: model = preset.model.flatMap { id in CodexAppServer.shared.models.first { $0.model == id }?.displayName } ?? preset.model ?? "Codex"
+        case .codex: model = preset.model.map { CodexModelCatalog.name($0, models: CodexAppServer.shared.models) } ?? "Codex"
         }
         return model + " \u{00B7} " + (preset.effort.map { RuntimePaths.effortLabel($0) } ?? "Default")
     }

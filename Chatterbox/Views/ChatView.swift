@@ -1020,7 +1020,7 @@ struct ChatView: View {
             let current = models.first { $0.model == codex.model }
             // With no pick, show what Codex will actually use.
             let resolved = current ?? models.first(where: \.isDefault)
-            let name = resolved?.displayName ?? "Codex default"
+            let name = resolved.map { CodexModelCatalog.name($0.model, models: models) } ?? "Codex default"
             let modelName = current == nil && resolved != nil ? "\(name) (default)" : name
             let effort = codex.effort ?? resolved?.defaultEffort
             let effortFull = codex.effort.map { Self.effortLabel($0) } ?? effort.map { "\(Self.effortLabel($0)) (default)" }
