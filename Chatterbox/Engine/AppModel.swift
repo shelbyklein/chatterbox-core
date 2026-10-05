@@ -36,6 +36,7 @@ final class AppModel {
             #if GOLEM_APP
             AppPreferences.defaults.set(showingDot, forKey: GolemMiniWindow.visibleKey)
             if showingDot {
+                mainChatWindow?.orderOut(nil)
                 if dotMiniWindow == nil { dotMiniWindow = GolemMiniWindow(model: self) }
                 dotMiniWindow?.show()
             } else {

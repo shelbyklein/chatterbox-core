@@ -21,8 +21,10 @@ struct ChatView: View {
     @State private var attachments: [Attachment]
 
     private let sidebar: AnyView?
+    private let standaloneWindow: Bool
 
-    init(session: ChatSession, sidebar: AnyView? = nil) {
+    init(session: ChatSession, sidebar: AnyView? = nil, standaloneWindow: Bool = false) {
+        self.standaloneWindow = standaloneWindow
         self.sidebar = sidebar
         self.session = session
         _draft = State(initialValue: session.draft)
@@ -128,7 +130,7 @@ struct ChatView: View {
 
     var body: some View {
         Group {
-            if let sidebar {
+            if sidebar != nil || standaloneWindow {
                 ChatColumns(sidebar: sidebar, chat: AnyView(chatContent),
                     inspector: inspectorOpen ? AnyView(inspectorContent) : nil,
                     floatingGolem: session.isDot ? AnyView(floatingGolem) : nil,
@@ -146,7 +148,13 @@ struct ChatView: View {
         // whole toolbar each time a chat replaces this view.
         .modifier(OwnChatToolbar(enabled: tileContext == nil && windowToolbar == nil, bridge: ownToolbar))
         .modifier(ChatWindowTitle(title: session.title, embedded: tileContext != nil || windowToolbar != nil))
-        .onAppear { attachToolbar() }
+        .onAppear {
+            if standaloneWindow && session.isDot { golemPanelOpen = true }
+            attachToolbar()
+        }
+        .onChange(of: model.showingDot) { _, miniVisible in
+            if standaloneWindow && session.isDot && !miniVisible { golemPanelOpen = true }
+        }
         .onDisappear { (windowToolbar ?? ownToolbar).detach(owner: toolbarOwner) }
         .background(ChatWindowReader { windowNumber = $0.windowNumber })
         // Agents often link files by bare path ("/Users/…/Print.pdf"), which macOS can't open as a URL.
@@ -367,7 +375,7 @@ struct ChatView: View {
                     if session.isDot {
                         VStack(spacing: 0) {
                             #if GOLEM_APP
-                            DotConversation(session: session, initialRows: sidebar == nil ? 80 : Self.firstRows, showsInlineAvatar: sidebar == nil)
+                            DotConversation(session: session, initialRows: sidebar == nil ? 80 : Self.firstRows, showsInlineAvatar: sidebar == nil && !standaloneWindow)
                             #else
                             Text("Open this conversation in Golem.")
                             #endif

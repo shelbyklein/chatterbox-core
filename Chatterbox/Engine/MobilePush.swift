@@ -125,6 +125,38 @@ actor APNsProvider {
             RuntimeHooks.note("Mobile push: \(status)")
         }
     }
+    func deliveryStatus(product: String) -> String {
+        AppPreferences.defaults.string(forKey: "mobilePushLastStatus_" + product) ?? "No delivery recorded yet."
+    }
+    private func recordDelivery(_ message: String, product: String) {
+        status = message
+        AppPreferences.defaults.set(message, forKey: "mobilePushLastStatus_" + product)
+    }
+    /// Explicit user test through the same provider and topic as ordinary notifications.
+    func testDelivery(_ deviceID: UUID, product: String, identity: String) async throws -> String {
+        guard enabled(forProduct: product) else { throw PushFailure.message("Mobile notifications are disabled or the APNs key is not configured.") }
+        guard let device = CompanionServer.shared.devices.first(where: { $0.id == deviceID && ($0.product ?? "chatterbox") == product }),
+              let push = device.push, push.enabled else { throw PushFailure.message("Enable notifications in this device's app first.") }
+        let name = product == "golem" ? "Golem" : "Chatterbox"
+        var event = Event(title: "\(name) test notification", body: "Your Mac sent this test through \(name). Tap to open \(name).", chat: nil, kind: product == "golem" ? "golem" : "test")
+        event.id = identity
+        do {
+            let defaults = AppPreferences.defaults
+            let data = try Self.payload(event, previews: defaults.object(forKey: "mobilePushPreviews") as? Bool ?? true,
+                                        sound: defaults.object(forKey: "mobilePushSound") as? Bool ?? true)
+            let code = try await APNsProvider.shared.send(token: push.token, environment: push.environment, payload: data, collapse: identity, product: product)
+            guard code == 200 else {
+                CompanionServer.shared.clearPush(device.id, token: push.token)
+                throw PushFailure.message("\(device.name) needs to register notifications again.")
+            }
+            let message = "Apple accepted the push to \(device.name) at \(Date().formatted(date: .omitted, time: .shortened))."
+            recordDelivery(message, product: product)
+            return message
+        } catch {
+            recordDelivery(error.localizedDescription, product: product)
+            throw error
+        }
+    }
     private(set) var sending = false
     @ObservationIgnored private var queue: [Event] = []
     struct Event {
@@ -134,6 +166,13 @@ actor APNsProvider {
     }
     var configured: Bool { AppPreferences.defaults.bool(forKey: "mobilePushConfigured") }
     var enabled: Bool { configured && (AppPreferences.defaults.object(forKey: "mobilePushEnabled") as? Bool ?? true) && CompanionServer.shared.isEnabled }
+    func enabled(forProduct product: String) -> Bool {
+        let defaults = AppPreferences.defaults
+        let optedIn = product == "golem"
+            ? (defaults.object(forKey: "golemPushEnabled") as? Bool ?? (defaults.object(forKey: "mobilePushEnabled") as? Bool ?? true))
+            : (defaults.object(forKey: "mobilePushEnabled") as? Bool ?? true)
+        return configured && optedIn && CompanionServer.shared.isEnabled
+    }
     func configure(file: URL, keyID: String, teamID: String) throws {
         let pem = try String(contentsOf: file, encoding: .utf8)
         try PushCredentials(keyID: keyID.trimmingCharacters(in: .whitespacesAndNewlines).uppercased(),
@@ -144,7 +183,7 @@ actor APNsProvider {
     }
     func removeKey() { PushCredentials.remove(); AppPreferences.defaults.set(false, forKey: "mobilePushConfigured"); status = "Key removed." }
     static func payload(_ event: Event, previews: Bool, sound: Bool) throws -> Data {
-        let product=event.kind=="golem" ? "Golem":"Chatterbox"
+        let product=["golem","email"].contains(event.kind) ? "Golem":"Chatterbox"
         var aps: [String: Any] = ["alert": ["title": previews ? String(event.title.prefix(120)) : product,
             "body": previews ? String(event.body.prefix(650)) : "Open \(product) to see your update."],
             "thread-id": event.chat?.uuidString ?? "chatterbox"]
@@ -154,7 +193,7 @@ actor APNsProvider {
         return try JSONSerialization.data(withJSONObject: body)
     }
     func post(title: String, body: String, chat: UUID?, kind: String,identity:String?=nil) {
-        guard enabled, AppPreferences.defaults.object(forKey: "mobilePush_\(kind)") as? Bool ?? true else { return }
+        guard enabled(forProduct: ["golem","email"].contains(kind) ? "golem" : "chatterbox"), AppPreferences.defaults.object(forKey: "mobilePush_\(kind)") as? Bool ?? true else { return }
         var event=Event(title:title,body:body,chat:chat,kind:kind)
         if let identity{event.id=identity}
         enqueue(event)
@@ -206,7 +245,7 @@ actor APNsProvider {
         defer { sending = false }
         while !queue.isEmpty {
             let event = queue.removeFirst()
-            guard enabled else { queue.removeAll(); return }
+            guard enabled(forProduct: ["golem","email"].contains(event.kind) ? "golem" : "chatterbox") else { continue }
             let defaults = AppPreferences.defaults
             let payload: Data
             do { payload = try Self.payload(event, previews: defaults.object(forKey: "mobilePushPreviews") as? Bool ?? true,
@@ -214,14 +253,14 @@ actor APNsProvider {
             catch { status = error.localizedDescription; continue }
             let product=["golem","email"].contains(event.kind) ? "golem":"chatterbox"
             let targets = CompanionServer.shared.devices.filter { ($0.product ?? "chatterbox")==product && $0.push?.enabled == true && (event.target == nil || $0.id == event.target) }
-            if targets.isEmpty { status = "No paired device has enabled notifications yet." }
+            if targets.isEmpty { recordDelivery("No paired device has enabled notifications yet.", product: product) }
             for device in targets {
                 guard let push = device.push else { continue }
                 do {
                     let code = try await APNsProvider.shared.send(token: push.token, environment: push.environment, payload: payload, collapse: event.id,product:product)
-                    if code == 410 { CompanionServer.shared.clearPush(device.id, token: push.token); status = "\(device.name) needs to register notifications again." }
-                    else { status = "Apple accepted the push to \(device.name) at \(Date().formatted(date: .omitted, time: .shortened))." }
-                } catch { status = error.localizedDescription }
+                    if code == 410 { CompanionServer.shared.clearPush(device.id, token: push.token); recordDelivery("\(device.name) needs to register notifications again.", product: product) }
+                    else { recordDelivery("Apple accepted the push to \(device.name) at \(Date().formatted(date: .omitted, time: .shortened)).", product: product) }
+                } catch { recordDelivery(error.localizedDescription, product: product) }
             }
         }
     }
