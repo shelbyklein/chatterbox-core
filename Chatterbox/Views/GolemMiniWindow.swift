@@ -56,6 +56,10 @@ final class GolemMiniWindow: NSObject, NSWindowDelegate {
     @ObservationIgnored private var acknowledgement: Task<Void, Never>?
     /// When the mini last opened. The pointer that clicked it open hasn't read anything yet.
     @ObservationIgnored private var openedAt: Date?
+    /// Golem is listening for a spoken reply: the box shows what's heard, and sends on a pause.
+    var listening = false
+    /// Listen and mute buttons, when the app can talk (Golem's own app).
+    @ObservationIgnored var voice: MiniVoiceControls?
     /// The bubble grown to show a long message whole: the panel stretches up as far as the
     /// screen allows, Golem staying where he is. Its usual size comes back afterwards.
     private(set) var bubbleExpanded = false
@@ -377,6 +381,13 @@ final class GolemMiniWindow: NSObject, NSWindowDelegate {
     func windowShouldClose(_ sender: NSWindow) -> Bool { closeMini(); return false }
 }
 
+/// What the mini's listen and mute buttons do; supplied by the app that can talk.
+struct MiniVoiceControls {
+    var muted: @MainActor () -> Bool
+    var toggleMute: @MainActor () -> Void
+    var toggleListening: @MainActor () -> Void
+}
+
 final class GolemPanel: NSPanel {
     var acceptsTyping = true
     override var canBecomeKey: Bool { acceptsTyping }
@@ -475,6 +486,8 @@ private struct GolemMiniContent: View {
         }
         .onChange(of: session.title) { _, title in controller.panel?.title = title }
         .onChange(of: draft) { _, value in session.draft = value }
+        // Spoken words arrive through the draft while he listens.
+        .onChange(of: session.draft) { _, value in if controller.listening, value != draft { draft = value } }
         .onChange(of: attachments) { _, value in session.draftAttachments = value }
         .onChange(of: controller.collapsed) { _, collapsed in
             if collapsed { focused = false }
@@ -520,7 +533,7 @@ private struct GolemMiniContent: View {
                                sizes: GolemMiniWindow.sizes.map { ($0.label, $0.scale) }, currentScale: controller.scale,
                                onSize: controller.setScale)
             }
-            .help(open ? "Click to minimize \(session.title). Drag to move." : "Click to talk to \(session.title). Drag to move; right-click for more.")
+            .help(open ? "Click to minimize \(session.title); double-click for the full chat. Drag to move." : "Click to talk to \(session.title); double-click for the full chat. Drag to move; right-click for more.")
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("\(session.title)\(unread > 0 ? ", \(unread) unread" : "")")
             .accessibilityAddTraits(.isButton)
@@ -564,13 +577,19 @@ private struct GolemMiniContent: View {
 
     private var quickActions: some View {
         HStack(spacing: 0) {
+            if let voice = controller.voice {
+                listenButton(voice).frame(maxWidth: 48)
+                Divider().frame(height: 18)
+                muteButton(voice).frame(maxWidth: 48)
+                Divider().frame(height: 18)
+            }
             Button { controller.setCollapsed(false) } label: {
-                Image(systemName: "square.and.pencil").font(.system(size: 15, weight: .medium)).frame(width: 48, height: 36)
+                Image(systemName: "square.and.pencil").font(.system(size: 15, weight: .medium)).frame(maxWidth: 48).frame(height: 36)
                     .contentShape(Rectangle())
             }.buttonStyle(.plain).help("Message \(session.title)")
             Divider().frame(height: 18)
             Button(action: controller.openFullChat) {
-                Image(systemName: "arrow.up.right").font(.system(size: 14, weight: .medium)).frame(width: 48, height: 36)
+                Image(systemName: "arrow.up.right").font(.system(size: 14, weight: .medium)).frame(maxWidth: 48).frame(height: 36)
                     .overlay(alignment: .topTrailing) {
                         if unread > 0 { Circle().fill(.white).frame(width: 6, height: 6).padding(7) }
                     }
@@ -604,7 +623,7 @@ private struct GolemMiniContent: View {
             .foregroundStyle(.secondary)
             .accessibilityLabel("More options")
             // Up to four lines, then scrolls. Return sends, Shift-Return starts a new line, ⌘↩ sends now.
-            ComposerBox(text: $draft, placeholder: "Message \(session.title)", isFocused: $focused,
+            ComposerBox(text: $draft, placeholder: controller.listening ? "Listening\u{2026} pause to send" : "Message \(session.title)", isFocused: $focused,
                         font: .systemFont(ofSize: 14), maxHeight: 4 * 18,
                         onKey: { key, modifiers in
                             guard key == .return, modifiers.contains(.command) else { return false }
@@ -613,6 +632,10 @@ private struct GolemMiniContent: View {
                         },
                         onSubmit: { send() })
                 .frame(maxWidth: .infinity).padding(.vertical, 6)
+            if let voice = controller.voice {
+                listenButton(voice).frame(width: 26, height: 30)
+                muteButton(voice).frame(width: 26, height: 30)
+            }
             if session.canStop && !canSend {
                 Button { session.interrupt() } label: { Image(systemName: "stop.fill").frame(width: 30, height: 30) }
                     .buttonStyle(.plain).accessibilityLabel("Stop").help("Stop (Esc)")
@@ -634,6 +657,31 @@ private struct GolemMiniContent: View {
         .background(barShape(Color(nsColor: .windowBackgroundColor)))
         .overlay(Capsule().strokeBorder(.primary.opacity(0.12)))
         .transition(.opacity)
+    }
+
+    private func listenButton(_ voice: MiniVoiceControls) -> some View {
+        Button(action: voice.toggleListening) {
+            Image(systemName: controller.listening ? "mic.fill" : "mic")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(controller.listening ? Color.red : Color.secondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(controller.listening ? "Stop listening" : "Talk to \(session.title): sends when you pause")
+        .accessibilityLabel(controller.listening ? "Stop listening" : "Start listening")
+    }
+
+    private func muteButton(_ voice: MiniVoiceControls) -> some View {
+        let muted = voice.muted()
+        return Button(action: voice.toggleMute) {
+            Image(systemName: muted ? "speaker.slash" : "speaker.wave.2")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(muted ? "Unmute: read replies aloud" : "Mute: stop reading replies aloud")
+        .accessibilityLabel(muted ? "Unmute" : "Mute")
     }
 
     @ViewBuilder private var sizeOptions: some View {
@@ -761,6 +809,8 @@ struct MiniDragRegion: NSViewRepresentable {
         private var start: NSPoint?
         private var origin = NSPoint.zero
         private var dragged = false
+        /// A click waits briefly to see if it's the first of a double-click.
+        private var pendingClick: DispatchWorkItem?
         override var mouseDownCanMoveWindow: Bool { false }
         override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
         override func resetCursorRects() { addCursorRect(bounds, cursor: .openHand) }
@@ -779,7 +829,15 @@ struct MiniDragRegion: NSViewRepresentable {
         override func mouseUp(with event: NSEvent) {
             guard start != nil else { return }
             start = nil
-            if dragged { onDragEnd?() } else { onClick?() }
+            if dragged { onDragEnd?(); return }
+            pendingClick?.cancel()
+            pendingClick = nil
+            // Double-click: his full chat. Single: open or minimize the mini.
+            if event.clickCount >= 2, let onOpenFull { onOpenFull(); return }
+            guard onOpenFull != nil else { onClick?(); return }
+            let click = DispatchWorkItem { [weak self] in self?.pendingClick = nil; self?.onClick?() }
+            pendingClick = click
+            DispatchQueue.main.asyncAfter(deadline: .now() + min(NSEvent.doubleClickInterval, 0.3), execute: click)
         }
         override func rightMouseDown(with event: NSEvent) {
             guard onClick != nil else { return }

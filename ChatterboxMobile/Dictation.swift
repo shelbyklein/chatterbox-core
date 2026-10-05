@@ -15,9 +15,17 @@ final class Dictation {
     @ObservationIgnored private var request: SFSpeechAudioBufferRecognitionRequest?
     @ObservationIgnored private var task: SFSpeechRecognitionTask?
     @ObservationIgnored private let recognizer = SFSpeechRecognizer()
+    /// Hands-free: called once with what was said when you pause (empty if you said nothing).
+    @ObservationIgnored private var onPause: ((String) -> Void)?
+    @ObservationIgnored private var watchdog: Task<Void, Never>?
+    @ObservationIgnored private var heard = ""
+    @ObservationIgnored private var lastHeard = Date()
 
     /// Starts listening. `onText` gets the whole transcription so far, each time it changes.
-    func start(onText: @escaping (String) -> Void) async {
+    /// With `onPause`, it stops by itself: once you've spoken and then paused for `pause`
+    /// seconds, or after `giveUp` seconds of silence, and hands `onPause` what it heard.
+    func start(pause: TimeInterval = 1.5, giveUp: TimeInterval = 8,
+               onPause: ((String) -> Void)? = nil, onText: @escaping (String) -> Void) async {
         problem = nil
         guard await Self.permitted() else {
             problem = "Chatterbox needs the microphone and speech recognition. Allow them in Settings → Chatterbox."
@@ -46,13 +54,31 @@ final class Dictation {
             engine.prepare()
             try engine.start()
             isListening = true
+            heard = ""
+            lastHeard = Date()
+            self.onPause = onPause
+            if onPause != nil {
+                watchdog = Task { [weak self] in
+                    while !Task.isCancelled {
+                        try? await Task.sleep(for: .milliseconds(250))
+                        guard let self, self.isListening else { return }
+                        let quiet = Date().timeIntervalSince(self.lastHeard)
+                        if quiet >= (self.heard.isEmpty ? giveUp : pause) { self.finishHandsFree(); return }
+                    }
+                }
+            }
 
             task = recognizer.recognitionTask(with: request) { [weak self] result, error in
                 let text = result?.bestTranscription.formattedString
                 let done = error != nil || result?.isFinal == true
                 Task { @MainActor in
-                    if let text { onText(text) }
-                    if done { self?.stop() }
+                    guard let self else { return }
+                    if let text, text != self.heard {
+                        self.heard = text
+                        self.lastHeard = Date()
+                        onText(text)
+                    }
+                    if done { if self.onPause != nil { self.finishHandsFree() } else { self.stop() } }
                 }
             }
         } catch {
@@ -61,7 +87,18 @@ final class Dictation {
         }
     }
 
+    /// Hands-free listening is over: stop, then pass on what was heard.
+    private func finishHandsFree() {
+        let handler = onPause, text = heard.trimmingCharacters(in: .whitespacesAndNewlines)
+        stop()
+        handler?(text)
+    }
+
+    /// Stops listening. A hands-free listen stopped this way sends nothing.
     func stop() {
+        onPause = nil
+        watchdog?.cancel()
+        watchdog = nil
         guard isListening || request != nil else { return }
         engine.stop()
         engine.inputNode.removeTap(onBus: 0)
