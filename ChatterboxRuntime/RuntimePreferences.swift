@@ -5,7 +5,7 @@ import Foundation
 enum RuntimePreferences {
     static let keys:Set<String>=[
         "defaultBackend","defaultModel","defaultEffort","defaultPersonality","claudePath","codexPath","codexFolder",
-        "codexDefaultModel","codexDefaultEffort","claudeDefaultMode","codexDefaultMode","remoteControlClaudeChats","easyCLIProxyEnabled",
+        "codexDefaultModel","codexDefaultEffort","claudeDefaultMode","codexDefaultMode","remoteControlClaudeChats","easyCLIProxyEnabled","proxyClaudeChats","proxyCodexChats",
         "companionEnabled","companionDevices","pins","openWebsitePinsInApp",
         "plugin.nextSteps.enabled","plugin.nextSteps.minAnswerChars","plugin.nextSteps.suggestCommands",
         "mobilePushEnabled","golemPushEnabled","mobilePushLastStatus"

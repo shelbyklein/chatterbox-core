@@ -952,7 +952,7 @@ private struct ProxySection: View {
                 .font(.caption).foregroundStyle(.secondary)
         }
         .task { await proxy.refresh() }
-        .onChange(of: claude) { restartClaudeChats() }
+        .onChange(of: claude) { if !RuntimeClient.usesDaemon { restartClaudeChats() } }
         .onChange(of: codex) { Task { await proxy.refresh() } }
     }
 
