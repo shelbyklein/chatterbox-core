@@ -63,16 +63,29 @@ final class GolemMiniWindow: NSObject, NSWindowDelegate {
     /// Content-driven height is temporary; it must not replace the user's normal mini size.
     @ObservationIgnored private var fittingReply = false
 
+    @ObservationIgnored private var replyFit: Task<Void, Never>?
+
     func fitReply(height: CGFloat, reserve: CGFloat) {
+        replyFit?.cancel()
+        replyFit = Task { @MainActor [weak self] in
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            self?.applyReplyFit(height: height, reserve: reserve)
+        }
+    }
+
+    private func applyReplyFit(height: CGFloat, reserve: CGFloat) {
         guard let panel, !collapsed, !dismissing, !bubbleExpanded, height.isFinite, height > 0 else { return }
         let screen = panel.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? panel.frame
-        let available = max(0, screen.maxY - panel.frame.minY - 12)
+        let available = max(0, screen.height - 24)
         let desired = min(max(expandedSize.height, ceil(height + reserve)), available)
         fittingReply = true
         guard abs(panel.frame.height - desired) > 1 else { return }
         var frame = panel.frame
         frame.size.height = desired
-        // Grow upwards: the avatar and composer retain their position.
+        // Prefer growing upwards. If the top edge is too close, move down just
+        // enough to fit the message instead of needlessly making it scroll.
+        frame.origin.y = min(frame.minY, screen.maxY - 12 - desired)
         configure(frame: frame)
     }
 
