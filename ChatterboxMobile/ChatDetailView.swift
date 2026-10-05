@@ -42,6 +42,10 @@ struct ChatDetailView: View {
     /// Next Steps suggestions you closed on this device, until new ones arrive.
     @State private var dismissedSteps: [String]?
     private var detail: Companion.ChatDetail? { history.detail }
+    /// The newest reply that has finished streaming.
+    private var latestFinishedReply: Companion.Item? {
+        detail?.items.last { $0.kind == .assistant && !$0.isCommentary && !$0.isStreaming && !$0.text.isEmpty }
+    }
     private var composerState: MobileComposerDraft<PendingImage> { store.composer(for: chat.id) }
     private var draft: String {
         get { composerState.text }
@@ -271,6 +275,14 @@ struct ChatDetailView: View {
             .onChange(of: pinRequests) { pin(proxy, for: 1.5) }
             // The tab bar coming or going resizes the list: keep a reader at the end there, not one above it.
             .onChange(of: layoutRequests) { if atBottom || Date() < pinUntil { pin(proxy, for: 1.5) } }
+            #if GOLEM_APP
+            // "Read new replies aloud": each finished reply that arrives while this chat is open.
+            .onChange(of: latestFinishedReply?.id) { old, new in
+                guard let new, old != nil, new != old, GolemVoice.shared.autoRead, scenePhase == .active,
+                      let reply = latestFinishedReply else { return }
+                GolemVoice.shared.speak(new, text: reply.text)
+            }
+            #endif
             .onChange(of: scenePhase) { _, phase in
                 guard phase == .active else { return }
                 // Already loaded: this pin covers it. Otherwise the first load will.
@@ -797,6 +809,14 @@ private struct ItemRow: View {
                         // Selecting stops at each paragraph; this copies the whole reply.
                         Button { UIPasteboard.general.string = item.text } label: { Label("Copy", systemImage: "doc.on.doc") }
                             .buttonStyle(.borderless)
+                        #if GOLEM_APP
+                        // Golem reads it aloud (ElevenLabs with a key, else the phone's voice).
+                        Button { GolemVoice.shared.toggle(item.id, text: item.text) } label: {
+                            Label(GolemVoice.shared.speakingID == item.id ? "Stop" : "Listen",
+                                  systemImage: GolemVoice.shared.speakingID == item.id ? "stop.fill" : "speaker.wave.2")
+                        }
+                        .buttonStyle(.borderless)
+                        #endif
                     }
                     .font(.caption).foregroundStyle(.secondary)
                 }
