@@ -60,6 +60,8 @@ final class ClaudeModels {
             accountEmail = info.accountEmail
             plan = info.plan
             statusMessage = info.accountEmail == nil ? "Claude Code isn't signed in. Run `claude` in Terminal and log in." : nil
+        } catch is CancellationError {
+            // A refresh cut short (a newer one, or the app quitting) says nothing about Claude Code.
         } catch {
             statusMessage = error.localizedDescription
         }

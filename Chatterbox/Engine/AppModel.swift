@@ -723,7 +723,8 @@ final class AppModel {
             if let draft=state.draft{session.draft=draft.text;session.draftAttachments=draft.attachments}
             bindProjection(session);sessions.append(session)
         }
-        if selectedID==nil {selectedID=sessions.first(where:{!$0.isDot})?.id}
+        // Choosing a chat to have ready doesn't leave the Home page Chatterbox opens on.
+        if selectedID==nil {let home=showingHome;selectedID=sessions.first(where:{!$0.isDot})?.id;showingHome=home}
     }
     /// Reloads the chat list from the background service. One at a time: a request during a
     /// reload runs once after it. A failed reload retries (1, 2, 4 s, then every 10 s) while
