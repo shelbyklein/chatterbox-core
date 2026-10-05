@@ -964,7 +964,7 @@ struct ChatView: View {
                 }
                 Section("Presets") {
                     ForEach(ModelPresets.shared.presets) { preset in
-                        Button(preset.title) { ModelPresets.shared.apply(preset, to: session) }
+                        Button(preset.displayName) { ModelPresets.shared.apply(preset, to: session) }
                     }
                 }
             } label: {

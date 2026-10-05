@@ -15,6 +15,16 @@ struct ModelPreset: Codable, Identifiable, Equatable {
     var followsDefault: Bool?
     /// What you call it ("Sol"), so you can tell an agent "start that in Galley with Sol".
     var nickname: String?
+
+    /// Keep stored model titles intact; nicknames are the visible quick-switch label.
+    var displayName: String {
+        let name = nickname?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return name.isEmpty ? title : name
+    }
+
+    var configurationDescription: String {
+        "\(backend.rawValue.capitalized) · \(model ?? "Default model") · \(effort ?? "Default effort")"
+    }
 }
 
 @MainActor

@@ -47,7 +47,7 @@ struct PresetPills: View {
         .alert("Rename Preset", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Name", text: $newTitle)
             Button("Rename") {
-                if let renaming { presets.rename(renaming, to: newTitle.trimmingCharacters(in: .whitespacesAndNewlines)) }
+                if let renaming { presets.setNickname(renaming, to: newTitle) }
             }
             Button("Cancel", role: .cancel) {}
         }
@@ -58,7 +58,7 @@ struct PresetPills: View {
         let color = style.color(for: preset.backend)
         let targeted = dropTarget == preset.id
         return Button { presets.apply(preset, to: session) } label: {
-            Text(preset.title)
+            Text(preset.displayName)
                 .lineLimit(1)
                 .fixedSize()
                 .padding(.horizontal, 7)
@@ -70,16 +70,16 @@ struct PresetPills: View {
         }
         .buttonStyle(.plain)
         .disabled(session.isRunning && preset.backend != session.record.backend)
-        .help(active ? "Using \(preset.title)" : "Switch to \(preset.title). Right-click to rename or delete; drag to reorder.")
+        .help("\(preset.displayName) — \(preset.configurationDescription). " + (active ? "Currently selected." : "Click to switch. Right-click to rename or delete; drag to reorder."))
         .contextMenu {
             Button("Rename\u{2026}") {
-                newTitle = preset.title
+                newTitle = preset.displayName
                 renaming = preset
             }
             Button("Delete", role: .destructive) { presets.remove(preset) }
         }
         .draggable(preset.id.uuidString) {
-            Text(preset.title)
+            Text(preset.displayName)
                 .padding(.horizontal, 7)
                 .padding(.vertical, 2)
                 .background(Capsule().fill(color.opacity(0.3)))

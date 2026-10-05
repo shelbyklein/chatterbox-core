@@ -89,7 +89,7 @@ struct ChatSettingsCog: View {
                 ForEach(ModelPresets.shared.presets) { preset in
                     row(selected: false) { ModelPresets.shared.apply(preset, to: session) } label: {
                         Image(systemName: "bolt").frame(width: 18).foregroundStyle(.secondary)
-                        Text(preset.title)
+                        Text(preset.displayName)
                     }
                 }
             }
