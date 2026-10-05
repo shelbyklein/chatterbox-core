@@ -142,7 +142,10 @@ struct ContentView: View {
 
     private var columnRoot: some View {
         Group {
-            if model.showingCommandCenter {
+            if model.showingSettings {
+                // Settings takes the whole window: its pages are listed where the chats were.
+                SettingsPage()
+            } else if model.showingCommandCenter {
                 CommandCenterView(layout: commandCenter)
             } else if model.showingHome {
                 ChatHomeView { session, icons in AnyView(row(session, number: nil, card: true, expanded: !icons, iconOnly: icons)) }

@@ -27,29 +27,103 @@ struct SettingsView: View {
     @AppStorage(PinStore.openInAppKey) private var openPinsInApp = true
     @AppStorage(ChatSession.remoteControlKey) private var remoteControl = false
 
-    var body: some View {
-        TabView {
-            general
-                .tabItem { Label("General", systemImage: "gearshape") }
+    /// Settings' pages, listed down the left of the window.
+    enum Page: String, CaseIterable, Identifiable {
+        case notifications, models, newChats, behavior, golem, appearance, instructions, secrets, plugins, iPhone, proxy, diagnostics, agents
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .notifications: "Notifications"
+            case .models: "Models"
+            case .newChats: "New Chats"
+            case .behavior: "Behavior"
+            case .golem: "Golem"
+            case .appearance: "Appearance"
+            case .instructions: "Instructions"
+            case .secrets: "Secrets"
+            case .plugins: "Plugins"
+            case .iPhone: "iPhone"
+            case .proxy: "Proxy"
+            case .diagnostics: "Diagnostics"
+            case .agents: "Claude Code & Codex"
+            }
+        }
+        var icon: String {
+            switch self {
+            case .notifications: "bell.badge"
+            case .models: "cpu"
+            case .newChats: "square.and.pencil"
+            case .behavior: "switch.2"
+            case .golem: "circle.circle"
+            case .appearance: "textformat.size"
+            case .instructions: "text.book.closed"
+            case .secrets: "key"
+            case .plugins: "puzzlepiece.extension"
+            case .iPhone: "iphone"
+            case .proxy: "network"
+            case .diagnostics: "stethoscope"
+            case .agents: "terminal"
+            }
+        }
+        /// Grouped in the list: everyday settings, then integrations, then the technical ones.
+        static var groups: [(String?, [Page])] {
             #if GOLEM_APP
-            Form { DotActivitySettings() }
-                .formStyle(.grouped)
-                .tabItem { Label(model.dotName, systemImage: "circle.circle") }
+            let everyday: [Page] = [.notifications, .models, .newChats, .behavior, .golem, .appearance, .instructions]
+            #else
+            let everyday: [Page] = [.notifications, .models, .newChats, .behavior, .appearance, .instructions]
             #endif
-            AppearanceSettingsView()
-                .tabItem { Label("Appearance", systemImage: "textformat.size") }
-            InstructionsSettingsView()
-                .tabItem { Label("Instructions", systemImage: "text.book.closed") }
-            SecretsSettingsView()
-                .tabItem { Label("Secrets", systemImage: "key") }
-            PluginsSettingsView()
-                .tabItem { Label("Plugins", systemImage: "puzzlepiece.extension") }
-            CompanionSettingsView()
-                .tabItem { Label("iPhone", systemImage: "iphone") }
+            return [(nil, everyday), ("Connections", [.secrets, .plugins, .iPhone]), ("Advanced", [.proxy, .agents, .diagnostics])]
+        }
+    }
+    @AppStorage("settingsPage") private var pageName = Page.notifications.rawValue
+    private var page: Page { Page(rawValue: pageName) ?? .notifications }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            List(selection: Binding(get: { page }, set: { if let new = $0 { pageName = new.rawValue } })) {
+                ForEach(Page.groups, id: \.0) { group in
+                    Section {
+                        ForEach(group.1) { page in
+                            Label(page.title, systemImage: page.icon).tag(page)
+                        }
+                    } header: {
+                        if let title = group.0 { Text(title) }
+                    }
+                }
+            }
+            .listStyle(.sidebar)
+            .frame(width: 230)
+            Divider()
+            pageView
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .id(page)
         }
     }
 
-    private var general: some View {
+    @ViewBuilder private var pageView: some View {
+        switch page {
+        case .notifications: notificationsPane
+        case .models: modelsPane
+        case .newChats: newChatsPane
+        case .behavior: behaviorPane
+        case .golem:
+            #if GOLEM_APP
+            Form { DotActivitySettings() }.formStyle(.grouped).frame(maxWidth: 680)
+            #else
+            EmptyView()
+            #endif
+        case .appearance: AppearanceSettingsView()
+        case .instructions: InstructionsSettingsView()
+        case .secrets: SecretsSettingsView()
+        case .plugins: PluginsSettingsView()
+        case .iPhone: CompanionSettingsView()
+        case .proxy: proxyPane
+        case .diagnostics: diagnosticsPane
+        case .agents: agentsPane
+        }
+    }
+
+    private var notificationsPane: some View {
         Form {
             Section {
                 Toggle("When an agent needs you", isOn: $notifyNeeds)
@@ -62,7 +136,13 @@ struct SettingsView: View {
                 Text("Only while you're away from the chat: Chatterbox isn't frontmost, or a different chat is open. Approvals can be allowed or denied right from the notification.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+        }
+        .formStyle(.grouped)
+        .frame(maxWidth: 680)
+    }
 
+    private var modelsPane: some View {
+        Form {
             Section {
                 defaultModelPicker(title: "Claude", icon: "sparkle", options: claudeOptions,
                                    model: Binding(get: { ClaudeModels.shared.info(defaultModel).value }, set: {
@@ -103,8 +183,15 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+        }
+        .formStyle(.grouped)
+        .frame(maxWidth: 680)
+        .task { if CodexAppServer.shared.models.isEmpty { try? await CodexAppServer.shared.refreshModels() } }
+        .task { await ClaudeModels.shared.refresh(force: false) }
+    }
 
-
+    private var newChatsPane: some View {
+        Form {
             Section("New chats") {
                 Picker("Chat with", selection: $defaultBackend) {
                     ForEach(Backend.allCases) { Text($0.label).tag($0) }
@@ -125,7 +212,13 @@ struct SettingsView: View {
                     ForEach(PermissionModes.codex) { Text($0.title).tag($0.id) }
                 }
             }
+        }
+        .formStyle(.grouped)
+        .frame(maxWidth: 680)
+    }
 
+    private var behaviorPane: some View {
+        Form {
             Section {
                 Toggle("Remote Control for Claude chats", isOn: $remoteControl)
                     .help("Claude chats you use can be read and continued on claude.ai and in the Claude app, while Chatterbox is open. Turn it on or off for one chat from its toolbar.")
@@ -142,10 +235,29 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+        }
+        .formStyle(.grouped)
+        .frame(maxWidth: 680)
+    }
 
+    private var proxyPane: some View {
+        Form {
             ProxySection()
-            DiagnosticsSection()
+        }
+        .formStyle(.grouped)
+        .frame(maxWidth: 680)
+    }
 
+    private var diagnosticsPane: some View {
+        Form {
+            DiagnosticsSection()
+        }
+        .formStyle(.grouped)
+        .frame(maxWidth: 680)
+    }
+
+    private var agentsPane: some View {
+        Form {
             Section {
                 LabeledContent("Signed in") {
                     if let email = ClaudeModels.shared.accountEmail {
@@ -179,14 +291,14 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(maxWidth: 640)
+        .frame(maxWidth: 680)
         .task(id: codexPath) { detectedCodex = CodexAppServer.locateBinary() }
         .task(id: claudePath) {
             detectedClaude = ClaudeCodeProcess.locateBinary()
             await ClaudeModels.shared.refresh(force: !claudePath.isEmpty)
         }
-        .task { if CodexAppServer.shared.models.isEmpty { try? await CodexAppServer.shared.refreshModels() } }
     }
+
 
     /// "Codex · GPT-6.1-Sol · Low": what a preset switches to, in names rather than ids.
     private func presetDetail(_ preset: ModelPreset) -> String {
@@ -358,7 +470,6 @@ struct SettingsPage: View {
 
     var body: some View {
         SettingsView()
-            .modifier(InPageTabs())
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             // The window's toolbar is AppKit's (WindowToolbar.swift), so Done sits on the page.
             .overlay(alignment: .topTrailing) {
@@ -366,14 +477,6 @@ struct SettingsPage: View {
                     .keyboardShortcut(.cancelAction)
                     .padding(12)
             }
-    }
-}
-
-/// Settings' tabs drawn in the page. In the chat window the toolbar is AppKit's; a TabView
-/// that put its tabs in the window toolbar made SwiftUI keep replacing it while Settings was open.
-private struct InPageTabs: ViewModifier {
-    func body(content: Content) -> some View {
-        if #available(macOS 15.0, *) { content.tabViewStyle(.grouped) } else { content }
     }
 }
 
