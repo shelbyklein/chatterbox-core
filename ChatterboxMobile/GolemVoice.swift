@@ -41,7 +41,6 @@ final class GolemVoice: NSObject {
 
     /// ElevenLabs' example voice, until you pick one.
     static let defaultVoice = "JBFqnCBsd6RMkjVDRZzb"
-    private static let model = "eleven_flash_v2_5"
     /// Long replies are read up to here, then "the rest is in the chat".
     private static let spokenLimit = 5000
 
@@ -93,10 +92,12 @@ final class GolemVoice: NSObject {
         let chunks = Self.chunks(text)
         guard let key = Self.readKey() else { await speakLocally(text); return }
         var next: Task<Data, Error>? = Task { try await Self.fetch(chunks[0], key: key, voice: voiceID) }
+        defer { next?.cancel() }
         var index = 0
         do {
             while let pending = next, !Task.isCancelled {
                 let data = try await pending.value
+                guard !Task.isCancelled else { return }
                 let following = index + 1
                 let voice = voiceID
                 next = following < chunks.count ? Task { try await Self.fetch(chunks[following], key: key, voice: voice) } : nil
@@ -157,7 +158,7 @@ final class GolemVoice: NSObject {
         request.setValue(key, forHTTPHeaderField: "xi-api-key")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("audio/mpeg", forHTTPHeaderField: "Accept")
-        request.httpBody = try JSONSerialization.data(withJSONObject: ["text": text, "model_id": model])
+        request.httpBody = try ElevenLabsSpeechSettings.payload(text: text, speed: ElevenLabsSpeechSettings.speed())
         let (data, response) = try await URLSession.shared.data(for: request)
         try check(response, data)
         return data
@@ -302,6 +303,7 @@ struct GolemVoiceSettings: View {
             if voice.autoRead {
                 Toggle("Then listen for my reply", isOn: Binding(get: { voice.listensAfter }, set: { voice.listensAfter = $0 }))
             }
+            ElevenLabsSpeedControl()
             if voice.hasKey {
                 if voice.voices.isEmpty {
                     LabeledContent("Voice", value: "Loading\u{2026}")

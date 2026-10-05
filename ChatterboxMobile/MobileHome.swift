@@ -88,8 +88,11 @@ struct GolemHome: View {
     @State private var history: MobileChatHistory?
     @State private var reading=false
     /// Off: Golem stands centered, tabs showing. On: he's tucked in and the message box is up.
+    #if DEBUG
+    @State private var composing = ProcessInfo.processInfo.environment["GOLEM_TEST_COMPOSER"] == "1"
+    #else
     @State private var composing = false
-    @State private var hidesTabs = false
+    #endif
 
     private var assistant: Companion.ChatSummary? {
         store.chatList?.groups.first { $0.kind == .dot }?.chats.first
@@ -101,14 +104,9 @@ struct GolemHome: View {
                 if let chat = assistant, let history, history.id == chat.id {
                     ChatDetailView(chat: chat, history: history, golemComposing: $composing)
                         .id(chat.id)
-                        .toolbar(hidesTabs ? .hidden : .visible, for: .tabBar)
-                        // The tab bar switches at once (its slide makes the transcript jump),
-                        // while Golem himself glides.
-                        .onChange(of: composing) { _, on in
-                            var instant = Transaction()
-                            instant.disablesAnimations = true
-                            withTransaction(instant) { hidesTabs = on }
-                        }
+                        // Keep navigation reachable during text and voice conversations.
+                        // ChatDetailView's bottom safe-area inset sits above this tab bar.
+                        .toolbar(.visible, for: .tabBar)
                         .onAppear { MobilePushNotifications.shared.readingChat = chat.id }
                         .onDisappear {
                             if MobilePushNotifications.shared.readingChat == chat.id { MobilePushNotifications.shared.readingChat = nil }

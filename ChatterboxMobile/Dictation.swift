@@ -18,6 +18,7 @@ final class Dictation {
     /// Hands-free: called once with what was said when you pause (empty if you said nothing).
     @ObservationIgnored private var onPause: ((String) -> Void)?
     @ObservationIgnored private var watchdog: Task<Void, Never>?
+    @ObservationIgnored private var generation = UUID()
     @ObservationIgnored private var heard = ""
     @ObservationIgnored private var lastHeard = Date()
 
@@ -26,9 +27,17 @@ final class Dictation {
     /// seconds, or after `giveUp` seconds of silence, and hands `onPause` what it heard.
     func start(pause: TimeInterval = 1.5, giveUp: TimeInterval = 8,
                onPause: ((String) -> Void)? = nil, onText: @escaping (String) -> Void) async {
+        stop()
+        let captureGeneration = generation
         problem = nil
-        guard await Self.permitted() else {
+        let permitted = await Self.permitted()
+        guard captureGeneration == generation, !Task.isCancelled else { return }
+        guard permitted else {
+            #if GOLEM_APP
+            problem = "Golem needs the microphone and speech recognition. Allow them in Settings → Golem."
+            #else
             problem = "Chatterbox needs the microphone and speech recognition. Allow them in Settings → Chatterbox."
+            #endif
             return
         }
         guard let recognizer, recognizer.isAvailable else {
@@ -61,7 +70,7 @@ final class Dictation {
                 watchdog = Task { [weak self] in
                     while !Task.isCancelled {
                         try? await Task.sleep(for: .milliseconds(250))
-                        guard let self, self.isListening else { return }
+                        guard let self, self.generation == captureGeneration, self.isListening, !Task.isCancelled else { return }
                         let quiet = Date().timeIntervalSince(self.lastHeard)
                         if quiet >= (self.heard.isEmpty ? giveUp : pause) { self.finishHandsFree(); return }
                     }
@@ -72,7 +81,7 @@ final class Dictation {
                 let text = result?.bestTranscription.formattedString
                 let done = error != nil || result?.isFinal == true
                 Task { @MainActor in
-                    guard let self else { return }
+                    guard let self, self.generation == captureGeneration, self.isListening else { return }
                     if let text, text != self.heard {
                         self.heard = text
                         self.lastHeard = Date()
@@ -96,6 +105,7 @@ final class Dictation {
 
     /// Stops listening. A hands-free listen stopped this way sends nothing.
     func stop() {
+        generation = UUID()
         onPause = nil
         watchdog?.cancel()
         watchdog = nil
