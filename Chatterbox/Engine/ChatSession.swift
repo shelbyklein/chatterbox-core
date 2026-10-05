@@ -18,7 +18,11 @@ final class ChatSession: Identifiable {
         didSet {
             guard isRunning != oldValue else { return }
             if isRunning {
-                if record.turnStartedAt == nil { record.turnStartedAt = Date() }
+                if record.turnStartedAt == nil {
+                    record.turnStartedAt = Date()
+                    // A new turn (not one picked back up after a restart): kept for "most active" sorting.
+                    record.turnDates = Array(((record.turnDates ?? []) + [Date()]).suffix(500))
+                }
             } else {
                 noteTurnDuration()
             }

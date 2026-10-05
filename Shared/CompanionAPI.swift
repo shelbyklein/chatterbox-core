@@ -102,6 +102,12 @@ enum Companion {
         var worktreeBranch: String? = nil
         /// A temporary independent conversation, listed under this parent when available.
         var sidechatOf: UUID? = nil
+        /// A project's tags, and how active the chat is: turns in the last day and week, and
+        /// its average turns a day since it started (for chats from before turns were timed).
+        var tags: [String]? = nil
+        var turnsToday: Int? = nil
+        var turnsThisWeek: Int? = nil
+        var turnsPerDay: Double? = nil
     }
 
     /// The assistant's animations and head image, to play on the phone too.

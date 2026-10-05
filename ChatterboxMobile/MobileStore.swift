@@ -367,6 +367,8 @@ final class MobileStore {
     }
 
     private func note(_ error: Error) {
+        // A refresh cancelled by a newer one (or by leaving the screen) isn't a problem to show.
+        if error is CancellationError || (error as? URLError)?.code == .cancelled { return }
         problem = error.localizedDescription
     }
 }

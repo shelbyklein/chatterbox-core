@@ -19,6 +19,15 @@ struct ChatListView: View {
     @Environment(MobileStore.self) private var store
     /// List rows, or cards two to a row.
     @AppStorage("mobileChatListCards") private var showsCards = false
+    /// How each page orders its threads. Recent is the Mac's order (latest first).
+    enum Sort: String, CaseIterable, Identifiable {
+        case recent, name, active, tag
+        var id: String { rawValue }
+        var title: String { switch self { case .recent: "Recent"; case .name: "Name"; case .active: "Most Active"; case .tag: "By Tag" } }
+        var icon: String { switch self { case .recent: "clock"; case .name: "textformat"; case .active: "flame"; case .tag: "tag" } }
+    }
+    @AppStorage("mobileChatListSort") private var sortName = Sort.recent.rawValue
+    private var sort: Sort { Sort(rawValue: sortName) ?? .recent }
     @AppStorage("mobileChatListPage") private var pageName = Page.projects.rawValue
     private var page: Page { fixedPage ?? Page(rawValue: pageName) ?? .projects }
     @Environment(\.scenePhase) private var scenePhase
@@ -54,6 +63,14 @@ struct ChatListView: View {
                     ToolbarItem(placement: .topBarTrailing) { connectionMenu }
                     ToolbarItem(placement: .topBarTrailing) {
                         Button { notificationSettings = true } label: { Image(systemName: "bell") }.accessibilityLabel("Notifications")
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Menu {
+                            Picker("Sort", selection: Binding(get: { sort }, set: { new in withAnimation(.easeOut(duration: 0.2)) { sortName = new.rawValue } })) {
+                                ForEach(Sort.allCases) { Label($0.title, systemImage: $0.icon).tag($0) }
+                            }
+                        } label: { Image(systemName: "arrow.up.arrow.down") }
+                        .accessibilityLabel("Sort, \(sort.title)")
                     }
                     ToolbarItem(placement: .topBarTrailing) {
                         Button { withAnimation(.easeOut(duration: 0.2)) { showsCards.toggle() } } label: {
@@ -139,12 +156,63 @@ struct ChatListView: View {
     private var groups: [Companion.ChatGroup] {
         let all = (store.chatList?.groups ?? []).filter { $0.kind != .dot || !hidesAssistant }
         // A tab searches its own page; the switcher's search looks through every page.
-        return filtered(search.isEmpty || fixedPage != nil ? all.filter { $0.kind == page.kind } : all.filter { $0.kind != .dot })
+        return sorted(filtered(search.isEmpty || fixedPage != nil ? all.filter { $0.kind == page.kind } : all.filter { $0.kind != .dot }))
+    }
+
+    /// The groups in the chosen order. A project's worktrees and sidechats, listed right after
+    /// it, move with it. By Tag regroups projects under each of their tags, untagged last.
+    private func sorted(_ groups: [Companion.ChatGroup]) -> [Companion.ChatGroup] {
+        guard sort != .recent else { return groups }
+        func families(_ chats: [Companion.ChatSummary]) -> [[Companion.ChatSummary]] {
+            var result: [[Companion.ChatSummary]] = []
+            for chat in chats {
+                if (chat.worktreeBranch != nil || chat.sidechatOf != nil), !result.isEmpty { result[result.count - 1].append(chat) }
+                else { result.append([chat]) }
+            }
+            return result
+        }
+        func ordered(_ chats: [Companion.ChatSummary]) -> [Companion.ChatSummary] {
+            families(chats).sorted { a, b in
+                let x = a[0], y = b[0]
+                switch sort {
+                case .active:
+                    let ka = (x.turnsToday ?? 0, x.turnsThisWeek ?? 0, x.turnsPerDay ?? 0)
+                    let kb = (y.turnsToday ?? 0, y.turnsThisWeek ?? 0, y.turnsPerDay ?? 0)
+                    if ka != kb { return ka > kb }
+                    return x.updatedAt > y.updatedAt
+                default:
+                    return (x.project ?? x.title).localizedStandardCompare(y.project ?? y.title) == .orderedAscending
+                }
+            }.flatMap { $0 }
+        }
+        guard sort == .tag else {
+            return groups.map { var group = $0; group.chats = ordered(group.chats); return group }
+        }
+        return groups.flatMap { group -> [Companion.ChatGroup] in
+            let all = families(group.chats)
+            let tags = Set(all.flatMap { $0[0].tags ?? [] }).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+            guard !tags.isEmpty else { var plain = group; plain.chats = ordered(group.chats); return [plain] }
+            var result = tags.map { tag in
+                Companion.ChatGroup(id: "\(group.id)-tag-\(tag)", kind: group.kind, title: tag,
+                                    chats: ordered(all.filter { $0[0].tags?.contains(tag) == true }.flatMap { $0 }))
+            }
+            let untagged = all.filter { ($0[0].tags ?? []).isEmpty }.flatMap { $0 }
+            if !untagged.isEmpty { result.append(Companion.ChatGroup(id: "\(group.id)-untagged", kind: group.kind, title: "No Tag", chats: ordered(untagged))) }
+            return result
+        }
+    }
+
+    /// "12 turns today", shown on each thread while sorting by activity.
+    static func activityLine(_ chat: Companion.ChatSummary) -> String? {
+        if let day = chat.turnsToday, day > 0 { return "\(day) turn\(day == 1 ? "" : "s") today" }
+        if let week = chat.turnsThisWeek, week > 0 { return "\(week) this week" }
+        if let rate = chat.turnsPerDay, rate > 0 { return rate >= 1 ? "about \(Int(rate.rounded())) a day" : "less than 1 a day" }
+        return nil
     }
 
     /// Each Studio is named; the Projects and Chats pages are their own heading, except in a search.
     private func showsHeader(_ group: Companion.ChatGroup) -> Bool {
-        group.kind != .dot && (group.kind == .studio || (!search.isEmpty && fixedPage == nil))
+        group.kind != .dot && (group.kind == .studio || sort == .tag || (!search.isEmpty && fixedPage == nil))
     }
 
     private func waiting(on page: Page) -> Int {
@@ -196,7 +264,7 @@ struct ChatListView: View {
                             if showsHeader(group) { header(group).font(.footnote.weight(.semibold)).foregroundStyle(.secondary).textCase(.uppercase) }
                             LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
                                 ForEach(group.chats) { chat in
-                                    ChatCard(chat: chat, selected: sizeClass == .regular && selection == chat.id) { open(chat) }
+                                    ChatCard(chat: chat, selected: sizeClass == .regular && selection == chat.id, activity: sort == .active ? Self.activityLine(chat) : nil) { open(chat) }
                                         .contextMenu {
                                             Button(role: .destructive) { archive(chat) } label: { Label("Archive", systemImage: "archivebox") }
                                         }
@@ -215,9 +283,9 @@ struct ChatListView: View {
 
     private func header(_ group: Companion.ChatGroup) -> some View {
         HStack {
-            Label(group.title, systemImage: group.kind == .studio ? "paintpalette" : group.kind == .projects ? "folder" : "bubble.left.and.bubble.right")
+            Label(group.title, systemImage: group.id.contains("-tag-") ? "tag" : group.kind == .studio ? "paintpalette" : group.kind == .projects ? "folder" : "bubble.left.and.bubble.right")
             Spacer()
-            if group.kind == .studio {
+            if group.kind == .studio, group.studioID != nil {
                 Button { editingStudio = group } label: { Image(systemName: "text.book.closed") }
                     .accessibilityLabel("\(group.title) instructions")
             }
@@ -244,7 +312,7 @@ struct ChatListView: View {
                             MobilePinPills(pins: pins)
                         }
                         ForEach(group.chats) { chat in
-                            ChatRow(chat: chat) { open(chat) }
+                            ChatRow(chat: chat, activity: sort == .active ? Self.activityLine(chat) : nil) { open(chat) }
                                 .listRowBackground(sizeClass == .regular && selection == chat.id ? Color.primary.opacity(0.08) : nil)
                                 .swipeActions(edge: .trailing) {
                                     Button(role: .destructive) { archive(chat) } label: { Label("Archive", systemImage: "archivebox") }
@@ -372,6 +440,7 @@ struct ChatListView: View {
 
 private struct ChatRow: View {
     let chat: Companion.ChatSummary
+    var activity: String? = nil
     var open: () -> Void
 
     var body: some View {
@@ -398,6 +467,7 @@ private struct ChatRow: View {
                                 .foregroundStyle(chat.isWaitingOnYou ? .yellow : .secondary)
                                 .lineLimit(2)
                         }
+                        if let activity { Label(activity, systemImage: "flame").font(.caption2).foregroundStyle(.orange) }
                     }
                     Spacer(minLength: 0)
                     if chat.isWaitingOnYou {
@@ -426,6 +496,7 @@ private struct ChatRow: View {
 private struct ChatCard: View {
     let chat: Companion.ChatSummary
     var selected = false
+    var activity: String? = nil
     var open: () -> Void
 
     var body: some View {
@@ -458,6 +529,7 @@ private struct ChatCard: View {
                         .multilineTextAlignment(.leading)
                 }
                 Spacer(minLength: 0)
+                if let activity { Label(activity, systemImage: "flame").font(.caption2).foregroundStyle(.orange) }
             }
             .padding(12)
             .frame(maxWidth: .infinity, minHeight: 104, alignment: .topLeading)

@@ -659,6 +659,7 @@ enum CompanionMapper {
 
     static func summary(_ session: ChatSession) -> Companion.ChatSummary {
         let isProject = session.record.projectFolder != nil
+        let activity = activity(session)
         return .init(id: session.id, title: session.title,
                      project: isProject ? session.projectName : nil,
                      subtitle: session.lastActionSummary,
@@ -670,7 +671,20 @@ enum CompanionMapper {
                      isDot: session.isDot ? true : nil,
                      unread: session.isDot ? Attention.shared.dotUnreadCount(session) : nil,
                      worktreeBranch: session.record.worktreeOf != nil ? (session.record.worktreeBranch ?? session.projectName) : nil,
-                     sidechatOf: session.record.sidechatOf)
+                     sidechatOf: session.record.sidechatOf,
+                     tags: session.tags.isEmpty ? nil : session.tags,
+                     turnsToday: activity.day, turnsThisWeek: activity.week, turnsPerDay: activity.perDay)
+    }
+
+    /// Turns in the last day and week (from recorded turn times), and the lifetime average a day.
+    private static func activity(_ session: ChatSession) -> (day: Int, week: Int, perDay: Double) {
+        let now = Date()
+        let dates = session.record.turnDates ?? []
+        let day = dates.filter { now.timeIntervalSince($0) < 86_400 }.count
+        let week = dates.filter { now.timeIntervalSince($0) < 7 * 86_400 }.count
+        let turns = session.items.reduce(0) { $0 + ($1.kind == .user ? 1 : 0) }
+        let days = max(1, now.timeIntervalSince(session.record.createdAt) / 86_400)
+        return (day, week, (Double(turns) / days * 10).rounded() / 10)
     }
 
     static func detail(_ session: ChatSession, model: AppModel) -> Companion.ChatDetail {
