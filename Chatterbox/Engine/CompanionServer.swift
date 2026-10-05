@@ -701,12 +701,26 @@ enum CompanionMapper {
         return session.claudeCommands ?? ClaudeModels.shared.commands
     }
 
+    private static var lastClaudeModelsTry = Date.distantPast
+    private static func claudeOptionID(_ model: String) -> String {
+        let models = ClaudeModels.shared.models
+        guard !models.isEmpty, !models.contains(where: { $0.value == model }) else { return model }
+        let info = ClaudeModels.shared.info(model)
+        return models.contains(where: { $0.value == info.value }) ? info.value : model
+    }
+
     static func options(_ session: ChatSession) -> Companion.ChatOptions {
         let isCodex = session.record.backend == .codex
         // The phone asking is reason enough to learn Codex's models, if nothing has yet.
         if CodexAppServer.shared.models.isEmpty, Date().timeIntervalSince(lastCodexModelsTry) > 60 {
             lastCodexModelsTry = Date()
             Task { try? await CodexAppServer.shared.ensureStarted(); try? await CodexAppServer.shared.refreshModels() }
+        }
+        // Same for Claude's: only the Mac's own screens loaded them, so the background service,
+        // which answers the phone, had none, and Claude chats showed no models or efforts there.
+        if ClaudeModels.shared.models.isEmpty, Date().timeIntervalSince(lastClaudeModelsTry) > 60 {
+            lastClaudeModelsTry = Date()
+            Task { await ClaudeModels.shared.refresh() }
         }
         let claude = ClaudeModels.shared.models.map {
             Companion.ModelOption(id: $0.value, name: $0.displayName, detail: $0.detail, efforts: $0.efforts, defaultEffort: nil)
@@ -723,7 +737,9 @@ enum CompanionMapper {
             Companion.PresetOption(id: $0.id, title: $0.title, backend: $0.backend.rawValue, isActive: ModelPresets.shared.matches($0, session: session))
         }
         return .init(backend: session.record.backend.rawValue,
-                     model: isCodex ? (session.record.codex?.model ?? "") : session.record.model,
+                     // The phone matches by id: name the chat's model as the list does
+                     // ("claude-opus-5-5" and "opus" can be the same entry).
+                     model: isCodex ? (session.record.codex?.model ?? "") : claudeOptionID(session.record.model),
                      effort: isCodex ? (session.record.codex?.effort ?? "") : session.record.effort,
                      claudeModels: claude, codexModels: codex, modes: modes, mode: session.mode.id, presets: presets,
                      fastMode: session.supportsFastMode ? session.fastMode : nil)
