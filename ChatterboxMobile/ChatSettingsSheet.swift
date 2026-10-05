@@ -122,11 +122,12 @@ private struct PresetBubble: View {
                     if preset.isActive { Image(systemName: "checkmark.circle.fill").font(.subheadline) }
                 }
                 Spacer(minLength: 0)
-                Text(preset.title)
+                Text(preset.nickname ?? preset.title)
                     .font(.headline)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
-                Text(isCodex ? "Codex" : "Claude")
+                Text(preset.nickname != nil ? "\(preset.title) \u{00B7} \(isCodex ? "Codex" : "Claude")" : (isCodex ? "Codex" : "Claude"))
+                    .lineLimit(2)
                     .font(.caption)
                     .opacity(0.75)
             }
@@ -145,7 +146,7 @@ private struct PresetBubble: View {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(preset.title), \(isCodex ? "Codex" : "Claude") preset")
+        .accessibilityLabel("\(preset.nickname.map { "\($0), " } ?? "")\(preset.title), \(isCodex ? "Codex" : "Claude") preset")
         .accessibilityAddTraits(preset.isActive ? [.isButton, .isSelected] : .isButton)
     }
 }

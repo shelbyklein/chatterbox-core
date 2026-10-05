@@ -10,10 +10,14 @@ import CoreFoundation
         do {
             let prefs=try await RuntimeClient.shared.request("getPreferences").object ?? [:]
             updating=true
-            for (key,value) in prefs {
+            for (key,value) in prefs where key != ModelPresets.syncedKey {
                 switch value{case .string(let x):AppPreferences.defaults.set(x,forKey:key);case .bool(let x):AppPreferences.defaults.set(x,forKey:key);case .number(let x):AppPreferences.defaults.set(x,forKey:key);default:break}
             }
             last=values();updating=false
+            // Presets are edited only here: the app's own copy is the one to keep.
+            if let local=last[ModelPresets.syncedKey],prefs[ModelPresets.syncedKey] != local {
+                RuntimeClient.shared.command("preferences",body:[ModelPresets.syncedKey:local])
+            }
             if observer==nil {
                 observer=NotificationCenter.default.addObserver(forName:UserDefaults.didChangeNotification,object:nil,queue:.main){[weak self] _ in MainActor.assumeIsolated{self?.changed()}}
             }
