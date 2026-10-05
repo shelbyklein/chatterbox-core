@@ -117,6 +117,11 @@ struct CommandReceipt: Codable {
             r.activeBackend = .codex
             r.codex=CodexSettings(model:d.string(forKey:"dotDefaultModel") ?? "gpt-6.1-sol",folder:RuntimePaths.assistantFolder,canEdit:false,mode:PermissionModes.defaultCodex)
         }
+        if d.string(forKey: "dotDefaultBackend") == Backend.claude.rawValue {
+            r.activeBackend = .claude
+            r.model = d.string(forKey: "dotDefaultModel") ?? "haiku"
+            r.effort = ""
+        }
         return try insert(r)
     }
     @discardableResult func insert(_ record: ConversationRecord) throws -> ChatSession {
