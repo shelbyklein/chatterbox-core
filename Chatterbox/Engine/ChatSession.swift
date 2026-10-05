@@ -677,3 +677,29 @@ struct ResponseRender: Codable, Equatable {
     var itemForIndex: [Int: UUID] = [:]
     var textItems: [UUID] = []
 }
+
+extension ChatSession {
+    /// A Sidechat of `parent`: a temporary chat in the same folder, with its own history, under
+    /// its original parent (`anchor`); the same for the app and the background service.
+    static func sidechatRecord(of parent: ChatSession, anchor: ChatSession, number: Int) -> ConversationRecord {
+        var record = ConversationRecord(model: parent.record.model, effort: parent.record.effort, personality: parent.record.personality)
+        record.title = (number == 1 ? "Sidechat" : "Sidechat \(number)") + " \u{00B7} "
+            + (anchor.record.projectFolder != nil ? anchor.projectName : anchor.title)
+        record.sidechatOf = anchor.id
+        record.sidechatFolder = parent.workingFolder
+        record.sidechatProjectFolder = parent.record.sidechatProjectFolder ?? parent.convertedProjectScope ?? parent.record.worktreeOf ?? parent.record.projectFolder
+        record.activeBackend = parent.record.backend
+        record.claudeFastMode = parent.record.claudeFastMode
+        record.claudeMode = parent.record.claudeMode
+        record.claudeCanEdit = parent.record.claudeCanEdit
+        record.tags = parent.record.tags
+        record.studioID = parent.record.studioID
+        record.studioFolder = parent.record.studioFolder
+        record.codex = parent.record.codex
+        record.codex?.threadId = nil
+        record.codex?.forkFrom = nil
+        record.codex?.sentRoute = nil
+        record.codex?.folder = parent.workingFolder
+        return record
+    }
+}

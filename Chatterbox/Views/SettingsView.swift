@@ -179,7 +179,7 @@ struct SettingsView: View {
             } header: {
                 Text("Quick-switch presets")
             } footer: {
-                Text("Shown under the message box, to switch a chat's agent, model, and effort in one click. You can also save a chat's current setup from its model menu with \u{201C}Save as Preset\u{201D}.")
+                Text("Shown under the message box, to switch a chat's agent, model, and effort in one click. You can also save a chat's current setup from its model menu with \u{201C}Save as Preset\u{201D}. Give one a nickname and agents know it: \u{201C}start working on that in Galley with Sol\u{201D}.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -388,6 +388,12 @@ struct SettingsView: View {
                     .labelsHidden()
                     .multilineTextAlignment(.leading)
                     .frame(maxWidth: 220, alignment: .leading)
+                TextField("Nickname", text: Binding(get: { preset.nickname ?? "" }, set: { presets.setNickname(preset, to: $0) }),
+                          prompt: Text("Nickname"))
+                    .textFieldStyle(.roundedBorder)
+                    .labelsHidden()
+                    .frame(width: 110)
+                    .help("A short name agents know this preset by: \u{201C}start that in Galley with Sol\u{201D}.")
                 Spacer()
                 if !isEditing { Text(presetDetail(preset)).foregroundStyle(.secondary).font(.caption) }
                 Button(isEditing ? "Done" : "Edit") { editingPreset = isEditing ? nil : preset.id }

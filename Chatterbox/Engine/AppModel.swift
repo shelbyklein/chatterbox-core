@@ -125,25 +125,8 @@ final class AppModel {
         // Always anchor at the original parent; don't make a recursive tree of
         // temporary chats or resume either of its provider sessions.
         let anchor = parent.record.sidechatOf.flatMap { id in sessions.first { $0.id == id } } ?? parent
-        var record = ConversationRecord(model: parent.record.model, effort: parent.record.effort, personality: parent.record.personality)
         let number = sessions.filter { $0.record.sidechatOf == anchor.id }.count + 1
-        record.title = (number == 1 ? "Sidechat" : "Sidechat \(number)") + " · "
-            + (anchor.record.projectFolder != nil ? anchor.projectName : anchor.title)
-        record.sidechatOf = anchor.id
-        record.sidechatFolder = parent.workingFolder
-        record.sidechatProjectFolder = parent.record.sidechatProjectFolder ?? parent.convertedProjectScope ?? parent.record.worktreeOf ?? parent.record.projectFolder
-        record.activeBackend = parent.record.backend
-        record.claudeFastMode = parent.record.claudeFastMode
-        record.claudeMode = parent.record.claudeMode
-        record.claudeCanEdit = parent.record.claudeCanEdit
-        record.tags = parent.record.tags
-        record.studioID = parent.record.studioID
-        record.studioFolder = parent.record.studioFolder
-        record.codex = parent.record.codex
-        record.codex?.threadId = nil
-        record.codex?.forkFrom = nil
-        record.codex?.sentRoute = nil
-        record.codex?.folder = parent.workingFolder
+        let record = ChatSession.sidechatRecord(of: parent, anchor: anchor, number: number)
         let chat = insertSession(record)
         selectedID = chat.id
         return chat

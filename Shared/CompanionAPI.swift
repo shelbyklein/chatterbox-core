@@ -202,6 +202,19 @@ enum Companion {
     struct NewChatRequest: Codable {
         var studio: UUID? = nil
         var backend: String? = nil
+        /// A project's chat: the new chat is a Sidechat of it (same folder, its own history).
+        var project: UUID? = nil
+        /// A preset to start with (its agent, model and effort).
+        var preset: UUID? = nil
+    }
+
+    /// A model preset, for agents: its nickname and what it switches to.
+    struct PresetInfo: Codable {
+        var id: UUID
+        var nickname: String?
+        var title: String
+        var backend: String
+        var summary: String
     }
 
     struct RenameRequest: Codable {

@@ -387,7 +387,16 @@ final class CompanionServer {
             // Starting a chat from the phone leaves the Mac showing what it was.
             let shown = model.selectedID
             let session: ChatSession
-            if let id = body.studio {
+            if let parentID = body.project {
+                guard let parent = model.sessions.first(where: { $0.id == parentID }), parent.record.archivedAt == nil else {
+                    return .error(404, "That project's chat is gone.")
+                }
+                #if CHATTERBOX_HEADLESS
+                do{session=try model.newSidechat(of:parent)}catch{return .error(503,"Could not save the new chat.")}
+                #else
+                session = model.newSidechat(of: parent)
+                #endif
+            } else if let id = body.studio {
                 guard let studio = model.studio(id), studio.archivedAt == nil else { return .error(404, "That Studio is gone.") }
                 #if CHATTERBOX_HEADLESS
                 do{session=try model.newChat(in:studio,backend:backend)}catch{return .error(503,"Could not save the new chat.")}
@@ -401,8 +410,16 @@ final class CompanionServer {
                 session = model.newChat(backend: backend)
                 #endif
             }
+            if let id = body.preset {
+                guard let preset = ModelPresets.shared.presets.first(where: { $0.id == id }) else { return .error(404, "That preset is gone.") }
+                ModelPresets.shared.apply(preset, to: session)
+            }
             if let shown, model.sessions.contains(where: { $0.id == shown }) { model.selectedID = shown }
             return .json(CompanionMapper.detail(session, model: model))
+        case ("GET", 2) where parts[1] == "presets":
+            return .json(ModelPresets.shared.presets.map {
+                Companion.PresetInfo(id: $0.id, nickname: $0.nickname, title: $0.title, backend: $0.backend.rawValue, summary: ModelPresets.summary($0))
+            })
         case ("POST", 4) where parts[1] == "chats" && parts[3] == "settings":
             guard let session = session(parts[2]) else { return .error(404, "That chat is gone.") }
             guard !session.isRestartingThread else { return .error(409, "This thread is reconnecting. Try changing its settings when it's ready.") }

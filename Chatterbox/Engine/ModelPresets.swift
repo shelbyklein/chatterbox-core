@@ -13,6 +13,8 @@ struct ModelPreset: Codable, Identifiable, Equatable {
     /// Switches to the default model and effort for its agent (Settings → Default models),
     /// whatever they are; its name follows them too. Editing it makes it a fixed preset.
     var followsDefault: Bool?
+    /// What you call it ("Sol"), so you can tell an agent "start that in Galley with Sol".
+    var nickname: String?
 }
 
 @MainActor
@@ -177,6 +179,25 @@ final class ModelPresets {
         }
         saved[index].title = title
         save()
+    }
+
+    func setNickname(_ preset: ModelPreset, to nickname: String) {
+        guard let index = saved.firstIndex(where: { $0.id == preset.id }) else { return }
+        let trimmed = nickname.trimmingCharacters(in: .whitespacesAndNewlines)
+        saved[index].nickname = trimmed.isEmpty ? nil : trimmed
+        save()
+    }
+
+    /// A preset by its nickname or title, ignoring case.
+    func preset(named name: String) -> ModelPreset? {
+        let wanted = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return presets.first { $0.nickname?.caseInsensitiveCompare(wanted) == .orderedSame }
+            ?? presets.first { $0.title.caseInsensitiveCompare(wanted) == .orderedSame }
+    }
+
+    /// What a preset switches to, in words: "Codex · GPT-6.1-Sol · Low".
+    static func summary(_ preset: ModelPreset) -> String {
+        preset.backend.label + " \u{00B7} " + followingTitle(preset)
     }
 
     /// Moves a preset to where `target` is, for drag-to-reorder in the preset row.
