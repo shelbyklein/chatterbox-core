@@ -8,7 +8,7 @@ import AppKit
 struct GolemSidePanel: View {
     let session: ChatSession
     @Environment(AppModel.self) private var model
-    @AppStorage("golemPanelTab") private var tab = Tab.activity
+    @State private var tab: Tab? = nil
     /// Off only for still renders (proof screenshots), which can't draw a scroll view.
     var scrolls = true
     var showsAvatar = true
@@ -32,13 +32,12 @@ struct GolemSidePanel: View {
             header
             tabs.padding(.horizontal, 14).padding(.bottom, 10)
             Divider()
-            if scrolls {
-                ScrollView { content }
-            } else {
-                content
-                Spacer(minLength: 0)
-            }
+            if tab != nil {
+                if scrolls { ScrollView { content } } else { content; Spacer(minLength: 0) }
+            } else { Spacer(minLength: 0) }
         }
+        .onAppear { tab = nil }
+        .onChange(of: model.showingDot) { _, miniVisible in if !miniVisible { tab = nil } }
         .task {while !Task.isCancelled{journal.refresh();if RuntimeClient.usesDaemon{await GolemServiceClient.shared.refresh()};try? await Task.sleep(for:.seconds(3))}}
     }
 
@@ -48,6 +47,7 @@ struct GolemSidePanel: View {
             case .activity: activity
             case .decisions: decisions
             case .scheduled: scheduled
+            case nil: EmptyView()
             }
         }
         .padding(14)
@@ -97,7 +97,7 @@ struct GolemSidePanel: View {
     private var tabs: some View {
         HStack(spacing: 4) {
             ForEach(Tab.allCases) { item in
-                Button { tab = item } label: {
+                Button { tab = tab == item ? nil : item } label: {
                     Image(systemName: item.icon)
                         .font(.system(size: 14, weight: .medium))
                         .frame(maxWidth: .infinity, minHeight: 28)
@@ -109,6 +109,7 @@ struct GolemSidePanel: View {
                 .help(item.title)
                 .accessibilityLabel(item.title)
                 .accessibilityAddTraits(tab == item ? .isSelected : [])
+                .accessibilityRemoveTraits(tab == item ? [] : .isSelected)
             }
         }
         .padding(3)
@@ -289,7 +290,7 @@ struct GolemSidePanel: View {
 
     private func empty(_ title: String, detail: String) -> some View {
         VStack(spacing: 6) {
-            Image(systemName: tab.icon).font(.title2).foregroundStyle(.secondary)
+            Image(systemName: tab?.icon ?? "list.bullet").font(.title2).foregroundStyle(.secondary)
             Text(title).font(.callout.weight(.medium))
             Text(detail).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
         }
