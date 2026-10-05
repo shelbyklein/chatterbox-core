@@ -6,9 +6,20 @@ import Darwin
 @MainActor @Observable final class RuntimeClient {
     static let shared=RuntimeClient()
     static var usesDaemon:Bool {
-        if ProcessInfo.processInfo.environment["CHATTERBOX_LEGACY_RUNTIME"] == "1" {return false}
-        // Legacy native regression harnesses opt into their own isolated in-process fixture.
-        return ProcessInfo.processInfo.environment["CHATTERBOX_DATA_DIR"] == nil || ProcessInfo.processInfo.environment["CHATTERBOX_DAEMON_CLIENT"] == "1"
+        let env=ProcessInfo.processInfo.environment
+        if env["CHATTERBOX_LEGACY_RUNTIME"] == "1" {return false}
+        if env["CHATTERBOX_DAEMON_CLIENT"] == "1" {return true}
+        guard let dir=env["CHATTERBOX_DATA_DIR"] else {return true}
+        #if CHATTERBOX_HEADLESS
+        // The services are given their data folder and run its conversations themselves.
+        return false
+        #else
+        // Legacy native regression harnesses opt into their own isolated in-process fixture. A
+        // window app handed the background service's own store instead (launched from a chat's
+        // shell, which carries the service's environment) uses the service: in-process it would
+        // refuse that store and show no chats at all.
+        return FileManager.default.fileExists(atPath:URL(fileURLWithPath:dir).appendingPathComponent("runtime-owner.json").path)
+        #endif
     }
     private(set) var connected=false
     private(set) var problem:String?
