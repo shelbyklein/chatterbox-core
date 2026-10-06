@@ -77,6 +77,7 @@ struct SettingsView: View {
         }
     }
     @AppStorage("settingsPage") private var pageName = Page.notifications.rawValue
+    @AppStorage(Theme.backgroundKey) private var themeBackground = "standard"
     private var page: Page { Page(rawValue: pageName) ?? .notifications }
 
     var body: some View {
@@ -93,10 +94,28 @@ struct SettingsView: View {
                 }
             }
             .listStyle(.sidebar)
+            // The theme's sidebar shade, as the chat sidebar has (Settings → Appearance).
+            .scrollContentBackground(Theme.sidebar(themeBackground) == nil ? .automatic : .hidden)
+            .background(Theme.sidebar(themeBackground) ?? Color.clear)
             .frame(width: 230)
             Divider()
-            pageView
+            VStack(spacing: 0) {
+                // The page's name, and Done (Esc), above its settings, never over them.
+                HStack {
+                    Text(page.title).font(.title2.weight(.semibold))
+                    Spacer()
+                    Button("Done") { model.showingSettings = false }
+                        .keyboardShortcut(.cancelAction)
+                }
+                .padding(.horizontal, 28)
+                .padding(.top, 18)
+                .padding(.bottom, 4)
+                pageView
+            }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                // The page sits on the theme's background, not a gray form backdrop.
+                .scrollContentBackground(Theme.background(themeBackground) == nil ? .automatic : .hidden)
+                .background(Theme.background(themeBackground) ?? Color.clear)
                 .id(page)
         }
     }
@@ -109,7 +128,7 @@ struct SettingsView: View {
         case .behavior: behaviorPane
         case .golem:
             #if GOLEM_APP
-            Form { DotActivitySettings() }.formStyle(.grouped).frame(maxWidth: 680)
+            Form { DotActivitySettings() }.formStyle(WideFormStyle()).frame(maxWidth: .infinity)
             #else
             EmptyView()
             #endif
@@ -138,8 +157,8 @@ struct SettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
-        .formStyle(.grouped)
-        .frame(maxWidth: 680)
+        .formStyle(WideFormStyle())
+        .frame(maxWidth: .infinity)
     }
 
     private var modelsPane: some View {
@@ -185,8 +204,8 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .formStyle(.grouped)
-        .frame(maxWidth: 680)
+        .formStyle(WideFormStyle())
+        .frame(maxWidth: .infinity)
         .task { if CodexAppServer.shared.models.isEmpty { try? await CodexAppServer.shared.refreshModels() } }
         .task { await ClaudeModels.shared.refresh(force: false) }
     }
@@ -214,8 +233,8 @@ struct SettingsView: View {
                 }
             }
         }
-        .formStyle(.grouped)
-        .frame(maxWidth: 680)
+        .formStyle(WideFormStyle())
+        .frame(maxWidth: .infinity)
     }
 
     private var behaviorPane: some View {
@@ -237,8 +256,8 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .formStyle(.grouped)
-        .frame(maxWidth: 680)
+        .formStyle(WideFormStyle())
+        .frame(maxWidth: .infinity)
     }
 
     private var proxyPane: some View {
@@ -246,16 +265,16 @@ struct SettingsView: View {
             ProxySection()
             Section { ProxyQuotaView() }
         }
-        .formStyle(.grouped)
-        .frame(maxWidth: 680)
+        .formStyle(WideFormStyle())
+        .frame(maxWidth: .infinity)
     }
 
     private var diagnosticsPane: some View {
         Form {
             DiagnosticsSection()
         }
-        .formStyle(.grouped)
-        .frame(maxWidth: 680)
+        .formStyle(WideFormStyle())
+        .frame(maxWidth: .infinity)
     }
 
     private var agentsPane: some View {
@@ -292,8 +311,8 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .formStyle(.grouped)
-        .frame(maxWidth: 680)
+        .formStyle(WideFormStyle())
+        .frame(maxWidth: .infinity)
         .task(id: codexPath) { detectedCodex = CodexAppServer.locateBinary() }
         .task(id: claudePath) {
             detectedClaude = ClaudeCodeProcess.locateBinary()
@@ -458,7 +477,7 @@ struct SettingsView: View {
             }
             if title == "Codex" {
                 Toggle("Show all models", isOn: $showAllCodexModels)
-                    .toggleStyle(.checkbox).font(.caption).padding(.horizontal, 8)
+                    .font(.caption).padding(.horizontal, 8)
                     .help("Older and dated versions, and models Codex hides from its own picker")
             }
             if !efforts.isEmpty {
@@ -482,12 +501,7 @@ struct SettingsPage: View {
         SettingsView()
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Theme.currentBackground ?? Color.clear)
-            // The window's toolbar is AppKit's (WindowToolbar.swift), so Done sits on the page.
-            .overlay(alignment: .topTrailing) {
-                Button("Done") { model.showingSettings = false }
-                    .keyboardShortcut(.cancelAction)
-                    .padding(12)
-            }
+            // Done is in the page's header (SettingsView); the window's toolbar is AppKit's.
     }
 }
 
@@ -614,7 +628,7 @@ private struct AppearanceSettingsView: View {
                     Button("Restore Defaults") { settings.reset() }
                 }
             }
-            .formStyle(.grouped)
+            .formStyle(WideFormStyle())
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
@@ -639,7 +653,7 @@ private struct AppearanceSettingsView: View {
             .background(Color(nsColor: .textBackgroundColor))
             .overlay(alignment: .top) { Divider() }
         }
-        .frame(maxWidth: 640)
+        .frame(maxWidth: .infinity)
     }
 
     private func colorRow(_ title: String, selection: Binding<String>) -> some View {
@@ -731,8 +745,8 @@ private struct InstructionsSettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
-        .formStyle(.grouped)
-        .frame(maxWidth: 640, maxHeight: .infinity)
+        .formStyle(WideFormStyle())
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func save() {
@@ -975,8 +989,8 @@ private struct ProxySection: View {
 struct SecretsSettingsView: View {
     var body: some View {
         Form { SecretsSection() }
-            .formStyle(.grouped)
-            .frame(maxWidth: 640, maxHeight: .infinity)
+            .formStyle(WideFormStyle())
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -1107,7 +1121,7 @@ struct SecretEditor: View {
                     Text(error).foregroundStyle(.orange)
                 }
             }
-            .formStyle(.grouped)
+            .formStyle(WideFormStyle())
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)

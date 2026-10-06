@@ -69,8 +69,8 @@ struct CompanionSettingsView: View {
                 }
             }
         }
-        .formStyle(.grouped)
-        .frame(maxWidth: 640)
+        .formStyle(WideFormStyle())
+        .frame(maxWidth: .infinity)
         .task {
             while !Task.isCancelled {
                 await server.refreshProjection()
