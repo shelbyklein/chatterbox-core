@@ -1452,7 +1452,7 @@ struct RepoChip: View {
                 }
             }
         } label: {
-            ToolbarLabel([repo, status.branch, syncText.isEmpty ? nil : syncText].compactMap { $0 }.joined(separator: " \u{00B7} "),
+            ToolbarLabel([repo, status.branch, syncText.isEmpty ? nil : syncText, status.mainDriftText].compactMap { $0 }.joined(separator: " \u{00B7} "),
                          systemImage: "arrow.triangle.branch")
         }
         .help(helpText)
@@ -1465,6 +1465,10 @@ struct RepoChip: View {
             text += ". \(ahead) to push, \(behind) to pull"
         } else {
             text += ". No upstream branch"
+        }
+        if let main = status.mainRef, let ahead = status.aheadOfMain, let behind = status.behindMain {
+            text += ". Against \(main): \(ahead) commit\(ahead == 1 ? "" : "s") not on it, \(behind) on it not here"
+            if let since = status.divergedAt { text += ", split off \(since.formatted(.relative(presentation: .named)))" }
         }
         return text + "."
     }

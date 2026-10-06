@@ -16,6 +16,20 @@ struct GitStatus: Equatable {
     /// Commits not yet pushed, and commits on the remote not yet pulled. nil without an upstream.
     var ahead: Int?
     var behind: Int?
+    /// How far this branch has drifted from the repo's main branch (origin/main, or local main
+    /// or master): commits here that main doesn't have, commits on main not here, and when the
+    /// two last shared a commit. nil on main itself, or when there's no main to compare with.
+    var mainRef: String? = nil
+    var aheadOfMain: Int? = nil
+    var behindMain: Int? = nil
+    var divergedAt: Date? = nil
+
+    /// "↑3 ↓12 from main", or nil when level with main (or on it).
+    var mainDriftText: String? {
+        guard let mainRef, let ahead = aheadOfMain, let behind = behindMain, ahead + behind > 0 else { return nil }
+        let name = mainRef.split(separator: "/").last.map(String.init) ?? mainRef
+        return [ahead > 0 ? "\u{2191}\(ahead)" : nil, behind > 0 ? "\u{2193}\(behind)" : nil].compactMap { $0 }.joined(separator: " ") + " from \(name)"
+    }
 
     func remote(preferring name: String?) -> GitRemote? {
         let github = remotes.filter { $0.repo != nil }
@@ -86,10 +100,32 @@ enum Git {
         let branch = await git(["rev-parse", "--abbrev-ref", "HEAD"], in: folder)
         let counts = await git(["rev-list", "--left-right", "--count", "@{upstream}...HEAD"], in: folder)
         let numbers = counts.status == 0 ? counts.out.split(whereSeparator: \.isWhitespace).compactMap { Int($0) } : []
-        return GitStatus(remotes: remotes,
-                         branch: branch.status == 0 && branch.out != "HEAD" ? branch.out : nil,
-                         ahead: numbers.count == 2 ? numbers[1] : nil,
-                         behind: numbers.count == 2 ? numbers[0] : nil)
+        var status = GitStatus(remotes: remotes,
+                               branch: branch.status == 0 && branch.out != "HEAD" ? branch.out : nil,
+                               ahead: numbers.count == 2 ? numbers[1] : nil,
+                               behind: numbers.count == 2 ? numbers[0] : nil)
+        // Drift from main: the remote's default branch, else a local main or master.
+        var candidates: [String] = []
+        let remoteHead = await git(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], in: folder)
+        if remoteHead.status == 0, !remoteHead.out.isEmpty { candidates.append(remoteHead.out) }
+        candidates += ["origin/main", "origin/master", "main", "master"]
+        for ref in candidates {
+            guard await git(["rev-parse", "--verify", "--quiet", ref], in: folder).status == 0 else { continue }
+            let short = ref.split(separator: "/").last.map(String.init) ?? ref
+            guard status.branch != short else { break }   // on main: its upstream counts cover it
+            let drift = await git(["rev-list", "--left-right", "--count", "\(ref)...HEAD"], in: folder)
+            let pair = drift.status == 0 ? drift.out.split(whereSeparator: \.isWhitespace).compactMap { Int($0) } : []
+            guard pair.count == 2 else { break }
+            status.mainRef = ref
+            status.behindMain = pair[0]
+            status.aheadOfMain = pair[1]
+            let base = await git(["merge-base", ref, "HEAD"], in: folder)
+            if base.status == 0, let seconds = Double(await git(["log", "-1", "--format=%ct", base.out], in: folder).out) {
+                status.divergedAt = Date(timeIntervalSince1970: seconds)
+            }
+            break
+        }
+        return status
     }
 
     /// "owner/name" from https, ssh, or scp-style GitHub URLs.

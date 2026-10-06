@@ -909,6 +909,13 @@ private struct SidebarRow: View {
                     if !pins.isEmpty {
                         PinPills(pins: pins, onOpen: onOpenPin)
                     }
+                    // How far this checkout's branch has drifted from main (worktrees especially).
+                    if let status = GitStatusStore.shared.status(for: session.record.projectFolder), let drift = status.mainDriftText {
+                        Label(drift + (status.divergedAt.map { " \u{00B7} " + ShortAge.string(since: $0) } ?? ""), systemImage: "arrow.triangle.branch")
+                            .font(.caption2)
+                            .foregroundStyle((status.behindMain ?? 0) > 20 ? Color.orange : Color.secondary)
+                            .help("\(status.branch ?? "This branch") against \(status.mainRef ?? "main"): \(status.aheadOfMain ?? 0) commits not on it, \(status.behindMain ?? 0) on it not here")
+                    }
                     // Sorted by Most Active: today's turns, the number the order is based on.
                     if projectSort == ProjectSort.active.rawValue {
                         let today = session.activityRank.day
