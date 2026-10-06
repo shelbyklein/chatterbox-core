@@ -275,6 +275,14 @@ struct ContentView: View {
             }
         }
         .onAppear(perform: watchCommandKey)
+        // ⌘-Tab away is a ⌘ press this app sees and a release it doesn't: hide the badges
+        // when Chatterbox goes to the background, and show them again only on a fresh ⌘.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+            if showShortcuts { showShortcuts = false }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            if showShortcuts { showShortcuts = false }
+        }
         .onDisappear {
             if let flagsMonitor { NSEvent.removeMonitor(flagsMonitor) }
             flagsMonitor = nil
