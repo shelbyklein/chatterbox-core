@@ -1028,6 +1028,13 @@ struct ChatView: View {
             UsageMeter(compact: true, session: session, color: appearance.style.color(for: session.record.backend))
                 .fixedSize()
             Spacer(minLength: 0)
+            // The preset pills too (Command Center tiles), when the tile is wide enough for them;
+            // narrower, they're still in the menu beside them.
+            ViewThatFits(in: .horizontal) {
+                PresetPills(session: session, style: appearance.style).fixedSize()
+                Color.clear.frame(width: 0, height: 0)
+            }
+            .layoutPriority(-1)
             Menu {
                 Section("Mode") {
                     ForEach(PermissionModes.modes(for: session.record.backend)) { mode in

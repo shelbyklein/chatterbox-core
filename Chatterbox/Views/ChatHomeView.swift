@@ -320,37 +320,18 @@ struct ChatHomeView: View {
 
     @AppStorage("macHomePage") private var savedPage = HomeThreadPage.projects.rawValue
     @AppStorage("homeCardScale") private var cardScale = 1.0
-    private var page: HomeThreadPage { HomeThreadPage(rawValue: savedPage) ?? .projects }
+    /// Home is the Studios page now: projects and chats live in the chat view's sidebar.
+    private var page: HomeThreadPage { .studios }
 
     var body: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 16) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text("Home").font(.largeTitle.weight(.bold))
+                    Text("Studios").font(.largeTitle.weight(.bold))
                     Spacer()
                     cardSizeControl
                     Button("Command Center", systemImage: "rectangle.split.2x2") { model.showingCommandCenter = true }
                     Button("Back to Chat", systemImage: "arrow.left") { model.showingHome = false }
-                }
-                HStack(spacing: 8) {
-                    ForEach(HomeThreadPage.allCases) { destination in
-                        if destination == .archive { Divider().frame(height: 24).padding(.horizontal, 4) }
-                        Button { savedPage = destination.rawValue } label: {
-                            HStack(spacing: 7) {
-                                Image(systemName: destination.icon)
-                                Text(destination.rawValue)
-                                Text("\(HomeThreads.groups(model, page: destination).reduce(0) { $0 + $1.threads.count })")
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }.frame(maxWidth: .infinity).padding(.vertical, 10)
-                                .background(page == destination ? Color.accentColor.opacity(0.16) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
-                                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(page == destination ? Color.accentColor.opacity(0.65) : Color.clear))
-                        }.buttonStyle(.plain)
-                            .accessibilityLabel(destination.rawValue)
-                            .accessibilityAddTraits(page == destination ? .isSelected : [])
-                            #if DEBUG
-                            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { MacHomeDebug.tabs[destination] = $0 }
-                            #endif
-                    }
                 }
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 16) { searchField; filterPicker.frame(width: 300) }
@@ -448,8 +429,8 @@ struct DesktopOverviewControls: View {
             }.pickerStyle(.segmented).labelsHidden().frame(width: 86).help("List or cards")
             Spacer()
             Button { model.showingHome = true; model.showingSettings = false } label: {
-                Label("Home", systemImage: "house")
-            }.buttonStyle(.borderless).help("Full-window thread overview")
+                Label("Studios", systemImage: "paintpalette")
+            }.buttonStyle(.borderless).help("Your Studios, as thumbnails")
             #if DEBUG
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { MacHomeDebug.home = $0 }
             #endif

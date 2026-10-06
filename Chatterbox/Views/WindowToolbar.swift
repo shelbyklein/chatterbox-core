@@ -30,7 +30,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         static let terminal = NSToolbarItem.Identifier("chatterbox.terminal")
         /// Home, New Chat, the chat view (sidebar icon) and Command Center on the left in every view;
         /// the chat's own controls on the right, with Settings last.
-        static let all: [NSToolbarItem.Identifier] = [home, studios, newChat, sidebar, commandCenter, .flexibleSpace,
+        static let all: [NSToolbarItem.Identifier] = [studios, newChat, sidebar, commandCenter, .flexibleSpace,
                                                        tone, place, repo, golem, usage, images, terminal, settings]
         static let chat: [NSToolbarItem.Identifier] = [tone, place, repo, golem, usage, images, terminal]
     }
@@ -68,8 +68,6 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         self.window = window
         window.toolbar = toolbar
         window.toolbarStyle = .unified
-        // Home is the page Chatterbox opens on.
-        model.showingHome = true
         // Home's tabs are saved settings: switching them there moves the toolbar's highlight.
         pageObserver = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -141,8 +139,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         let inChat = !model.showingHome && !model.showingCommandCenter && !model.showingSettings
         // The chat view is the usual place, so its button isn't framed as selected.
         _ = inChat
-        let onStudios = model.showingHome && AppPreferences.defaults.string(forKey: "macHomePage") == "Studios"
-        let current: [NSToolbarItem.Identifier: Bool] = [ID.home: model.showingHome && !onStudios, ID.studios: onStudios,
+        let current: [NSToolbarItem.Identifier: Bool] = [ID.studios: model.showingHome,
                                                          ID.commandCenter: model.showingCommandCenter, ID.settings: model.showingSettings]
         let selected = current.first { $0.value }?.key
         if toolbar.selectedItemIdentifier != selected { toolbar.selectedItemIdentifier = selected }
@@ -172,7 +169,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { ID.all }
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { ID.all }
     /// The view buttons mark the view that's showing.
-    func toolbarSelectableItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { [ID.home, ID.studios, ID.commandCenter, ID.settings] }
+    func toolbarSelectableItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { [ID.studios, ID.commandCenter, ID.settings] }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier,
                  willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
@@ -184,7 +181,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         case ID.home:
             item = button(id, "square.grid.2x2", "Home", "Home: your projects, Studios and chats", #selector(showHome))
         case ID.studios:
-            item = button(id, "paintpalette", "Studios", "Your Studios, as thumbnails (Home → Studios)", #selector(showStudios))
+            item = button(id, "paintpalette", "Studios", "Your Studios, as thumbnails", #selector(showStudios))
         case ID.commandCenter:
             item = button(id, "rectangle.split.2x2", "Command Center", "Several live chats in one window", #selector(toggleCommandCenter))
         case ID.settings:
