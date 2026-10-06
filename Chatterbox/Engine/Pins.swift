@@ -172,15 +172,47 @@ final class PinStore {
 
     private func loadFavicon(for target: String, host: String) {
         guard !loadingFavicons.contains(host), let url = Self.normalizedURL(target),
-              let scheme = url.scheme, let favicon = URL(string: "\(scheme)://\(url.host ?? host)\(url.port.map { ":\($0)" } ?? "")/favicon.ico") else { return }
+              let scheme = url.scheme, let root = URL(string: "\(scheme)://\(url.host ?? host)\(url.port.map { ":\($0)" } ?? "")/") else { return }
         loadingFavicons.insert(host)
         Task {
-            var request = URLRequest(url: favicon)
-            request.timeoutInterval = 5
-            guard let (data, response) = try? await URLSession.shared.data(for: request),
-                  (response as? HTTPURLResponse)?.statusCode == 200, let image = NSImage(data: data) else { return }
-            favicons[host] = image
+            // The icons the page names come first (apple-touch-icon is the largest), then
+            // /favicon.ico: plenty of sites, Spoolside among them, have only the former.
+            let candidates = await Self.declaredIcons(page: url) + [root.appendingPathComponent("favicon.ico")]
+            for candidate in candidates {
+                if let image = await Self.image(at: candidate) { favicons[host] = image; return }
+            }
         }
+    }
+
+    /// The icon links in a page's <head>, apple-touch-icon before plain icons.
+    private static func declaredIcons(page: URL) async -> [URL] {
+        var request = URLRequest(url: page)
+        request.timeoutInterval = 5
+        guard let (data, _) = try? await URLSession.shared.data(for: request),
+              let html = String(data: data.prefix(200_000), encoding: .utf8) ?? String(data: data.prefix(200_000), encoding: .isoLatin1),
+              let tag = try? Regex("<link\\b[^>]*>").ignoresCase() else { return [] }
+        var touch: [URL] = [], plain: [URL] = []
+        for match in html.matches(of: tag) {
+            let link = String(html[match.range])
+            guard let rel = attribute("rel", in: link)?.lowercased(), rel.contains("icon"), !rel.contains("mask"),
+                  let href = attribute("href", in: link), let resolved = URL(string: href, relativeTo: page)?.absoluteURL else { continue }
+            if rel.contains("apple-touch-icon") { touch.append(resolved) } else { plain.append(resolved) }
+        }
+        return touch + plain
+    }
+
+    private static func attribute(_ name: String, in tag: String) -> String? {
+        guard let pattern = try? Regex("\\b\(name)\\s*=\\s*[\"']([^\"']*)[\"']").ignoresCase(),
+              let match = tag.firstMatch(of: pattern), let value = match.output[1].substring else { return nil }
+        return String(value)
+    }
+
+    private static func image(at url: URL) async -> NSImage? {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 5
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200, let image = NSImage(data: data), image.isValid else { return nil }
+        return image
     }
 
     #endif
