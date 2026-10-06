@@ -94,6 +94,9 @@ extension ChatSession {
         }
 
         if !(record.backend == .claude ? claudeAlive : codexAlive) { settleInterruptedWork() }
+        if codexAlive, record.backend == .codex, isRunning, codexTurnID == nil {
+            Task { try? await codexReconcileMissingTurn() }
+        }
     }
 
     /// What a run that can't be continued left behind: requests nobody can answer anymore,
