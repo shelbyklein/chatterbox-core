@@ -128,7 +128,9 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
 
         // Which of the left-hand views is showing.
         let inChat = !model.showingHome && !model.showingCommandCenter && !model.showingSettings
-        let current: [NSToolbarItem.Identifier: Bool] = [ID.home: model.showingHome, ID.sidebar: inChat,
+        // The chat view is the usual place, so its button isn't framed as selected.
+        _ = inChat
+        let current: [NSToolbarItem.Identifier: Bool] = [ID.home: model.showingHome,
                                                          ID.commandCenter: model.showingCommandCenter, ID.settings: model.showingSettings]
         let selected = current.first { $0.value }?.key
         if toolbar.selectedItemIdentifier != selected { toolbar.selectedItemIdentifier = selected }
@@ -158,7 +160,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { ID.all }
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { ID.all }
     /// The view buttons mark the view that's showing.
-    func toolbarSelectableItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { [ID.home, ID.sidebar, ID.commandCenter, ID.settings] }
+    func toolbarSelectableItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { [ID.home, ID.commandCenter, ID.settings] }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier,
                  willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
