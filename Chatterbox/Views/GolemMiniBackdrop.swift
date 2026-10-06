@@ -23,7 +23,7 @@ struct GolemMiniBackdropSettings: View {
             rgb = Int((color.redComponent * 255).rounded()) << 16 | Int((color.greenComponent * 255).rounded()) << 8 | Int((color.blueComponent * 255).rounded())
         }), supportsOpacity: false)
         HStack {
-            Slider("Circle opacity", value: $opacity, in: 0...1, step: 0.05)
+            Slider(value: $opacity, in: 0...1, step: 0.05) { Text("Circle opacity") }
             Text(opacity, format: .percent.precision(.fractionLength(0)))
                 .monospacedDigit().frame(width: 42, alignment: .trailing)
         }
