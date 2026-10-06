@@ -123,7 +123,7 @@ extension ChatSession {
         guard isRunning, codexTurnID == nil, !codexStartInFlight,
               let thread = record.codex?.threadId else { return false }
         let started = record.turnStartedAt
-        let result = try await server.request("thread/read", ["threadId": .string(thread), "includeTurns": true], timeout: .seconds(10))
+        var result = try await server.request("thread/read", ["threadId": .string(thread), "includeTurns": false], timeout: .seconds(10))
         guard isRunning, codexTurnID == nil, !codexStartInFlight,
               record.codex?.threadId == thread, record.turnStartedAt == started else { return false }
         if result["thread"]?["status"]?["type"]?.string == "idle" {
@@ -131,6 +131,10 @@ extension ChatSession {
             codexFinish(startQueued: false, preserveQueued: true)
             return true
         }
+        // Only load turn history when the provider actually reports an active turn.
+        result = try await server.request("thread/read", ["threadId": .string(thread), "includeTurns": true], timeout: .seconds(10))
+        guard isRunning, codexTurnID == nil, !codexStartInFlight,
+              record.codex?.threadId == thread, record.turnStartedAt == started else { return false }
         if let turn = result["thread"]?["turns"]?.array?.last(where: { $0["status"]?.string == "inProgress" }),
            let id = turn["id"]?.string {
             codexTurnID = id
