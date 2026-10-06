@@ -153,7 +153,7 @@ struct ContentView: View {
             } else if model.showingCommandCenter {
                 CommandCenterView(layout: commandCenter)
             } else if model.showingHome {
-                ChatHomeView { session, icons in AnyView(row(session, number: nil, card: true, expanded: !icons, iconOnly: icons)) }
+                ChatHomeView(newStudio: { beginNewStudio() }) { session, icons in AnyView(row(session, number: nil, card: true, expanded: !icons, iconOnly: icons)) }
             } else if mainChatID != nil, let session = model.sessions.first(where: {
                 $0.id == (chatSwitch.initialized ? chatSwitch.displayedID : model.selectedID)
             }) {

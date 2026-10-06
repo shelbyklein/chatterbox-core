@@ -316,10 +316,15 @@ struct ChatHomeView: View {
     @Environment(AppModel.self) private var model
     @State private var search = ""
     @State private var filter: HomeThreadFilter = .all
+    /// Asks for a name and makes a Studio (ContentView owns that sheet).
+    var newStudio: () -> Void = {}
     let card: (ChatSession, Bool) -> AnyView
 
     @AppStorage("macHomePage") private var savedPage = HomeThreadPage.projects.rawValue
     @AppStorage("homeCardScale") private var cardScale = 1.0
+    /// Studio thumbnails start at 1.6× the sidebar's tile size, so they read on a large screen;
+    /// the slider scales from there.
+    private var tileScale: Double { cardScale * 1.6 }
     /// Home is the Studios page now: projects and chats live in the chat view's sidebar.
     private var page: HomeThreadPage { .studios }
 
@@ -330,6 +335,7 @@ struct ChatHomeView: View {
                     Text("Studios").font(.largeTitle.weight(.bold))
                     Spacer()
                     cardSizeControl
+                    Button("New Studio", systemImage: "plus") { newStudio() }
                     Button("Command Center", systemImage: "rectangle.split.2x2") { model.showingCommandCenter = true }
                     Button("Back to Chat", systemImage: "arrow.left") { model.showingHome = false }
                 }
@@ -361,7 +367,7 @@ struct ChatHomeView: View {
                     }
                 }.padding(28).frame(maxWidth: .infinity, alignment: .leading)
             }.id(page)
-            .environment(\.threadCardScale, cardScale)
+            .environment(\.threadCardScale, tileScale)
         }
         // The window's theme (Settings → Appearance), else the system's window color.
         .background(Theme.currentBackground ?? Color(nsColor: .windowBackgroundColor))
@@ -369,14 +375,16 @@ struct ChatHomeView: View {
     }
     private func studioGroups(_ groups: [HomeThreadGroup]) -> some View {
         StudioGroupFlow(spacing: 32) {
-            ForEach(groups) { group in
-                let columns = min(4, group.threads.count)
-                let tile = CGFloat(96 * cardScale)
+            ForEach(withEmptyStudios(groups)) { group in
+                let studio = model.activeStudios.first { $0.id.uuidString == group.id }
+                let columns = min(4, group.threads.count + (studio == nil ? 0 : 1))
+                let tile = CGFloat(96 * tileScale)
                 let width = max(160, CGFloat(columns) * tile + CGFloat(columns - 1) * 16)
                 VStack(alignment: .leading, spacing: 14) {
                     groupHeading(group)
                     LazyVGrid(columns: Array(repeating: GridItem(.fixed(tile), spacing: 16), count: columns), alignment: .leading, spacing: 16) {
                         ForEach(group.threads) { card($0, true) }
+                        if let studio { newChatTile(studio, side: tile) }
                     }
                 }.frame(width: width, alignment: .topLeading)
                 #if DEBUG
@@ -386,11 +394,44 @@ struct ChatHomeView: View {
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// Studios with no chats yet still show (with their New Chat tile) unless a search or
+    /// filter is narrowing the page.
+    private func withEmptyStudios(_ groups: [HomeThreadGroup]) -> [HomeThreadGroup] {
+        guard search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, filter == .all else { return groups }
+        let shown = Set(groups.map(\.id))
+        let empty = model.activeStudios.filter { !shown.contains($0.id.uuidString) }
+            .map { HomeThreadGroup(id: $0.id.uuidString, title: $0.name, threads: []) }
+        return groups + empty
+    }
+
+    /// The last tile in each Studio: opens a new chat there.
+    private func newChatTile(_ studio: Studio, side: CGFloat) -> some View {
+        Button {
+            model.newChat(in: studio)
+            model.showingHome = false
+        } label: {
+            // Same geometry as an icon-only ThreadCard, so it sits in line with the thumbnails.
+            VStack(spacing: 8) {
+                RoundedRectangle(cornerRadius: 14)
+                    .strokeBorder(Color.secondary.opacity(0.5), style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
+                    .frame(width: 64 * tileScale, height: 64 * tileScale)
+                    .overlay { Image(systemName: "plus").font(.system(size: 20 * tileScale, weight: .light)).foregroundStyle(.secondary) }
+                Text("New Chat").font(.system(size: 10.5 * tileScale, weight: .medium)).foregroundStyle(.secondary)
+                    .frame(height: 30 * tileScale, alignment: .top)
+            }
+            .frame(width: side, height: 104 * tileScale)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("New chat in \(studio.name)")
+        .accessibilityLabel("New chat in \(studio.name)")
+    }
+
     /// Card size: smaller to the left, larger to the right.
     private var cardSizeControl: some View {
         HStack(spacing: 6) {
             Image(systemName: "square.grid.3x3").font(.caption).foregroundStyle(.secondary)
-            Slider(value: $cardScale, in: 0.7...1.6).frame(width: 130).controlSize(.small)
+            Slider(value: $cardScale, in: 0.6...2.2).frame(width: 160).controlSize(.small)
             Image(systemName: "square.grid.2x2").foregroundStyle(.secondary)
         }
         .help("Card size")
