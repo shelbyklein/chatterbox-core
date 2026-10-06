@@ -73,6 +73,7 @@ final class ChatSession: Identifiable {
 
     // Codex state (see ChatSession+Codex.swift).
     @ObservationIgnored var codexTurnID: String?
+    @ObservationIgnored var codexStartInFlight = false
     @ObservationIgnored var codexItems: [String: UUID] = [:]
     @ObservationIgnored var codexPlanItems: [String: UUID] = [:]
     @ObservationIgnored var codexTurnMessageItems: [UUID] = []

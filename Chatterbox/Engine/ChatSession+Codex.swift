@@ -64,6 +64,7 @@ extension ChatSession {
         codexTurnID = nil
         codexStopRequested = false
         codexTurnMessageItems = []
+        codexStartInFlight = true
         onChange?(self)
         Task { await codexStartTurn(message, items: items) }
     }
@@ -71,6 +72,14 @@ extension ChatSession {
     func codexInterrupt() {
         guard let thread = record.codex?.threadId, let turn = codexTurnID else {
             codexStopRequested = true
+            if !codexStartInFlight {
+                Task {
+                    do {
+                        _ = try await codexReconcileMissingTurn()
+                        if isRunning, codexTurnID != nil { codexInterrupt() }
+                    } catch { notice("Couldn't stop: \(error.localizedDescription)") }
+                }
+            }
             return
         }
         Task { try? await server.request("turn/interrupt", ["threadId": .string(thread), "turnId": .string(turn)]) }
@@ -81,6 +90,9 @@ extension ChatSession {
     func codexRestartThread() async throws {
         guard let settings = record.codex else { throw CodexError(message: "This chat isn't set up for Codex.") }
         let deadline = Date().addingTimeInterval(10)
+        if isRunning, codexTurnID == nil, !codexStartInFlight {
+            _ = try await codexReconcileMissingTurn()
+        }
         while isRunning, codexTurnID == nil {
             guard Date() < deadline else { throw CodexError(message: "The current turn hasn't connected yet. Try Stop, then restart again.") }
             try await Task.sleep(for: .milliseconds(50))
@@ -104,7 +116,33 @@ extension ChatSession {
         codexDotConfiguration = codexConfigurationKey
     }
 
+    /// A restored running flag may outlive its completed provider turn. Confirm the
+    /// provider state before clearing it, and never resend queued user messages.
+    @discardableResult
+    func codexReconcileMissingTurn() async throws -> Bool {
+        guard isRunning, codexTurnID == nil, !codexStartInFlight,
+              let thread = record.codex?.threadId else { return false }
+        let started = record.turnStartedAt
+        let result = try await server.request("thread/read", ["threadId": .string(thread), "includeTurns": true], timeout: .seconds(10))
+        guard isRunning, codexTurnID == nil, !codexStartInFlight,
+              record.codex?.threadId == thread, record.turnStartedAt == started else { return false }
+        if result["thread"]?["status"]?["type"]?.string == "idle" {
+            codexStopRequested = false
+            codexFinish(startQueued: false, preserveQueued: true)
+            return true
+        }
+        if let turn = result["thread"]?["turns"]?.array?.last(where: { $0["status"]?.string == "inProgress" }),
+           let id = turn["id"]?.string {
+            codexTurnID = id
+            onChange?(self)
+            return false
+        }
+        throw CodexError(message: "Codex couldn't confirm this thread's active turn. History and queued messages are kept.")
+    }
+
     private func codexStartTurn(_ message: UserMessage, items: [UUID]) async {
+        codexStartInFlight = true
+        defer { codexStartInFlight = false }
         guard let settings = record.codex else { return }
         do {
             let thread = try await codexEnsureThread()
@@ -327,7 +365,7 @@ extension ChatSession {
         for (message, item) in queued { Task { await codexSteer(message, turn: turn, item: item) } }
     }
 
-    private func codexFinish(startQueued: Bool) {
+    private func codexFinish(startQueued: Bool, preserveQueued: Bool = false) {
         record.items.removeAll {
             ($0.kind == .assistant || $0.kind == .thought) && $0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
@@ -358,13 +396,15 @@ extension ChatSession {
         let queued = UserMessage(text: pendingSteering.map(\.text).filter { !$0.isEmpty }.joined(separator: "\n\n"),
                                  attachments: pendingSteering.flatMap(\.attachments))
         let queuedItems = pendingSteeringItems
-        pendingSteering.removeAll()
-        pendingSteeringItems.removeAll()
+        if !preserveQueued {
+            pendingSteering.removeAll()
+            pendingSteeringItems.removeAll()
+        }
         if startQueued, !isRestartingThread, !queued.text.isEmpty || !queued.attachments.isEmpty {
             onChange?(self)
             beginCodexTurn(queued, items: queuedItems)
         } else {
-            queuedItems.forEach(markPickedUp)
+            if !preserveQueued { queuedItems.forEach(markPickedUp) }
             onChange?(self)
         }
     }
