@@ -66,6 +66,8 @@ struct DisplayItem: Identifiable, Codable, Equatable {
 
     var id = UUID()
     var kind: Kind
+    /// Older transcript rows have no recorded time; decoding leaves those unknown.
+    var timestamp: Date? = Date()
     var text: String = ""
     var phase: Phase = .final
     var steered = false

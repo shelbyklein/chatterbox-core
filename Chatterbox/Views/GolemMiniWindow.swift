@@ -7,8 +7,10 @@ import SwiftUI
 @MainActor
 @Observable
 final class GolemMiniWindow: NSObject, NSWindowDelegate {
+    static var openSettings: (() -> Void)?
     static let visibleKey = "golemMiniVisible"
     static let expandedFrameKey = "golemMiniExpandedFrame"
+    static let anchorKey = "golemMiniCharacterAnchor"
     static let avatarFrameKey = "golemMiniAvatarFrame"
     static let collapsedKey = "dotCollapsed"
     static let sizeKey = "golemMiniSize"
@@ -84,7 +86,7 @@ final class GolemMiniWindow: NSObject, NSWindowDelegate {
         guard let panel, !collapsed, !dismissing, !bubbleExpanded, height.isFinite, height > 0 else { return }
         let screen = panel.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? panel.frame
         let available = max(0, screen.height - 24)
-        let desired = min(max(expandedSize.height, ceil(height + reserve)), available)
+        let desired = min(ceil(max(20, height) + reserve), available)
         fittingReply = true
         guard abs(panel.frame.height - desired) > 1 else { return }
         var frame = panel.frame
@@ -174,7 +176,16 @@ final class GolemMiniWindow: NSObject, NSWindowDelegate {
             let area = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1200, height: 800)
             let size = collapsed ? collapsedSize : expandedSize
             let fallback = NSRect(x: area.maxX - size.width - 24, y: area.minY + 24, width: size.width, height: size.height)
-            configure(frame: savedFrame(collapsed ? Self.avatarFrameKey : Self.expandedFrameKey) ?? fallback)
+            var restored = savedFrame(collapsed ? Self.avatarFrameKey : Self.expandedFrameKey) ?? fallback
+            if let saved = defaults.string(forKey: Self.anchorKey) {
+                let anchor = NSPointFromString(saved)
+                if anchor.x.isFinite, anchor.y.isFinite {
+                    restored.size = size
+                    let offset = characterCenter(in: size)
+                    restored.origin = NSPoint(x: anchor.x - offset.x, y: anchor.y - offset.y)
+                }
+            }
+            configure(frame: restored)
         }
         keepOnScreen()
         if collapsed { panel?.orderFrontRegardless() }
@@ -314,7 +325,7 @@ final class GolemMiniWindow: NSObject, NSWindowDelegate {
         panel.hasShadow = false
         if collapsed { panel.styleMask.remove(.resizable) } else { panel.styleMask.insert(.resizable) }
         let extra = characterSize - 124
-        let minSize = collapsed ? collapsedSize : NSSize(width: 320, height: 360 + max(0, extra))
+        let minSize = collapsed ? collapsedSize : NSSize(width: 320, height: fittingReply ? collapsedSize.height : 360 + max(0, extra))
         let maxSize = collapsed ? collapsedSize : NSSize(width: 560, height: bubbleExpanded || fittingReply ? 10_000 : 480 + max(0, extra))
         var fitted = frame
         fitted.size.width = min(max(fitted.width, minSize.width), maxSize.width)
@@ -369,7 +380,11 @@ final class GolemMiniWindow: NSObject, NSWindowDelegate {
     }
 
     private func rememberFrame() {
-        guard !positioning, !dismissing, !bubbleExpanded, !fittingReply, let panel else { return }
+        guard !positioning, !dismissing, let panel else { return }
+        let offset = characterCenter(in: panel.frame.size)
+        let anchor = NSPoint(x: panel.frame.minX + offset.x, y: panel.frame.minY + offset.y)
+        defaults.set(NSStringFromPoint(anchor), forKey: Self.anchorKey)
+        guard !bubbleExpanded, !fittingReply else { return }
         defaults.set(NSStringFromRect(panel.frame), forKey: collapsed ? Self.avatarFrameKey : Self.expandedFrameKey)
         if !collapsed { expandedSize = panel.frame.size }
     }
@@ -401,6 +416,7 @@ final class GolemPanel: NSPanel {
 /// out from the bottom: the bar (dot, pill, or message box), then Golem, then his bubble.
 /// The bar is the same height in every state, so Golem never moves.
 private struct GolemMiniContent: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let session: ChatSession
     let controller: GolemMiniWindow
     @AppStorage(Theme.backgroundKey) private var background = "standard"
@@ -409,6 +425,7 @@ private struct GolemMiniContent: View {
     @AppStorage("golemBubbleTextSize") private var bubbleTextSize = 14.0
     @AppStorage("golemBubbleStyle") private var bubbleStyle = "solid"
     @AppStorage("golemBubbleShow") private var bubbleShow = true
+    @AppStorage("golemMiniCircleSize") private var circleSize = 0.64
     @Namespace private var bar
     @State private var hovering = false
     // One source of truth for typing, dictation, and voice-send clearing.
@@ -493,6 +510,17 @@ private struct GolemMiniContent: View {
             }
             .padding(12)
             .frame(width: geometry.size.width, height: geometry.size.height, alignment: .bottom)
+            .background {
+                let expanded = open && !controller.dismissing
+                let diameter = controller.characterSize * min(1, max(0.3, circleSize))
+                let center = controller.characterCenter(in: geometry.size)
+                GolemMiniBackdrop(cornerRadius: expanded ? 24 : diameter / 2, expanded: expanded)
+                    .frame(width: expanded ? max(0, geometry.size.width - 8) : diameter,
+                           height: expanded ? max(0, geometry.size.height - 8) : diameter)
+                    .position(x: geometry.size.width / 2,
+                              y: expanded ? geometry.size.height / 2 : geometry.size.height - center.y)
+                    .animation(reduceMotion ? .easeOut(duration: 0.15) : .smooth(duration: GolemMiniWindow.transition), value: expanded)
+            }
         }
         .preferredColorScheme(Theme.colorScheme(background: background, scheme: scheme))
         .tint(highlight == "default" ? nil : Color.highlight)
@@ -536,7 +564,6 @@ private struct GolemMiniContent: View {
     private var character: some View {
         GolemAnimated(mood: GolemAvatar.mood(of: session))
             .frame(width: controller.characterSize, height: controller.characterSize)
-            .background(GolemMiniBackdrop().padding(4))
             .background(Circle().fill(session.isWaitingOnYou ? Color.yellow.opacity(0.18) : .clear).padding(4))
             // Watching you type: he leans and turns toward the end of your text.
             .rotationEffect(.degrees(gaze * 9), anchor: .bottom)
@@ -546,6 +573,7 @@ private struct GolemMiniContent: View {
                 // Click him to open or minimize; drag to move him; right-click for more.
                 MiniDragRegion(onClick: controller.toggleCollapsed, onDragEnd: controller.keepOnScreen,
                                onOpenFull: controller.openFullChat, onHide: controller.closeMini,
+                               onSettings: { GolemMiniWindow.openSettings?() },
                                sizes: GolemMiniWindow.sizes.map { ($0.label, $0.scale) }, currentScale: controller.scale,
                                onSize: controller.setScale)
             }
@@ -720,7 +748,7 @@ private struct GolemMiniContent: View {
 
     /// Room the rest of the open mini needs below and around the bubble.
     private var bubbleReserve: CGFloat {
-        172 + controller.characterSize - 36 * controller.scale
+        132 + controller.characterSize - 36 * controller.scale
             + (attachments.isEmpty ? 0 : 38) + (attachmentError == nil ? 0 : 42)
     }
 
@@ -732,9 +760,6 @@ private struct GolemMiniContent: View {
     private func bubble(_ text: String, maxHeight: CGFloat, overflows: Bool) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text(session.isWaitingOnYou ? "Needs you" : session.isRunning ? "Working" : session.title)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(session.isWaitingOnYou ? Color.yellow : .secondary)
                 Spacer()
                 if overflows || controller.bubbleExpanded {
                     Button { controller.setBubbleExpanded(!controller.bubbleExpanded) } label: {
@@ -803,6 +828,7 @@ struct MiniDragRegion: NSViewRepresentable {
     var onDragEnd: (() -> Void)?
     var onOpenFull: (() -> Void)?
     var onHide: (() -> Void)?
+    var onSettings: (() -> Void)?
     var sizes: [(String, CGFloat)] = []
     var currentScale: CGFloat = 1
     var onSize: ((CGFloat) -> Void)?
@@ -810,7 +836,7 @@ struct MiniDragRegion: NSViewRepresentable {
     func makeNSView(context: Context) -> DragView { DragView() }
     func updateNSView(_ view: DragView, context: Context) {
         view.onClick = onClick; view.onDragEnd = onDragEnd
-        view.onOpenFull = onOpenFull; view.onHide = onHide
+        view.onOpenFull = onOpenFull; view.onHide = onHide; view.onSettings = onSettings
         view.sizes = sizes; view.currentScale = currentScale; view.onSize = onSize
     }
 
@@ -819,6 +845,7 @@ struct MiniDragRegion: NSViewRepresentable {
         var onDragEnd: (() -> Void)?
         var onOpenFull: (() -> Void)?
         var onHide: (() -> Void)?
+        var onSettings: (() -> Void)?
         var sizes: [(String, CGFloat)] = []
         var currentScale: CGFloat = 1
         var onSize: ((CGFloat) -> Void)?
@@ -862,6 +889,12 @@ struct MiniDragRegion: NSViewRepresentable {
                 let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
                 item.target = self; menu.addItem(item)
             }
+            if onSettings != nil {
+                menu.addItem(.separator())
+                let settings = NSMenuItem(title: "Settings…", action: #selector(showSettings), keyEquivalent: "")
+                settings.target = self
+                menu.addItem(settings)
+            }
             if !sizes.isEmpty {
                 menu.addItem(.separator())
                 let sizeMenu = NSMenu()
@@ -878,6 +911,7 @@ struct MiniDragRegion: NSViewRepresentable {
         }
         @objc private func openChat() { onClick?() }
         @objc private func openFull() { onOpenFull?() }
+        @objc private func showSettings() { onSettings?() }
         @objc private func hideMini() { onHide?() }
         @objc private func pickSize(_ item: NSMenuItem) { onSize?(sizes[item.tag].1) }
     }

@@ -80,16 +80,22 @@ struct ChatToolbarContent: ToolbarContent {
     var body: some ToolbarContent {
         if bridge.hasChat {
             ToolbarItem { ToneSlot(bridge: bridge) }
+            #if !GOLEM_APP
             ToolbarItem { PlaceSlot(bridge: bridge) }
             ToolbarItem { RepoSlot(bridge: bridge) }
+            #endif
             if bridge.isDot {
                 ToolbarItem { GolemSlot(bridge: bridge) }
             }
+            #if !GOLEM_APP
             if bridge.isClaude {
                 ToolbarItem { RemoteSlot(bridge: bridge) }
             }
+            #endif
             ToolbarItem { ImagesSlot(bridge: bridge) }
+            #if !GOLEM_APP
             ToolbarItem { TerminalSlot(bridge: bridge) }
+            #endif
         }
     }
 }

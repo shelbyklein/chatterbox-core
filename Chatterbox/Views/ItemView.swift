@@ -15,6 +15,7 @@ struct ItemView: View {
     @Environment(\.chatFolder) private var chatFolder
 
     var body: some View {
+        Group {
         switch item.kind {
         case .user: userBubble
         case .assistant: assistantText
@@ -27,6 +28,8 @@ struct ItemView: View {
         case .shell: ShellBlock(item: item)
         case .questions: QuestionCard(item: item, agent: agent) { onAnswer(item.id, $0) }
         }
+        }
+        .modifier(MessageTimestampHelp(item: item))
     }
 
     @ViewBuilder
@@ -152,6 +155,17 @@ struct ItemView: View {
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 4)
+    }
+}
+
+private struct MessageTimestampHelp: ViewModifier {
+    let item: DisplayItem
+    @ViewBuilder func body(content: Content) -> some View {
+        if item.kind == .user || item.kind == .assistant {
+            content.help(item.timestamp?.formatted(date: .abbreviated, time: .standard) ?? "Time unavailable for this older message")
+        } else {
+            content
+        }
     }
 }
 
