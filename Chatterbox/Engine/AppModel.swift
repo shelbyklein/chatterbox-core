@@ -82,7 +82,7 @@ final class AppModel {
     var activeSessions: [ChatSession] { sessions.filter { $0.record.archivedAt == nil } }
 
     /// Projects (by recent activity, staleness, or name), then each open Studio's chats, then other chats by most recent: the
-    /// sidebar's order, which the ⌘1–⌘9 shortcuts follow.
+    /// sidebar's order, which Next and Previous Chat follow.
     var sidebarProjects: [ChatSession] {
         let projects = activeSessions.filter { $0.record.projectFolder != nil && $0.record.worktreeOf == nil && !$0.isDot }
         let byName: (ChatSession, ChatSession) -> Bool = { $0.projectName.localizedStandardCompare($1.projectName) == .orderedAscending }
@@ -159,13 +159,6 @@ final class AppModel {
         var seen: [String: String] = [:]
         for tag in sessions.flatMap(\.tags) where seen[tag.lowercased()] == nil { seen[tag.lowercased()] = tag }
         return seen.values.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
-    }
-
-    /// Selects the chat at a 1-based position in the sidebar.
-    func selectChat(number: Int) {
-        let order = sidebarOrder
-        guard order.indices.contains(number - 1) else { return }
-        selectedID = order[number - 1].id
     }
 
     /// Moves the selection up or down the sidebar, wrapping around.

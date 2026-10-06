@@ -30,8 +30,6 @@ struct ContentView: View {
     @State private var renamingChat: ChatSession?
     @State private var chatTitle = ""
     /// True while ⌘ is held on its own: the sidebar shows each chat's ⌘-number.
-    @State private var showShortcuts = false
-    @State private var flagsMonitor: Any?
     @State private var taggingSession: ChatSession?
     @State private var newTag = ""
     @State private var searchText = ""
@@ -281,19 +279,6 @@ struct ContentView: View {
                 searchText = ""
                 tagFilter = ""
             }
-        }
-        .onAppear(perform: watchCommandKey)
-        // ⌘-Tab away is a ⌘ press this app sees and a release it doesn't: hide the badges
-        // when Chatterbox goes to the background, and show them again only on a fresh ⌘.
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
-            if showShortcuts { showShortcuts = false }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            if showShortcuts { showShortcuts = false }
-        }
-        .onDisappear {
-            if let flagsMonitor { NSEvent.removeMonitor(flagsMonitor) }
-            flagsMonitor = nil
         }
     }
 }
@@ -552,17 +537,6 @@ extension ContentView {
         .help("Sort and filter projects")
     }
 
-    /// Holding ⌘ alone shows the ⌘1–⌘9 badges right away; any other key or release hides them.
-    private func watchCommandKey() {
-        guard flagsMonitor == nil else { return }
-        flagsMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { event in
-            let onlyCommand = event.type == .flagsChanged
-                && event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command
-            if showShortcuts != onlyCommand { showShortcuts = onlyCommand }
-            return event
-        }
-    }
-
     private func rowWithSidechats(_ session: ChatSession, numbers: [UUID: Int]) -> some View {
         Group {
             row(session, number: numbers[session.id])
@@ -597,7 +571,7 @@ extension ContentView {
                     model.selectedID = session.id
                 }
             } else {
-                SidebarRow(session: session, shortcut: showShortcuts ? number : nil, pins: PinStore.shared.pins(in: place),
+                SidebarRow(session: session, shortcut: nil, pins: PinStore.shared.pins(in: place),
                            onOpenPin: { model.selectedID = session.id })
                     // Settings → Appearance → Sidebar: room between rows.
                     .padding(.vertical, sidebarRowSpacing / 2)
