@@ -11,7 +11,14 @@ extension ChatSession {
     /// The assistant tools available to Golem.
     static let dotTools = ["list_chats", "read_chat", "send_message", "start_chat", "wait_for_reply", "stop_chat",
                                     "suggest_answer", "record_decision"]
-        .map { "mcp__chatterbox__" + $0 }
+        .map { "mcp__chatterbox__" + $0 } + nativeReadTools
+
+    /// Read-only Gmail and Google Calendar (claude.ai connectors on the signed-in account), so
+    /// Golem can look things up without asking each time. Anything that sends, drafts, labels,
+    /// trashes or changes events still asks.
+    static let nativeReadTools =
+        ["search_threads", "get_thread", "get_message", "list_labels", "list_drafts", "get_draft"].map { "mcp__claude_ai_Gmail__" + $0 }
+        + ["list_calendars", "list_events", "search_events", "get_event"].map { "mcp__claude_ai_Google_Calendar__" + $0 }
 
     /// chatterbox-mcp, bundled next to the app.
     static var dotToolServer: String? {
