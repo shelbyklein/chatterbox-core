@@ -49,6 +49,7 @@ struct ContentView: View {
     /// Active tag pills, comma-separated (a single tag, as before, still works).
     @AppStorage("sidebarTagFilter") private var tagFilter = ""
     @AppStorage("sidebarTagPills") private var showsTagPills = true
+    @AppStorage("sidebarRowSpacing") private var sidebarRowSpacing = 0.0
     @AppStorage(Theme.schemeKey) private var themeScheme = "system"
     @AppStorage(Theme.backgroundKey) private var themeBackground = "standard"
     @AppStorage(Theme.highlightKey) private var themeHighlight = "default"
@@ -587,6 +588,8 @@ extension ContentView {
             } else {
                 SidebarRow(session: session, shortcut: showShortcuts ? number : nil, pins: PinStore.shared.pins(in: place),
                            onOpenPin: { model.selectedID = session.id })
+                    // Settings → Appearance → Sidebar: room between rows.
+                    .padding(.vertical, sidebarRowSpacing / 2)
             }
         }
             // Drop a link or file on a project to pin it there.
@@ -877,6 +880,8 @@ private struct SidebarRow: View {
     /// Called before a pill opens, so the page opens with this chat beside it.
     var onOpenPin: () -> Void = {}
     private let appearance = ReaderStyleSettings()
+    /// Settings → Appearance → Sidebar: room between a row's lines.
+    @AppStorage("sidebarLineSpacing") private var lineSpacing = 2.0
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -895,7 +900,7 @@ private struct SidebarRow: View {
                     .help(session.record.backend.label)
             }
             if session.record.projectFolder != nil {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: lineSpacing) {
                     Text(session.projectName).lineLimit(1)
                     if !session.tags.isEmpty {
                         TagPills(tags: session.tags)

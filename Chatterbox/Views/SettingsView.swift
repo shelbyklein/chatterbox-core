@@ -512,6 +512,8 @@ private struct AppearanceSettingsView: View {
     @AppStorage(Theme.backgroundKey) private var themeBackground = "standard"
     @AppStorage(Theme.highlightKey) private var themeHighlight = "default"
     @AppStorage("readerGroupSteps") private var groupSteps = true
+    @AppStorage("sidebarLineSpacing") private var sidebarLineSpacing = 2.0
+    @AppStorage("sidebarRowSpacing") private var sidebarRowSpacing = 0.0
 
     private static let preview = """
     ## A quick preview
@@ -624,8 +626,14 @@ private struct AppearanceSettingsView: View {
                     slider("Conversation width", value: settings.$contentWidth, range: 560...1400, step: 20, unit: "pt",
                            hint: "The widest the chat column gets in a large window")
                 }
+                Section("Sidebar") {
+                    slider("Space between lines", value: $sidebarLineSpacing, range: 0...10, step: 1, unit: "pt",
+                           hint: "Between a project's name, tags, pins and latest line")
+                    slider("Space between projects", value: $sidebarRowSpacing, range: 0...24, step: 2, unit: "pt",
+                           hint: "Extra room between rows in the sidebar")
+                }
                 Section {
-                    Button("Restore Defaults") { settings.reset() }
+                    Button("Restore Defaults") { settings.reset(); sidebarLineSpacing = 2; sidebarRowSpacing = 0 }
                 }
             }
             .formStyle(WideFormStyle())
