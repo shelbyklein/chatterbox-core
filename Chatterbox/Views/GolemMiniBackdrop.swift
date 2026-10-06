@@ -59,11 +59,17 @@ private struct DesktopGlassBlur: NSViewRepresentable {
 }
 
 struct GolemMiniBackdropSettings: View {
+    @AppStorage("golemMiniCircleSize") private var circleSize = 0.64
     @AppStorage("golemMiniCircleRGB") private var rgb = 0
     @AppStorage("golemMiniCircleOpacity") private var opacity = 0.3
     @AppStorage("golemMiniCircleEdgeBlur") private var circleBlur = 2.0
     @AppStorage("golemMiniExpandedEdgeBlur") private var expandedBlur = 2.0
     var body: some View {
+        HStack {
+            Slider(value: $circleSize, in: 0.3...1, step: 0.01) { Text("Circle size") }
+            Text(circleSize, format: .percent.precision(.fractionLength(0)))
+                .monospacedDigit().frame(width: 42, alignment: .trailing)
+        }
         ColorPicker("Circle color", selection: Binding(get: { GolemMiniBackdrop.color(rgb) }, set: { value in
             guard let color = NSColor(value).usingColorSpace(.sRGB) else { return }
             rgb = Int((color.redComponent * 255).rounded()) << 16 | Int((color.greenComponent * 255).rounded()) << 8 | Int((color.blueComponent * 255).rounded())

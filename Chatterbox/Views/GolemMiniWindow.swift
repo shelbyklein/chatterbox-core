@@ -425,6 +425,7 @@ private struct GolemMiniContent: View {
     @AppStorage("golemBubbleTextSize") private var bubbleTextSize = 14.0
     @AppStorage("golemBubbleStyle") private var bubbleStyle = "solid"
     @AppStorage("golemBubbleShow") private var bubbleShow = true
+    @AppStorage("golemMiniCircleSize") private var circleSize = 0.64
     @Namespace private var bar
     @State private var hovering = false
     // One source of truth for typing, dictation, and voice-send clearing.
@@ -511,7 +512,7 @@ private struct GolemMiniContent: View {
             .frame(width: geometry.size.width, height: geometry.size.height, alignment: .bottom)
             .background {
                 let expanded = open && !controller.dismissing
-                let diameter = controller.characterSize * 0.64
+                let diameter = controller.characterSize * min(1, max(0.3, circleSize))
                 let center = controller.characterCenter(in: geometry.size)
                 GolemMiniBackdrop(cornerRadius: expanded ? 24 : diameter / 2, expanded: expanded)
                     .frame(width: expanded ? max(0, geometry.size.width - 8) : diameter,
