@@ -130,8 +130,10 @@ struct ChatSettingsCog: View {
 /// Shared by the Chat menu, sidebar menus, Golem settings and mini options.
 struct RestartThreadControl: View {
     let session: ChatSession
+    var beforeRestart: () -> Void = {}
     var body: some View {
         Button {
+            beforeRestart()
             Task { await session.restartThread() }
         } label: {
             Label(session.isRestartingThread ? "Restarting Thread…" : session.isRunning ? "Stop and Restart Thread" : "Restart Thread",

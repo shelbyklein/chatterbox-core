@@ -85,7 +85,11 @@ final class ChatSession: Identifiable {
     /// the chat, so switching to another chat and back doesn't lose it.
     /// Not observed: only ChatView sets them, and it keeps its own copy while you type.
     @ObservationIgnored var applyingRemoteState=false
+    #if GOLEM_APP
+    var draft = "" {didSet{syncRemoteDraft()}}
+    #else
     @ObservationIgnored var draft = "" {didSet{syncRemoteDraft()}}
+    #endif
     /// The reply in progress answers a check-in Chatterbox sent (see DotActivity).
     @ObservationIgnored var automaticTurn = false
     /// Chatterbox's usual "finished" alert is skipped for this turn (Dot's quiet check-ins).
@@ -117,7 +121,11 @@ final class ChatSession: Identifiable {
         }
         RuntimeHooks.turnEnded(self)
     }
+    #if GOLEM_APP
+    var draftAttachments: [Attachment] = [] {didSet{syncRemoteDraft()}}
+    #else
     @ObservationIgnored var draftAttachments: [Attachment] = [] {didSet{syncRemoteDraft()}}
+    #endif
     /// Typing sends the background service the newest draft at most every 0.3 s, not every keystroke.
     @ObservationIgnored private var remoteDraftScheduled=false
     /// A draft the background service hasn't confirmed yet: a reconnect mustn't replace it

@@ -229,6 +229,9 @@ struct ChatView: View {
         .onChange(of: tileActive) { _, active in if !active { composerFocused = false } }
         .onChange(of: composerFocused) { _, focused in if focused { tileContext?.activate() } }
         .onChange(of: draft) { _, text in session.draft = text }
+        #if GOLEM_APP
+        .modifier(GolemVoiceDraftSync(session: session, draft: $draft, attachments: $attachments))
+        #endif
         .onChange(of: attachments) { _, files in session.draftAttachments = files }
         .onDisappear {
             if tileContext != nil { session.draft = draft; session.draftAttachments = attachments }
@@ -1612,3 +1615,21 @@ private final class EarlierCount {
     var key = ""
     var value: Int?
 }
+
+#if GOLEM_APP
+/// Keep local typing responsive while accepting external voice edits and send clearing.
+private struct GolemVoiceDraftSync: ViewModifier {
+    let session: ChatSession
+    @Binding var draft: String
+    @Binding var attachments: [Attachment]
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: session.draft) { old, text in
+                if session.isDot, draft == old, draft != text { draft = text }
+            }
+            .onChange(of: session.draftAttachments) { old, files in
+                if session.isDot, attachments == old, attachments != files { attachments = files }
+            }
+    }
+}
+#endif

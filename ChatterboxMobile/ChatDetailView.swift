@@ -76,6 +76,13 @@ struct ChatDetailView: View {
     @State private var choosingPhotos = false
     @State private var choosingFiles = false
     @State private var dictation = Dictation()
+    #if GOLEM_APP
+    @AppStorage("golemDismissedInAppNotice") private var dismissedNotice = ""
+    @State private var voiceConversation = false
+    @State private var voiceGeneration = UUID()
+    @State private var voiceEnded = false
+    @State private var listeningTask: Task<Void, Never>?
+    #endif
     @State private var reviewingPDF: Companion.File?
     @State private var showingSettings = false
     @State private var renaming = false
@@ -92,11 +99,54 @@ struct ChatDetailView: View {
     private var golemIdle: Bool { golemComposing?.wrappedValue == false }
     private var agentAccent: Color { MobileConversationStyle.accent(for: summary.backend) }
 
+    private var chatNavigationTitle: String {
+        #if GOLEM_APP
+        if isConversation { return "" }
+        #endif
+        return summary.project ?? summary.title
+    }
+
     var body: some View {
         transcript
         .safeAreaInset(edge: .bottom) {
+            #if GOLEM_APP
+            composer
+            #else
             if golemIdle { idleGolem.transition(.opacity) } else { composer.transition(.opacity) }
+            #endif
         }
+        #if GOLEM_APP
+        .toolbarBackground(isConversation ? .hidden : .automatic, for: .navigationBar)
+        .task {
+            guard isConversation else { return }
+            while !Task.isCancelled {
+                if scenePhase == .active, detail != nil, let request = GolemConversationRequest.shared.pending {
+                    if !request.start { endVoiceConversation(); GolemConversationRequest.shared.finish(request) }
+                    else if voiceConversation { GolemConversationRequest.shared.finish(request) }
+                    else if summary.isRunning || sending || !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingImages.isEmpty {
+                        GolemConversationRequest.shared.finish(request, error: "Wait for Golem to finish and send or clear your draft before starting Conversation.")
+                    } else {
+                        GolemConversationRequest.shared.cancelPending = { endVoiceConversation() }
+                        startVoiceConversation()
+                        await listeningTask?.value
+                        GolemConversationRequest.shared.finish(request, error: dictation.isListening ? nil : dictation.problem ?? "Listening did not start.")
+                    }
+                }
+                do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+            }
+        }
+        #if DEBUG
+        .task(id: latestFinishedReply?.id) {
+            guard ProcessInfo.processInfo.environment["GOLEM_TEST_DISMISS_NOTICE"] == "1",
+                  ProcessInfo.processInfo.environment["CHATTERBOX_TEST_HOST"] == "127.0.0.1",
+                  latestFinishedReply != nil else { return }
+            dismissedNotice = ""
+            try? await Task.sleep(for: .seconds(12))
+            guard !Task.isCancelled else { return }
+            dismissGolemNotice()
+        }
+        #endif
+        #endif
         .environment(\.openURL, OpenURLAction { url in
             guard url.scheme == "chatterbox-document" else { return .systemAction(url) }
             if let id = url.host.flatMap(UUID.init(uuidString:)),
@@ -132,7 +182,7 @@ struct ChatDetailView: View {
             for data in items { addImage(data, name: "Image") }
             return pendingImages.count > before
         }
-        .navigationTitle(summary.project ?? summary.title)
+        .navigationTitle(chatNavigationTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { chatToolbar }
         .tint(isConversation ? Color.primary : agentAccent)
@@ -180,27 +230,22 @@ struct ChatDetailView: View {
                         MobileTranscriptRows(items: detail.items, chat: chat.id, backend: summary.backend,
                                              conversation: isConversation, actions: actions)
                         #if GOLEM_APP
-                        if isConversation && !golemIdle {
-                            // The assistant, below his latest message: thinking while he works.
-                            HStack(alignment: .bottom, spacing: 8) {
-                                if MobileGolem.shared.hasAnimations {
-                                    MobileGolemAnimated(mood: MobileGolem.mood(summary))
-                                        .frame(width: 80, height: 80)
-                                        .modifier(GolemMatch(enabled: golemComposing != nil && !reduceMotion, namespace: golemSpace))
-                                        .contentShape(Rectangle())
-                                        .onTapGesture { if golemComposing != nil { setGolemComposing(false) } }
-                                        .accessibilityAddTraits(golemComposing != nil ? .isButton : [])
-                                        .accessibilityHint(golemComposing != nil ? "Puts the message box away" : "")
-                                }
-                                if summary.isRunning {
-                                    Text("Replying\u{2026}")
-                                        .font(.callout).foregroundStyle(.secondary)
-                                        .padding(.horizontal, 14).padding(.vertical, 10)
-                                        .background(Color(uiColor: .secondarySystemBackground), in: Capsule())
-                                        .padding(.bottom, 12)
-                                }
+                        if isConversation, let reply = latestFinishedReply, !summary.isRunning,
+                           dismissedNotice != reply.id.uuidString {
+                            Button { dismissGolemNotice() } label: {
+                                Label("Dismiss notification", systemImage: "xmark")
+                                    .font(.caption)
+                                    .frame(minHeight: 44)
                             }
-                            .id("working")
+                            .foregroundStyle(.secondary)
+                            .accessibilityHint("Dismisses this notice and hides Golem. The message stays in your history.")
+                        }
+                        if isConversation && summary.isRunning {
+                            Text("•••").font(.title2.bold()).foregroundStyle(.secondary)
+                                .padding(.horizontal, 18).padding(.vertical, 8)
+                                .background(Color(uiColor: .secondarySystemBackground), in: Capsule())
+                                .accessibilityLabel("Golem is working")
+                                .id("working")
                         }
                         #endif
                         if !isConversation && summary.isRunning {
@@ -278,14 +323,21 @@ struct ChatDetailView: View {
             #if GOLEM_APP
             // "Read new replies aloud": each finished reply that arrives while this chat is open.
             .onChange(of: latestFinishedReply?.id) { old, new in
-                guard let new, old != nil, new != old, GolemVoice.shared.autoRead, scenePhase == .active,
+                guard let new, (old != nil || voiceConversation), new != old,
+                      !voiceEnded, (voiceConversation || GolemVoice.shared.autoRead), scenePhase == .active,
                       !dictation.isListening, let reply = latestFinishedReply else { return }
+                let generation = voiceGeneration
                 GolemVoice.shared.speak(new, text: reply.text) {
-                    if GolemVoice.shared.listensAfter { listenForReply() }
+                    guard generation == voiceGeneration, !voiceEnded else { return }
+                    if voiceConversation || GolemVoice.shared.listensAfter { listenForReply() }
                 }
             }
+            .onDisappear { endVoiceConversation() }
             #endif
             .onChange(of: scenePhase) { _, phase in
+                #if GOLEM_APP
+                if phase == .background { endVoiceConversation() }
+                #endif
                 guard phase == .active else { return }
                 // Already loaded: this pin covers it. Otherwise the first load will.
                 pinnedLoaded = detail != nil
@@ -303,6 +355,40 @@ struct ChatDetailView: View {
             #endif
         }
     }
+
+    #if GOLEM_APP
+    private var noticeDismissed: Bool {
+        guard let reply = latestFinishedReply else { return false }
+        return dismissedNotice == reply.id.uuidString && !summary.isRunning && !voiceConversation && !dictation.isListening
+    }
+
+    private func dismissGolemNotice() {
+        guard let reply = latestFinishedReply else { return }
+        endVoiceConversation()
+        dismissedNotice = reply.id.uuidString
+    }
+
+    private var toolbarGolem: some View {
+        Button { pinRequests += 1 } label: {
+            Group {
+                if MobileGolem.shared.hasAnimations {
+                    MobileGolemAnimated(mood: MobileGolem.mood(summary))
+                } else {
+                    Image(systemName: "sparkles").font(.title2)
+                }
+            }
+            .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .opacity(noticeDismissed ? 0 : 1)
+        .allowsHitTesting(!noticeDismissed)
+        .animation(.easeOut(duration: reduceMotion ? 0.15 : 0.3), value: noticeDismissed)
+        .accessibilityHidden(noticeDismissed)
+        .accessibilityLabel("Scroll to newest message")
+        .accessibilityHint("Golem takes you to the bottom of the conversation")
+    }
+    #endif
 
     /// Golem large and centered under the latest messages; tapping him starts a message.
     #if GOLEM_APP
@@ -330,7 +416,7 @@ struct ChatDetailView: View {
             .accessibilityLabel("Message \(summary.title)")
             .accessibilityHint("Shows the message box")
             if dictation.isListening {
-                Button { dictation.stop() } label: {
+                Button { endVoiceConversation() } label: {
                     Label(draft.isEmpty ? "Listening\u{2026}" : draft, systemImage: "mic.fill")
                         .lineLimit(3)
                         .font(.callout)
@@ -385,15 +471,13 @@ struct ChatDetailView: View {
     @ToolbarContentBuilder
     private var chatToolbar: some ToolbarContent {
             if isConversation {
-                if golemComposing != nil && !golemIdle {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button("Done") { setGolemComposing(false) }
-                            .accessibilityHint("Puts the message box away and brings back the tabs")
-                    }
-                }
+                #if GOLEM_APP
+                ToolbarItem(placement: .topBarLeading) { toolbarGolem }
+                #else
                 ToolbarItem(placement: .principal) {
                     Text(summary.title).font(.headline).lineLimit(1)
                 }
+                #endif
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showingSettings = true } label: { Image(systemName: "gearshape") }
                         .accessibilityLabel("Chat Settings")
@@ -566,7 +650,7 @@ struct ChatDetailView: View {
             if !pendingImages.isEmpty { pendingTray }
             if let steps = detail?.nextSteps, !steps.isEmpty, !summary.isRunning, dismissedSteps != steps { nextStepsChips(steps) }
             if dictation.isListening {
-                Label("Listening\u{2026} tap the mic to stop.", systemImage: "waveform")
+                Label(listeningHint, systemImage: "waveform")
                     .font(.caption).foregroundStyle(.red)
                     .symbolEffect(.variableColor.iterative, isActive: true)
             } else if let problem = dictation.problem {
@@ -604,20 +688,56 @@ struct ChatDetailView: View {
     }
 
     #if GOLEM_APP
-    /// The back-and-forth: after Golem reads a reply, listen for yours and send it when you
-    /// pause. Saying nothing ends it. Never sends over something you'd already typed.
+    private func startVoiceConversation() {
+        guard !summary.isRunning, !sending, draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              pendingImages.isEmpty else { return }
+        voiceGeneration = UUID()
+        voiceEnded = false
+        voiceConversation = true
+        composing = false
+        GolemVoice.shared.stop()
+        listenForReply()
+    }
+
+    private func endVoiceConversation() {
+        voiceGeneration = UUID()
+        voiceConversation = false
+        voiceEnded = true
+        listeningTask?.cancel()
+        listeningTask = nil
+        dictation.stop()
+        GolemVoice.shared.stop()
+    }
+
+    /// Reuse the existing pause-to-send capture without changing saved voice preferences.
     private func listenForReply() {
-        guard isConversation, scenePhase == .active, !dictation.isListening,
-              draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, pendingImages.isEmpty else { return }
+        guard isConversation, scenePhase == .active, !dictation.isListening, !voiceEnded,
+              draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, pendingImages.isEmpty else {
+            if voiceConversation { endVoiceConversation() }
+            return
+        }
+        voiceConversation = true
+        setGolemComposing(true)
         let state = composerState
         let generation = state.inputGeneration
-        Task {
+        let session = voiceGeneration
+        listeningTask = Task {
             await dictation.start(onPause: { spoken in
-                guard !spoken.isEmpty, state.inputGeneration == generation else { return }
-                Task { await send() }
+                guard session == voiceGeneration, voiceConversation else { return }
+                guard !spoken.isEmpty, state.inputGeneration == generation else {
+                    endVoiceConversation()
+                    return
+                }
+                Task {
+                    guard session == voiceGeneration, voiceConversation else { return }
+                    await send()
+                    if error != nil { endVoiceConversation() }
+                }
             }) { spoken in
+                guard session == voiceGeneration, voiceConversation else { return }
                 state.applyTranscription(spoken, prefix: "", generation: generation)
             }
+            if session == voiceGeneration, !dictation.isListening { endVoiceConversation() }
         }
     }
     #endif
@@ -681,6 +801,22 @@ struct ChatDetailView: View {
         }
     }
 
+    private var listeningHint: String {
+        #if GOLEM_APP
+        if isConversation { return "Listening… pause to send, or tap stop to end." }
+        #endif
+        return "Listening… tap the mic to stop."
+    }
+
+    private var dictationButton: some View {
+        Button { toggleDictation() } label: {
+            Image(systemName: dictation.isListening ? "mic.circle.fill" : "mic.circle")
+                .font(.system(size: 30))
+                .foregroundStyle(dictation.isListening ? Color.red : Color.secondary)
+        }
+        .accessibilityLabel(dictation.isListening ? "Stop dictating" : "Dictate")
+    }
+
     private var composerRow: some View {
         HStack(alignment: .bottom, spacing: 8) {
             // The pickers open from the chat, not from inside the menu, where iOS doesn't
@@ -707,24 +843,55 @@ struct ChatDetailView: View {
                 .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(
                     isConversation ? Color.primary.opacity(0.12) : agentAccent.opacity(0.35), lineWidth: 1))
 
-            Button { toggleDictation() } label: {
-                Image(systemName: dictation.isListening ? "mic.circle.fill" : "mic.circle")
-                    .font(.system(size: 30))
-                    .foregroundStyle(dictation.isListening ? Color.red : Color.secondary)
+            #if GOLEM_APP
+            if isConversation {
+                Button {
+                    if voiceConversation { endVoiceConversation() } else { startVoiceConversation() }
+                } label: {
+                    Image(systemName: voiceConversation ? "stop.fill" : "waveform")
+                        .font(.system(size: voiceConversation ? 15 : 19, weight: .semibold))
+                        .foregroundStyle(.black)
+                        .frame(width: 34, height: 34)
+                        .background(.white, in: Circle())
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(voiceConversation ? "End Conversation" : "Conversation")
+                .accessibilityIdentifier("golem-voice-conversation")
+                .help(voiceConversation ? "End Conversation" : "Conversation")
+                .disabled(!voiceConversation && (detail == nil || summary.isRunning || sending || !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingImages.isEmpty))
+            } else {
+                dictationButton
             }
-            .accessibilityLabel(dictation.isListening ? "Stop dictating" : "Dictate")
+            #else
+            dictationButton
+            #endif
 
             if summary.isRunning {
                 Button { perform { try await store.stop(chat.id) } } label: {
-                    Image(systemName: "stop.circle.fill").font(.system(size: 34)).foregroundStyle(.secondary)
+                    Image(systemName: "stop.circle.fill")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 34, height: 34)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                        .foregroundStyle(.secondary)
                 }
                 .accessibilityLabel("Stop")
             }
 
+            // Golem uses one trailing action slot; ordinary chats retain queued sending.
+            if !isConversation || !summary.isRunning {
+
             // While the agent works, the send button adds to the reply; hold it to Send Now.
             Button { Task { await send() } } label: {
                 Image(systemName: sending ? "ellipsis.circle.fill" : "arrow.up.circle.fill")
-                    .font(.system(size: 34))
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 34, height: 34)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
             }
             .tint(agentAccent)
             .disabled(!canSend)
@@ -737,6 +904,7 @@ struct ChatDetailView: View {
                 }
             }
             .accessibilityLabel("Send")
+            }
         }
     }
 }
@@ -792,6 +960,22 @@ private struct ItemRow: View {
     let conversation: Bool
     let actions: ItemActions
 
+    #if GOLEM_APP
+    @AppStorage(GolemBubbleColor.key, store: AppPreferences.defaults) private var bubbleRGB = GolemBubbleColor.standard
+    #endif
+    private var outgoingFill: Color {
+        #if GOLEM_APP
+        if conversation { return GolemBubbleColor.color(bubbleRGB) }
+        #endif
+        return MobileConversationStyle.bubble(for: backend)
+    }
+    private var outgoingText: Color {
+        #if GOLEM_APP
+        if conversation { return GolemBubbleColor.text(bubbleRGB) }
+        #endif
+        return .white
+    }
+
     var body: some View {
         switch item.kind {
         case .user:
@@ -801,8 +985,8 @@ private struct ItemRow: View {
                         .textSelection(.enabled)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 9)
-                        .foregroundStyle(.white)
-                        .background(RoundedRectangle(cornerRadius: 20).fill(MobileConversationStyle.bubble(for: backend)))
+                        .foregroundStyle(outgoingText)
+                        .background(RoundedRectangle(cornerRadius: 20).fill(outgoingFill))
                 }
                 images
                 if item.isQueued {

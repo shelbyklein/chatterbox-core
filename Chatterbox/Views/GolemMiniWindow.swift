@@ -59,6 +59,8 @@ final class GolemMiniWindow: NSObject, NSWindowDelegate {
     /// Golem is listening for a spoken reply: the box shows what's heard, and sends on a pause.
     var listening = false
     /// Listen and mute buttons, when the app can talk (Golem's own app).
+    var voiceProblem: String?
+    var conversationActive = false
     @ObservationIgnored var voice: MiniVoiceControls?
     /// The bubble grown to show a long message whole: the panel stretches up as far as the
     /// screen allows, Golem staying where he is. Its usual size comes back afterwards.
@@ -110,7 +112,7 @@ final class GolemMiniWindow: NSObject, NSWindowDelegate {
         hoveredReply = nil
         acknowledgement = Task { @MainActor [weak self] in
             do { try await Task.sleep(for: .milliseconds(180)) } catch { return }
-            guard let self, !Task.isCancelled, !self.collapsed, NSApp.modalWindow == nil,
+            guard let self, !Task.isCancelled, !self.collapsed, !self.conversationActive, !self.listening, NSApp.modalWindow == nil,
                   // Hover tracking can blink out over the composer; only a pointer that really left counts.
                   let panel = self.panel, !panel.frame.contains(NSEvent.mouseLocation),
                   let dot = self.model?.dot, !dot.isRunning, !dot.isWaitingOnYou,
@@ -386,6 +388,7 @@ struct MiniVoiceControls {
     var muted: @MainActor () -> Bool
     var toggleMute: @MainActor () -> Void
     var toggleListening: @MainActor () -> Void
+    var stopConversation: @MainActor () -> Void = {}
 }
 
 final class GolemPanel: NSPanel {
@@ -408,8 +411,15 @@ private struct GolemMiniContent: View {
     @AppStorage("golemBubbleShow") private var bubbleShow = true
     @Namespace private var bar
     @State private var hovering = false
-    @State private var draft: String
-    @State private var attachments: [Attachment]
+    // One source of truth for typing, dictation, and voice-send clearing.
+    private var draft: String {
+        get { session.draft }
+        nonmutating set { session.draft = newValue }
+    }
+    private var attachments: [Attachment] {
+        get { session.draftAttachments }
+        nonmutating set { session.draftAttachments = newValue }
+    }
     @State private var attachmentError: String?
     @State private var showingModels = false
     @State private var composerWidth: CGFloat = 300
@@ -419,8 +429,6 @@ private struct GolemMiniContent: View {
     init(session: ChatSession, controller: GolemMiniWindow) {
         self.session = session
         self.controller = controller
-        _draft = State(initialValue: session.draft)
-        _attachments = State(initialValue: session.draftAttachments)
     }
 
     private var open: Bool { !controller.collapsed }
@@ -461,6 +469,17 @@ private struct GolemMiniContent: View {
                         .transition(.opacity)
                         .opacity(controller.dismissing ? 0 : 1)
                 }
+                if open, let problem = controller.voiceProblem {
+                    Label(problem, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption).foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+                        .padding(.bottom, 8)
+                        .zIndex(3)
+                }
                 if open, !attachments.isEmpty { attachmentStrip.padding(.bottom, 8).transition(.opacity) }
                 if open, let attachmentError { Text(attachmentError).font(.caption).foregroundStyle(.orange).lineLimit(2).padding(.bottom, 8) }
                 if open, session.isRestartingThread || session.threadRestartStatus != nil {
@@ -485,10 +504,6 @@ private struct GolemMiniContent: View {
             controller.replyHoverChanged(inside: hovering, replyID: hovering ? replyID : nil)
         }
         .onChange(of: session.title) { _, title in controller.panel?.title = title }
-        .onChange(of: draft) { _, value in session.draft = value }
-        // Spoken words arrive through the draft while he listens.
-        .onChange(of: session.draft) { _, value in if controller.listening, value != draft { draft = value } }
-        .onChange(of: attachments) { _, value in session.draftAttachments = value }
         .onChange(of: controller.collapsed) { _, collapsed in
             if collapsed { focused = false }
             if !collapsed { DispatchQueue.main.asyncAfter(deadline: .now() + GolemMiniWindow.transition) {
@@ -521,6 +536,7 @@ private struct GolemMiniContent: View {
     private var character: some View {
         GolemAnimated(mood: GolemAvatar.mood(of: session))
             .frame(width: controller.characterSize, height: controller.characterSize)
+            .background(GolemMiniBackdrop().padding(4))
             .background(Circle().fill(session.isWaitingOnYou ? Color.yellow.opacity(0.18) : .clear).padding(4))
             // Watching you type: he leans and turns toward the end of your text.
             .rotationEffect(.degrees(gaze * 9), anchor: .bottom)
@@ -606,7 +622,7 @@ private struct GolemMiniContent: View {
     private var composer: some View {
         HStack(alignment: .center, spacing: 8) {
             Menu {
-                RestartThreadControl(session: session)
+                RestartThreadControl(session: session, beforeRestart: { controller.voice?.stopConversation() })
                 Divider()
                 Button("Attach Files\u{2026}", action: chooseFiles)
                 Button("Paste Image") { if let files = Attachments.fromPasteboard() { attachments += files } }
@@ -623,7 +639,7 @@ private struct GolemMiniContent: View {
             .foregroundStyle(.secondary)
             .accessibilityLabel("More options")
             // Up to four lines, then scrolls. Return sends, Shift-Return starts a new line, ⌘↩ sends now.
-            ComposerBox(text: $draft, placeholder: controller.listening ? "Listening\u{2026} pause to send" : "Message \(session.title)", isFocused: $focused,
+            ComposerBox(text: Binding(get: { draft }, set: { draft = $0 }), placeholder: controller.listening ? "Listening\u{2026} pause to send" : "Message \(session.title)", isFocused: $focused,
                         font: .systemFont(ofSize: 14), maxHeight: 4 * 18,
                         onKey: { key, modifiers in
                             guard key == .return, modifiers.contains(.command) else { return false }
@@ -661,14 +677,14 @@ private struct GolemMiniContent: View {
 
     private func listenButton(_ voice: MiniVoiceControls) -> some View {
         Button(action: voice.toggleListening) {
-            Image(systemName: controller.listening ? "mic.fill" : "mic")
+            Image(systemName: controller.conversationActive ? "stop.fill" : controller.voiceProblem != nil ? "exclamationmark.triangle" : "waveform")
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(controller.listening ? Color.red : Color.secondary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(controller.listening ? "Stop listening" : "Talk to \(session.title): sends when you pause")
-        .accessibilityLabel(controller.listening ? "Stop listening" : "Start listening")
+        .help(controller.voiceProblem ?? (controller.conversationActive ? "End conversation; keep unsent words" : "Start a conversation with \(session.title)"))
+        .accessibilityLabel(controller.conversationActive ? "End Conversation" : "Conversation")
     }
 
     private func muteButton(_ voice: MiniVoiceControls) -> some View {
