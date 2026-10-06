@@ -1049,13 +1049,18 @@ struct ChatView: View {
         if session.isDot { EmptyView() } else if compact { compactModelStatus } else { fullModelStatus }
     }
 
+    private var hasSelectedPreset: Bool { ModelPresets.shared.presets.contains { ModelPresets.shared.matches($0, session: session) } }
+
     /// The small floating chat: the model, context, and one menu for the mode and presets.
     private var compactModelStatus: some View {
         HStack(spacing: 8) {
-            ModelPicker(session: session, summary: modelSummary.short,
-                        color: appearance.style.color(for: session.record.backend),
-                        openRequest: commands.modelPopoverRequests,
-                        handlesKeyboardRequest: { handlesKeyboard })
+            if !hasSelectedPreset {
+                ModelPicker(session: session, summary: modelSummary.short,
+                            color: appearance.style.color(for: session.record.backend),
+                            openRequest: commands.modelPopoverRequests,
+                            handlesKeyboardRequest: { handlesKeyboard })
+            }
+            Spacer(minLength: 0)
             UsageMeter(compact: true, session: session, color: appearance.style.color(for: session.record.backend))
                 .fixedSize()
             Spacer(minLength: 0)
@@ -1094,19 +1099,31 @@ struct ChatView: View {
     }
 
     private var fullModelStatus: some View {
-        HStack(spacing: 10) {
-            modeMenu
-                .fixedSize()
-            // Gives up width first: the name truncates, while the preset pills keep theirs.
-            ModelPicker(session: session, summary: modelSummary.full,
-                        color: appearance.style.color(for: session.record.backend),
-                        openRequest: commands.modelPopoverRequests,
-                        handlesKeyboardRequest: { handlesKeyboard })
-            UsageMeter(session: session, color: appearance.style.color(for: session.record.backend))
-            Spacer(minLength: 0)
-            PresetPills(session: session, style: appearance.style)
-                .fixedSize()
-                .layoutPriority(1)
+        CenteredModelStatus {
+            HStack(spacing: 10) {
+                modeMenu.fixedSize()
+                if !hasSelectedPreset {
+                    ModelPicker(session: session, summary: modelSummary.full,
+                                color: appearance.style.color(for: session.record.backend),
+                                openRequest: commands.modelPopoverRequests,
+                                handlesKeyboardRequest: { handlesKeyboard })
+                }
+            }
+            HStack(spacing: 0) {
+                UsageMeter(session: session, color: appearance.style.color(for: session.record.backend))
+            }
+            .fixedSize()
+            PresetPills(session: session, style: appearance.style).fixedSize()
+        }
+        // Keep Choose Model available from the menu/shortcut even while its label is hidden.
+        .background(alignment: .leading) {
+            if hasSelectedPreset {
+                ModelPicker(session: session, summary: modelSummary.full,
+                            color: appearance.style.color(for: session.record.backend),
+                            openRequest: commands.modelPopoverRequests,
+                            handlesKeyboardRequest: { handlesKeyboard })
+                    .frame(width: 0, height: 0).clipped().accessibilityHidden(true)
+            }
         }
         .font(.caption)
         .foregroundStyle(.secondary)
@@ -1663,3 +1680,33 @@ private struct GolemVoiceDraftSync: ViewModifier {
     }
 }
 #endif
+
+/// Center Context independently of the unequal permission and preset labels. If the
+/// presets cannot fit beside it, they get their own row instead of clipping the column.
+private struct CenteredModelStatus: Layout {
+    private let gap: CGFloat = 10
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard subviews.count == 3 else { return .zero }
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        let width = proposal.width ?? (sizes[0].width + sizes[1].width + sizes[2].width + gap * 2)
+        let side = max(0, (width - sizes[1].width) / 2 - gap)
+        let wrapped = sizes[2].width > side
+        let left = subviews[0].sizeThatFits(.init(width: side, height: nil))
+        let height = max(left.height, sizes[1].height, wrapped ? 0 : sizes[2].height)
+        return CGSize(width: width, height: height + (wrapped ? gap + sizes[2].height : 0))
+    }
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard subviews.count == 3 else { return }
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        let side = max(0, (bounds.width - sizes[1].width) / 2 - gap)
+        let wrapped = sizes[2].width > side
+        let left = subviews[0].sizeThatFits(.init(width: side, height: nil))
+        let rowHeight = max(left.height, sizes[1].height, wrapped ? 0 : sizes[2].height)
+        subviews[0].place(at: CGPoint(x: bounds.minX, y: bounds.minY + rowHeight / 2), anchor: .leading,
+                          proposal: .init(width: side, height: nil))
+        subviews[1].place(at: CGPoint(x: bounds.midX, y: bounds.minY + rowHeight / 2), anchor: .center,
+                          proposal: .init(sizes[1]))
+        subviews[2].place(at: CGPoint(x: bounds.maxX, y: bounds.minY + (wrapped ? rowHeight + gap : rowHeight / 2)),
+                          anchor: wrapped ? .topTrailing : .trailing, proposal: .init(sizes[2]))
+    }
+}
