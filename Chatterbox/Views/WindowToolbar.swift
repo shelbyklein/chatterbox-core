@@ -20,6 +20,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         static let commandCenter = NSToolbarItem.Identifier("chatterbox.commandCenter")
         static let settings = NSToolbarItem.Identifier("chatterbox.settings")
         /// Chat view, Studios and Command Center, as one segmented group.
+        static let newChat = NSToolbarItem.Identifier("chatterbox.newChat")
         static let views = NSToolbarItem.Identifier("chatterbox.views")
         /// The window's title, drawn as the first item: macOS leaves a stretchy gap after its own
         /// title, which pushed the view buttons toward the middle.
@@ -35,7 +36,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         /// The views on the left (chat, Studios, Command Center); the open chat's details in the
         /// middle, its image library included (in the place item, so it shares their pill); usage and the terminal; Settings last.
         /// New chats start from the sidebar, the Studios page and Cmd-N, not the toolbar.
-        static let all: [NSToolbarItem.Identifier] = [title, views, .flexibleSpace,
+        static let all: [NSToolbarItem.Identifier] = [title, views, newChat, .flexibleSpace,
                                                        tone, place, repo, golem, .flexibleSpace,
                                                        usage, terminal, .space, settings]
         static let chat: [NSToolbarItem.Identifier] = [tone, place, repo, golem, usage, images, terminal]
@@ -207,6 +208,8 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
             item.view = titleLabel
             item.label = "Title"
             item.isBordered = false
+        case ID.newChat:
+            item = button(id, "plus", "New Chat", "Start a new chat (⌘N)", #selector(startNewChat))
         case ID.views:
             let group = NSToolbarItemGroup(itemIdentifier: id,
                                            images: ["sidebar.left", "paintpalette", "rectangle.split.2x2"].compactMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) },
@@ -268,6 +271,14 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
     }
 
     // MARK: - Actions
+
+    @objc private func startNewChat() {
+        model.showingHome = false
+        model.showingCommandCenter = false
+        model.showingSettings = false
+        model.newChat()
+        apply()
+    }
 
     @objc private func pickView(_ sender: NSToolbarItemGroup) {
         switch sender.selectedIndex {
