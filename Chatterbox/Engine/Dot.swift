@@ -21,7 +21,7 @@ extension AppModel {
             effort: defaults.string(forKey: "defaultEffort") ?? "",
             personality: Personality(rawValue: defaults.string(forKey: "defaultPersonality") ?? "") ?? .friendly
         )
-        record.title = "Dot"
+        record.title = "Golem"
         record.isDot = true
         record.claudeMode = PermissionModes.defaultClaude
         record.activeBackend = .claude
@@ -29,6 +29,10 @@ extension AppModel {
             record.activeBackend = .codex
             record.codex = CodexSettings(folder: Self.dotFolder, canEdit: false, mode: PermissionModes.defaultCodex)
             record.codex?.model = defaults.string(forKey: "dotDefaultModel") ?? "gpt-6.1-sol"
+        }
+        if defaults.string(forKey: "dotDefaultBackend") == Backend.claude.rawValue {
+            record.model = defaults.string(forKey: "dotDefaultModel") ?? "haiku"
+            record.effort = ClaudeModels.shared.info(record.model).efforts.first ?? ""
         }
         return insertSession(record)
     }
@@ -43,6 +47,12 @@ extension AppModel {
             dot.setBackend(.codex)
             dot.setCodexFolder(Self.dotFolder)
             dot.setCodexModel(defaults.string(forKey: "dotDefaultModel") ?? "gpt-6.1-sol")
+        } else if defaults.string(forKey: "dotDefaultBackend") == Backend.claude.rawValue {
+            defaults.set(false, forKey: "dotApplyDefault")
+            let model = defaults.string(forKey: "dotDefaultModel") ?? "haiku"
+            dot.setBackend(.claude)
+            dot.setModel(model)
+            dot.setEffort(model == "haiku" ? "" : (ClaudeModels.shared.info(model).efforts.first ?? ""))
         }
     }
 

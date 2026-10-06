@@ -77,6 +77,7 @@ struct ChatDetailView: View {
     @State private var choosingFiles = false
     @State private var dictation = Dictation()
     #if GOLEM_APP
+    @AppStorage("golemDismissedInAppNotice") private var dismissedNotice = ""
     @State private var voiceConversation = false
     @State private var voiceGeneration = UUID()
     @State private var voiceEnded = false
@@ -116,6 +117,35 @@ struct ChatDetailView: View {
         }
         #if GOLEM_APP
         .toolbarBackground(isConversation ? .hidden : .automatic, for: .navigationBar)
+        .task {
+            guard isConversation else { return }
+            while !Task.isCancelled {
+                if scenePhase == .active, detail != nil, let request = GolemConversationRequest.shared.pending {
+                    if !request.start { endVoiceConversation(); GolemConversationRequest.shared.finish(request) }
+                    else if voiceConversation { GolemConversationRequest.shared.finish(request) }
+                    else if summary.isRunning || sending || !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingImages.isEmpty {
+                        GolemConversationRequest.shared.finish(request, error: "Wait for Golem to finish and send or clear your draft before starting Conversation.")
+                    } else {
+                        GolemConversationRequest.shared.cancelPending = { endVoiceConversation() }
+                        startVoiceConversation()
+                        await listeningTask?.value
+                        GolemConversationRequest.shared.finish(request, error: dictation.isListening ? nil : dictation.problem ?? "Listening did not start.")
+                    }
+                }
+                do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+            }
+        }
+        #if DEBUG
+        .task(id: latestFinishedReply?.id) {
+            guard ProcessInfo.processInfo.environment["GOLEM_TEST_DISMISS_NOTICE"] == "1",
+                  ProcessInfo.processInfo.environment["CHATTERBOX_TEST_HOST"] == "127.0.0.1",
+                  latestFinishedReply != nil else { return }
+            dismissedNotice = ""
+            try? await Task.sleep(for: .seconds(12))
+            guard !Task.isCancelled else { return }
+            dismissGolemNotice()
+        }
+        #endif
         #endif
         .environment(\.openURL, OpenURLAction { url in
             guard url.scheme == "chatterbox-document" else { return .systemAction(url) }
@@ -200,6 +230,16 @@ struct ChatDetailView: View {
                         MobileTranscriptRows(items: detail.items, chat: chat.id, backend: summary.backend,
                                              conversation: isConversation, actions: actions)
                         #if GOLEM_APP
+                        if isConversation, let reply = latestFinishedReply, !summary.isRunning,
+                           dismissedNotice != reply.id.uuidString {
+                            Button { dismissGolemNotice() } label: {
+                                Label("Dismiss notification", systemImage: "xmark")
+                                    .font(.caption)
+                                    .frame(minHeight: 44)
+                            }
+                            .foregroundStyle(.secondary)
+                            .accessibilityHint("Dismisses this notice and hides Golem. The message stays in your history.")
+                        }
                         if isConversation && summary.isRunning {
                             Text("•••").font(.title2.bold()).foregroundStyle(.secondary)
                                 .padding(.horizontal, 18).padding(.vertical, 8)
@@ -317,16 +357,36 @@ struct ChatDetailView: View {
     }
 
     #if GOLEM_APP
+    private var noticeDismissed: Bool {
+        guard let reply = latestFinishedReply else { return false }
+        return dismissedNotice == reply.id.uuidString && !summary.isRunning && !voiceConversation && !dictation.isListening
+    }
+
+    private func dismissGolemNotice() {
+        guard let reply = latestFinishedReply else { return }
+        endVoiceConversation()
+        dismissedNotice = reply.id.uuidString
+    }
+
     private var toolbarGolem: some View {
-        Group {
-            if MobileGolem.shared.hasAnimations {
-                MobileGolemAnimated(mood: MobileGolem.mood(summary))
-            } else {
-                Image(systemName: "sparkles").font(.title2)
+        Button { pinRequests += 1 } label: {
+            Group {
+                if MobileGolem.shared.hasAnimations {
+                    MobileGolemAnimated(mood: MobileGolem.mood(summary))
+                } else {
+                    Image(systemName: "sparkles").font(.title2)
+                }
             }
+            .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
         }
-        .frame(width: 44, height: 44)
-        .accessibilityLabel("Golem")
+        .buttonStyle(.plain)
+        .opacity(noticeDismissed ? 0 : 1)
+        .allowsHitTesting(!noticeDismissed)
+        .animation(.easeOut(duration: reduceMotion ? 0.15 : 0.3), value: noticeDismissed)
+        .accessibilityHidden(noticeDismissed)
+        .accessibilityLabel("Scroll to newest message")
+        .accessibilityHint("Golem takes you to the bottom of the conversation")
     }
     #endif
 
