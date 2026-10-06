@@ -46,6 +46,9 @@ final class Dictation {
     @ObservationIgnored private var configurationObserver: NSObjectProtocol?
     @ObservationIgnored private var request: SFSpeechAudioBufferRecognitionRequest?
     @ObservationIgnored private var task: SFSpeechRecognitionTask?
+    /// The conversation's SpeechAnalyzer engine (iOS 26); nil when it uses SFSpeechRecognizer.
+    @ObservationIgnored private var analyzerEngine: (any ConversationRecognitionEngine)?
+    @ObservationIgnored private var utteranceRecognizer: (any UtteranceRecognizer)?
     @ObservationIgnored private let recognizer = SFSpeechRecognizer()
     /// Hands-free: called once with what was said when you pause (empty if you said nothing).
     @ObservationIgnored private var onPause: ((String) -> Void)?
@@ -131,7 +134,10 @@ final class Dictation {
         if wasConversation {
             conversationActive = false
             conversation = nil
-            requestBox.set(nil)
+            requestBox.clear()
+            utteranceRecognizer?.cancel()
+            utteranceRecognizer = nil
+            analyzerEngine = nil
             if let sessionObserver { GolemAudioSession.shared.removeObserver(sessionObserver) }
             sessionObserver = nil
             if let configurationObserver { NotificationCenter.default.removeObserver(configurationObserver) }
@@ -181,9 +187,13 @@ final class Dictation {
         stop()
         let captureGeneration = generation
         guard await prepare(captureGeneration), recognizer != nil else { return false }
+        // iOS 26's SpeechAnalyzer when it can run (assets installed); otherwise the older recognizer.
+        let analyzer = await SpeechAnalyzerEngine.make()
+        guard captureGeneration == generation, !Task.isCancelled else { return false }
         do {
             try GolemAudioSession.shared.beginCapture()
             holdsSession = true
+            analyzerEngine = analyzer
             let headphones = GolemAudioSession.shared.headphonesConnected
             bargeInMinimumWords = headphones ? 1 : 2
 
@@ -202,6 +212,7 @@ final class Dictation {
             try engine.start()
             isListening = true
             Self.log.notice("Microphone started")
+            Self.log.notice("Recognition engine: \(analyzer == nil ? "SFSpeechRecognizer" : "SpeechAnalyzer")")
 
             let now = Date()
             conversation = Conversation(giveUp: giveUp, onSpeechDetected: onSpeechDetected, onUtterance: onUtterance, onText: onText,
@@ -249,14 +260,13 @@ final class Dictation {
     /// Opens a recognition request on the running engine. A new utterance starts its timers over;
     /// a replacement for an ended or long-empty request keeps them.
     private func openRequest(newUtterance: Bool) {
-        guard var conversation, let recognizer else { return }
+        guard var conversation, analyzerEngine != nil || recognizer != nil else { return }
         request?.endAudio()
         task?.cancel()
-        let request = SFSpeechAudioBufferRecognitionRequest()
-        request.shouldReportPartialResults = true
-        request.addsPunctuation = true
-        if recognizer.supportsOnDeviceRecognition { request.requiresOnDeviceRecognition = true }
-        self.request = request
+        utteranceRecognizer?.cancel()
+        utteranceRecognizer = nil
+        request = nil
+        task = nil
         let id = UUID()
         conversation.utterance = id
         conversation.requestOpened = Date()
@@ -266,10 +276,44 @@ final class Dictation {
             conversation.quickFailures = 0
         }
         self.conversation = conversation
+        if let analyzerEngine {
+            let recognizer = analyzerEngine.openUtterance(
+                onText: { [weak self] text in
+                    Task { @MainActor in self?.recognized(id, text: text, final: false, failed: false) }
+                },
+                onEnd: { [weak self] failed in
+                    Task { @MainActor in self?.analyzerEnded(id, failed: failed) }
+                })
+            utteranceRecognizer = recognizer
+            requestBox.set(recognizer)
+            return
+        }
+        guard let recognizer else { return }
+        let request = SFSpeechAudioBufferRecognitionRequest()
+        request.shouldReportPartialResults = true
+        request.addsPunctuation = true
+        if recognizer.supportsOnDeviceRecognition { request.requiresOnDeviceRecognition = true }
+        self.request = request
         requestBox.set(request)
         task = Self.recognize(recognizer, request) { [weak self] text, final, failed in
             Task { @MainActor in self?.recognized(id, text: text, final: final, failed: failed) }
         }
+    }
+
+    /// The analyzer for this utterance stopped by itself. If it had words, hand them over; if it
+    /// failed with none, carry on with SFSpeechRecognizer for the rest of the conversation.
+    private func analyzerEnded(_ id: UUID, failed: Bool) {
+        guard let conversation, conversation.utterance == id, !conversation.awaitingNext, analyzerEngine != nil else { return }
+        let words = conversation.state.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !words.isEmpty { deliver(.send(words)); return }
+        guard failed || Date().timeIntervalSince(conversation.requestOpened) < 2 else {
+            openRequest(newUtterance: false)
+            return
+        }
+        guard recognizer != nil else { fail("Speech recognition isn't available right now."); return }
+        Self.log.notice("Recognition engine fell back: SFSpeechRecognizer")
+        analyzerEngine = nil
+        openRequest(newUtterance: false)
     }
 
     private func recognized(_ id: UUID, text: String?, final: Bool, failed: Bool) {
@@ -305,7 +349,7 @@ final class Dictation {
         let now = Date()
         if let outcome = conversation.state.due(at: now) {
             deliver(outcome)
-        } else if conversation.state.shouldRotate(openedAt: conversation.requestOpened, now: now) {
+        } else if analyzerEngine == nil, conversation.state.shouldRotate(openedAt: conversation.requestOpened, now: now) {
             openRequest(newUtterance: false)
         }
     }
@@ -316,9 +360,11 @@ final class Dictation {
         conversation.awaitingNext = true
         let handler = conversation.onUtterance
         self.conversation = conversation
-        requestBox.set(nil)
+        requestBox.clear()
         request?.endAudio()
         task?.cancel()
+        utteranceRecognizer?.cancel()
+        utteranceRecognizer = nil
         request = nil
         task = nil
         switch outcome {
@@ -390,19 +436,34 @@ final class Dictation {
     }
 }
 
-/// Hands microphone buffers from the audio thread to whichever recognition request is current (none between utterances).
+/// Hands microphone buffers from the audio thread to whichever recognizer is current (none between utterances).
 private final class RecognitionRequestBox: @unchecked Sendable {
     private let lock = NSLock()
     private var request: SFSpeechAudioBufferRecognitionRequest?
+    private var recognizer: (any UtteranceRecognizer)?
 
-    func set(_ request: SFSpeechAudioBufferRecognitionRequest?) {
+    func clear() {
+        lock.lock(); defer { lock.unlock() }
+        request = nil
+        recognizer = nil
+    }
+
+    func set(_ request: SFSpeechAudioBufferRecognitionRequest) {
         lock.lock(); defer { lock.unlock() }
         self.request = request
+        recognizer = nil
+    }
+
+    func set(_ recognizer: any UtteranceRecognizer) {
+        lock.lock(); defer { lock.unlock() }
+        self.recognizer = recognizer
+        request = nil
     }
 
     func append(_ buffer: AVAudioPCMBuffer) {
         lock.lock(); defer { lock.unlock() }
         request?.append(buffer)
+        recognizer?.append(buffer)
     }
 }
 
