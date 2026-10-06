@@ -33,6 +33,7 @@ struct ChatListView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var savedPDFs = false
+    @State private var appearance = false
     @State private var notificationSettings = false
     @State private var selection: UUID?
     /// The chat that's open, kept if it drops out of the list (archived on the Mac).
@@ -105,6 +106,7 @@ struct ChatListView: View {
             }
         }
         .sheet(isPresented: $savedPDFs) { SavedPDFsView() }
+        .sheet(isPresented: $appearance) { MobileAppearanceSettings() }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
                 history?.refresh(in: store, force: true)
@@ -344,6 +346,7 @@ struct ChatListView: View {
                     ForEach(connection.hosts, id: \.self) { Text($0) }
                 }
             }
+            Button { appearance = true } label: { Label("Appearance", systemImage: "paintbrush") }
             Button { savedPDFs = true } label: { Label("Saved PDFs", systemImage: "doc.richtext") }
             Button("Unpair This \(UIDevice.current.model)", role: .destructive) { store.forget() }
         } label: {

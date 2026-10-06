@@ -8,7 +8,7 @@ enum RuntimePreferences {
         "codexDefaultModel","codexDefaultEffort","claudeDefaultMode","codexDefaultMode","remoteControlClaudeChats","easyCLIProxyEnabled","proxyClaudeChats","proxyCodexChats",
         "companionEnabled","companionDevices","pins","openWebsitePinsInApp",
         "plugin.nextSteps.enabled","plugin.nextSteps.minAnswerChars","plugin.nextSteps.suggestCommands",
-        "mobilePushEnabled","golemPushEnabled","mobilePushLastStatus"
+        "mobilePushEnabled","golemPushEnabled","mobilePushLastStatus","modelPresetsJSON"
         ,"dotDefaultBackend","dotDefaultModel","dotApplyDefault","dotSeenItem","mobilePushConfigured","mobilePushPreviews","mobilePushSound"
     ]
     static var file:URL{RuntimePaths.data.appendingPathComponent("runtime-preferences.plist")}

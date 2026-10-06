@@ -59,7 +59,11 @@ final class ClaudeModels {
             commands = info.commands
             accountEmail = info.accountEmail
             plan = info.plan
-            statusMessage = info.accountEmail == nil ? "Claude Code isn't signed in. Run `claude` in Terminal and log in." : nil
+            // A token sign-in (CLAUDE_CODE_OAUTH_TOKEN) reports no account, so ask Claude Code directly.
+            let signedIn = info.accountEmail != nil ? true : await ClaudeCodeInfo.isLoggedIn()
+            statusMessage = signedIn ? nil : "Claude Code isn't signed in. Run `claude` in Terminal and log in."
+        } catch is CancellationError {
+            // A refresh cut short (a newer one, or the app quitting) says nothing about Claude Code.
         } catch {
             statusMessage = error.localizedDescription
         }

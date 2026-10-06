@@ -20,7 +20,7 @@ struct PluginsSettingsView: View {
                 }
             }
         }
-        .formStyle(.grouped)
+        .formStyle(WideFormStyle())
     }
 }
 

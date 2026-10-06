@@ -16,6 +16,12 @@ struct ModelPreset: Codable, Identifiable, Equatable {
     /// What you call it ("Sol"), so you can tell an agent "start that in Galley with Sol".
     var nickname: String?
 
+    /// Whose model it runs: a Claude model through Codex (via the proxy) is still Claude's.
+    var provider: Backend {
+        if let model, model.lowercased().hasPrefix("claude") { return .claude }
+        return backend
+    }
+
     /// Keep stored model titles intact; nicknames are the visible quick-switch label.
     var displayName: String {
         let name = nickname?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -23,7 +29,8 @@ struct ModelPreset: Codable, Identifiable, Equatable {
     }
 
     var configurationDescription: String {
-        "\(backend.rawValue.capitalized) · \(model ?? "Default model") · \(effort ?? "Default effort")"
+        let agent = provider == backend ? backend.rawValue.capitalized : "Claude model via Codex"
+        return "\(agent) · \(model ?? "Default model") · \(effort ?? "Default effort")"
     }
 }
 
@@ -53,8 +60,13 @@ final class ModelPresets {
     /// The first presets, before they followed the defaults.
     private static let original: [(String, String, String)] = [("claude", "claude-opus-5-5", "medium"), ("codex", "gpt-6-astra", "low")]
 
+    /// The presets as JSON text, which the background service's settings carry (they can't
+    /// carry data); the service, which answers the phone and agents, reads them from here.
+    static let syncedKey = "modelPresetsJSON"
+
     init() {
-        if let data = AppPreferences.defaults.data(forKey: key),
+        if let data = AppPreferences.defaults.data(forKey: key)
+            ?? AppPreferences.defaults.string(forKey: Self.syncedKey).map({ Data($0.utf8) }),
            var saved = try? JSONDecoder().decode([ModelPreset].self, from: data) {
             // The two built-in presets, still as they first came, now follow the defaults.
             for index in saved.indices where saved[index].followsDefault == nil {
@@ -68,8 +80,16 @@ final class ModelPresets {
             saved = Self.defaults
         }
         defaultsObserver = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.defaultsChanged += 1 }
+            MainActor.assumeIsolated {
+                self?.defaultsChanged += 1
+                #if CHATTERBOX_HEADLESS
+                self?.reloadSynced()
+                #endif
+            }
         }
+        #if !CHATTERBOX_HEADLESS
+        mirror()
+        #endif
     }
 
     /// A following preset with today's default model, effort, and a name to match.
@@ -101,8 +121,8 @@ final class ModelPresets {
                 : info.displayName
         case .codex:
             let models = CodexAppServer.shared.models
-            model = preset.model.flatMap { id in models.first { $0.model == id }?.displayName }
-                ?? models.first(where: \.isDefault)?.displayName ?? preset.model ?? "Codex"
+            model = preset.model.map { CodexModelCatalog.name($0, models: models) }
+                ?? models.first(where: \.isDefault)?.displayName ?? "Codex"
         }
         return model + (preset.effort.map { " \u{00B7} " + RuntimePaths.effortLabel($0) } ?? "")
     }
@@ -170,7 +190,7 @@ final class ModelPresets {
         let model: String
         switch preset.backend {
         case .claude: model = preset.model.map { ClaudeModels.shared.info($0).displayName } ?? "Claude"
-        case .codex: model = preset.model.flatMap { id in CodexAppServer.shared.models.first { $0.model == id }?.displayName } ?? preset.model ?? "Codex"
+        case .codex: model = preset.model.map { CodexModelCatalog.name($0, models: CodexAppServer.shared.models) } ?? "Codex"
         }
         return model + " \u{00B7} " + (preset.effort.map { RuntimePaths.effortLabel($0) } ?? "Default")
     }
@@ -226,5 +246,20 @@ final class ModelPresets {
 
     private func save() {
         if let data = try? JSONEncoder().encode(saved) { AppPreferences.defaults.set(data, forKey: key) }
+        mirror()
+    }
+
+    /// Keeps the synced copy in step with the saved presets.
+    private func mirror() {
+        guard let data = try? JSONEncoder().encode(saved), let text = String(data: data, encoding: .utf8),
+              AppPreferences.defaults.string(forKey: Self.syncedKey) != text else { return }
+        AppPreferences.defaults.set(text, forKey: Self.syncedKey)
+    }
+
+    /// The service: take presets edited in the app as they arrive.
+    private func reloadSynced() {
+        guard let text = AppPreferences.defaults.string(forKey: Self.syncedKey),
+              let fresh = try? JSONDecoder().decode([ModelPreset].self, from: Data(text.utf8)), fresh != saved else { return }
+        saved = fresh
     }
 }

@@ -243,4 +243,15 @@ struct ClaudeCodeInfo {
                               accountEmail: response["account"]?["email"]?.string,
                               plan: response["account"]?["subscriptionType"]?.string)
     }
+
+    /// What `claude auth status` says. Counts any sign-in, including a long-lived token.
+    /// Assumes signed in when the answer can't be read, so a hiccup doesn't raise a false alarm.
+    @MainActor
+    static func isLoggedIn() async -> Bool {
+        guard let binary = ClaudeCodeProcess.locateBinary() else { return false }
+        let output = await Git.run(binary, ["auth", "status"])
+        guard let status = try? JSONSerialization.jsonObject(with: Data(output.out.utf8)) as? [String: Any],
+              let loggedIn = status["loggedIn"] as? Bool else { return true }
+        return loggedIn
+    }
 }

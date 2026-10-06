@@ -20,6 +20,7 @@ struct ThreadCard: View {
     let open: () -> Void
     @State private var hovered = false
     @Environment(\.threadCardScale) private var scale
+    @AppStorage(ProjectSort.key) private var projectSort = ProjectSort.recent.rawValue
     @Environment(\.colorScheme) private var colorScheme
     @Environment(AppModel.self) private var model
 
@@ -130,6 +131,21 @@ struct ThreadCard: View {
                 if expanded, let parentID = session.record.sidechatOf {
                     ParentThreadLabel(parentID: parentID)
                 }
+                // The same details as the sidebar list: tags, drift from main, and today's
+                // turns while projects are sorted by Most Active.
+                if !session.tags.isEmpty { TagPills(tags: session.tags) }
+                if let status = GitStatusStore.shared.status(for: session.record.projectFolder), let drift = status.mainDriftText {
+                    Label(drift, systemImage: "arrow.triangle.branch").font(.caption2).lineLimit(1)
+                        .foregroundStyle((status.behindMain ?? 0) > 20 ? Color.orange : Color.secondary)
+                }
+                if projectSort == ProjectSort.active.rawValue, session.record.projectFolder != nil {
+                    let today = session.activityRank.day
+                    Label(expanded ? (today == 0 ? "No turns today" : "\(today) turn\(today == 1 ? "" : "s") today")
+                                   : (today == 0 ? "None today" : "\(today) today"), systemImage: "flame")
+                        .font(.caption2).lineLimit(1)
+                        .help("\(today) turn\(today == 1 ? "" : "s") started in the last 24 hours")
+                        .foregroundStyle(today == 0 ? Color.secondary : Color.orange)
+                }
                 Text(preview).font(.system(size: (expanded ? 13 : 10.5) * scale)).foregroundStyle(.secondary)
                     .lineLimit(expanded ? 4 : 2).frame(maxWidth: .infinity, alignment: .leading)
                 Spacer(minLength: 0)
@@ -144,8 +160,8 @@ struct ThreadCard: View {
             }
             .padding((expanded ? 18 : 10) * scale)
             .frame(maxWidth: .infinity, alignment: .leading)
+            // Room for tags and status lines: a card grows to fit them.
             .frame(minHeight: (expanded ? 250 : 144) * scale)
-            .frame(height: expanded ? nil : 144 * scale)
             .background(selected && !session.isWaitingOnYou ? Color.white : Color.primary.opacity(hovered ? 0.10 : 0.055), in: RoundedRectangle(cornerRadius: 12))
             .overlay {
                 RoundedRectangle(cornerRadius: 12).strokeBorder(session.isWaitingOnYou ? Color.orange : Color.primary.opacity(hovered ? 0.28 : 0.12), lineWidth: 1)
@@ -304,37 +320,18 @@ struct ChatHomeView: View {
 
     @AppStorage("macHomePage") private var savedPage = HomeThreadPage.projects.rawValue
     @AppStorage("homeCardScale") private var cardScale = 1.0
-    private var page: HomeThreadPage { HomeThreadPage(rawValue: savedPage) ?? .projects }
+    /// Home is the Studios page now: projects and chats live in the chat view's sidebar.
+    private var page: HomeThreadPage { .studios }
 
     var body: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 16) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text("Home").font(.largeTitle.weight(.bold))
+                    Text("Studios").font(.largeTitle.weight(.bold))
                     Spacer()
                     cardSizeControl
                     Button("Command Center", systemImage: "rectangle.split.2x2") { model.showingCommandCenter = true }
                     Button("Back to Chat", systemImage: "arrow.left") { model.showingHome = false }
-                }
-                HStack(spacing: 8) {
-                    ForEach(HomeThreadPage.allCases) { destination in
-                        if destination == .archive { Divider().frame(height: 24).padding(.horizontal, 4) }
-                        Button { savedPage = destination.rawValue } label: {
-                            HStack(spacing: 7) {
-                                Image(systemName: destination.icon)
-                                Text(destination.rawValue)
-                                Text("\(HomeThreads.groups(model, page: destination).reduce(0) { $0 + $1.threads.count })")
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }.frame(maxWidth: .infinity).padding(.vertical, 10)
-                                .background(page == destination ? Color.accentColor.opacity(0.16) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
-                                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(page == destination ? Color.accentColor.opacity(0.65) : Color.clear))
-                        }.buttonStyle(.plain)
-                            .accessibilityLabel(destination.rawValue)
-                            .accessibilityAddTraits(page == destination ? .isSelected : [])
-                            #if DEBUG
-                            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { MacHomeDebug.tabs[destination] = $0 }
-                            #endif
-                    }
                 }
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 16) { searchField; filterPicker.frame(width: 300) }
@@ -432,8 +429,8 @@ struct DesktopOverviewControls: View {
             }.pickerStyle(.segmented).labelsHidden().frame(width: 86).help("List or cards")
             Spacer()
             Button { model.showingHome = true; model.showingSettings = false } label: {
-                Label("Home", systemImage: "house")
-            }.buttonStyle(.borderless).help("Full-window thread overview")
+                Label("Studios", systemImage: "paintpalette")
+            }.buttonStyle(.borderless).help("Your Studios, as thumbnails")
             #if DEBUG
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { MacHomeDebug.home = $0 }
             #endif

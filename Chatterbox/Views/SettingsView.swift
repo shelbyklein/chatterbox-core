@@ -16,6 +16,7 @@ struct SettingsView: View {
     @AppStorage("codexDefaultEffort") private var codexDefaultEffort = ""
     /// The preset open for editing, if any.
     @State private var editingPreset: UUID?
+    @AppStorage("showAllCodexModels") private var showAllCodexModels = false
     @AppStorage("defaultPersonality") private var defaultPersonality = Personality.friendly
     @AppStorage("claudePath") private var claudePath = ""
     @AppStorage("codexPath") private var codexPath = ""
@@ -76,6 +77,7 @@ struct SettingsView: View {
         }
     }
     @AppStorage("settingsPage") private var pageName = Page.notifications.rawValue
+    @AppStorage(Theme.backgroundKey) private var themeBackground = "standard"
     private var page: Page { Page(rawValue: pageName) ?? .notifications }
 
     var body: some View {
@@ -92,10 +94,28 @@ struct SettingsView: View {
                 }
             }
             .listStyle(.sidebar)
+            // The theme's sidebar shade, as the chat sidebar has (Settings → Appearance).
+            .scrollContentBackground(Theme.sidebar(themeBackground) == nil ? .automatic : .hidden)
+            .background(Theme.sidebar(themeBackground) ?? Color.clear)
             .frame(width: 230)
             Divider()
-            pageView
+            VStack(spacing: 0) {
+                // The page's name, and Done (Esc), above its settings, never over them.
+                HStack {
+                    Text(page.title).font(.title2.weight(.semibold))
+                    Spacer()
+                    Button("Done") { model.showingSettings = false }
+                        .keyboardShortcut(.cancelAction)
+                }
+                .padding(.horizontal, 28)
+                .padding(.top, 18)
+                .padding(.bottom, 4)
+                pageView
+            }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                // The page sits on the theme's background, not a gray form backdrop.
+                .scrollContentBackground(Theme.background(themeBackground) == nil ? .automatic : .hidden)
+                .background(Theme.background(themeBackground) ?? Color.clear)
                 .id(page)
         }
     }
@@ -108,7 +128,7 @@ struct SettingsView: View {
         case .behavior: behaviorPane
         case .golem:
             #if GOLEM_APP
-            Form { DotActivitySettings() }.formStyle(.grouped).frame(maxWidth: 680)
+            Form { DotActivitySettings() }.formStyle(WideFormStyle()).frame(maxWidth: .infinity)
             #else
             EmptyView()
             #endif
@@ -137,8 +157,8 @@ struct SettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
-        .formStyle(.grouped)
-        .frame(maxWidth: 680)
+        .formStyle(WideFormStyle())
+        .frame(maxWidth: .infinity)
     }
 
     private var modelsPane: some View {
@@ -184,8 +204,8 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .formStyle(.grouped)
-        .frame(maxWidth: 680)
+        .formStyle(WideFormStyle())
+        .frame(maxWidth: .infinity)
         .task { if CodexAppServer.shared.models.isEmpty { try? await CodexAppServer.shared.refreshModels() } }
         .task { await ClaudeModels.shared.refresh(force: false) }
     }
@@ -213,8 +233,8 @@ struct SettingsView: View {
                 }
             }
         }
-        .formStyle(.grouped)
-        .frame(maxWidth: 680)
+        .formStyle(WideFormStyle())
+        .frame(maxWidth: .infinity)
     }
 
     private var behaviorPane: some View {
@@ -236,8 +256,8 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .formStyle(.grouped)
-        .frame(maxWidth: 680)
+        .formStyle(WideFormStyle())
+        .frame(maxWidth: .infinity)
     }
 
     private var proxyPane: some View {
@@ -245,16 +265,16 @@ struct SettingsView: View {
             ProxySection()
             Section { ProxyQuotaView() }
         }
-        .formStyle(.grouped)
-        .frame(maxWidth: 680)
+        .formStyle(WideFormStyle())
+        .frame(maxWidth: .infinity)
     }
 
     private var diagnosticsPane: some View {
         Form {
             DiagnosticsSection()
         }
-        .formStyle(.grouped)
-        .frame(maxWidth: 680)
+        .formStyle(WideFormStyle())
+        .frame(maxWidth: .infinity)
     }
 
     private var agentsPane: some View {
@@ -291,8 +311,8 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .formStyle(.grouped)
-        .frame(maxWidth: 680)
+        .formStyle(WideFormStyle())
+        .frame(maxWidth: .infinity)
         .task(id: codexPath) { detectedCodex = CodexAppServer.locateBinary() }
         .task(id: claudePath) {
             detectedClaude = ClaudeCodeProcess.locateBinary()
@@ -307,7 +327,7 @@ struct SettingsView: View {
         let model: String
         switch preset.backend {
         case .claude: model = preset.model.map { ClaudeModels.shared.info($0).displayName } ?? "default model"
-        case .codex: model = preset.model.flatMap { id in CodexAppServer.shared.models.first { $0.model == id }?.displayName } ?? preset.model ?? "Codex's default"
+        case .codex: model = preset.model.map { CodexModelCatalog.name($0, models: CodexAppServer.shared.models) } ?? "Codex's default"
         }
         return "\(preset.backend.label) \u{00B7} \(model) \u{00B7} \(preset.effort.map { ChatView.effortLabel($0) } ?? "default effort")"
     }
@@ -317,6 +337,8 @@ struct SettingsView: View {
         var id: String
         var name: String
         var detail: String
+        /// A heading this choice starts under, when it differs from the one before.
+        var group: String? = nil
     }
 
     private var claudeOptions: [ModelChoice] { claudeChoices(including: defaultModel) }
@@ -339,11 +361,6 @@ struct SettingsView: View {
     }
 
     /// "GPT-6.1-Sol" → ("Sol", 6.1); "GPT-5.5" → ("", 5.5).
-    private static func codexFamilyAndVersion(_ name: String) -> (String, Double)? {
-        let parts = name.split(separator: "-")
-        guard parts.count >= 2, let version = Double(parts[1]) else { return nil }
-        return (parts.dropFirst(2).joined(separator: "-"), version)
-    }
 
     /// "Opus 4.8" → ("Opus", 4.8); nil for names like "Default (recommended)".
     private static func familyAndVersion(_ name: String) -> (String, Double)? {
@@ -354,24 +371,19 @@ struct SettingsView: View {
 
     private var codexOptions: [ModelChoice] { codexChoices(including: codexDefaultModel) }
 
-    /// Codex's current models: the newest of each family (GPT-6.1-Sol, not GPT-6-Sol), from
-    /// the newest generation only. An older one shows only when it's the one already chosen.
+    /// Codex's models, tidied (CodexModelCatalog): GPT, then Claude through the proxy; older
+    /// versions only with Show all models. The chosen one always shows.
     private func codexChoices(including codexDefaultModel: String) -> [ModelChoice] {
-        let listed = CodexAppServer.shared.models.filter { !$0.hidden || $0.model == codexDefaultModel }
-        var newest: [String: Double] = [:]
-        var newestGeneration = 0.0
-        for model in listed {
-            guard let (family, version) = Self.codexFamilyAndVersion(model.displayName) else { continue }
-            newest[family] = max(newest[family] ?? 0, version)
-            newestGeneration = max(newestGeneration, version.rounded(.down))
-        }
-        let models = listed.filter { model in
-            guard model.model != codexDefaultModel, let (family, version) = Self.codexFamilyAndVersion(model.displayName) else { return true }
-            return version >= (newest[family] ?? 0) && version.rounded(.down) >= newestGeneration
-        }
+        let entries = CodexModelCatalog.entries(CodexAppServer.shared.models, chosen: codexDefaultModel)
+            .filter { showAllCodexModels || $0.isCurrent || $0.model.model == codexDefaultModel }
+        let models = entries.map(\.model)
         let fallback = models.first(where: \.isDefault)?.displayName
         var choices = [ModelChoice(id: "", name: "Codex's default", detail: fallback.map { "Currently \($0); follows Codex if that changes" } ?? "Whatever Codex picks")]
-        choices += models.map { ModelChoice(id: $0.model, name: $0.displayName, detail: $0.isDefault ? "Codex's default right now" : "") }
+        choices += entries.map { entry in
+            ModelChoice(id: entry.model.model, name: entry.name,
+                        detail: entry.isClaude ? "Claude model, through EasyCLIProxy" : (entry.model.isDefault ? "Codex's default right now" : ""),
+                        group: entry.isClaude ? "Claude via proxy" : "GPT")
+        }
         if !codexDefaultModel.isEmpty, !models.contains(where: { $0.model == codexDefaultModel }) {
             choices.append(ModelChoice(id: codexDefaultModel, name: codexDefaultModel, detail: "Not in Codex's list right now"))
         }
@@ -439,7 +451,12 @@ struct SettingsView: View {
                 Text("Models show up once \(title) has started.").font(.caption).foregroundStyle(.secondary)
             }
             VStack(spacing: 0) {
-                ForEach(options) { option in
+                ForEach(Array(options.enumerated()), id: \.element.id) { index, option in
+                    if let group = option.group, index == 0 || options[index - 1].group != group {
+                        Text(group).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 8).padding(.top, index == 0 ? 2 : 10).padding(.bottom, 2)
+                    }
                     Button { model.wrappedValue = option.id } label: {
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
                             Image(systemName: model.wrappedValue == option.id ? "checkmark.circle.fill" : "circle")
@@ -457,6 +474,11 @@ struct SettingsView: View {
                     }
                     .buttonStyle(.plain)
                 }
+            }
+            if title == "Codex" {
+                Toggle("Show all models", isOn: $showAllCodexModels)
+                    .font(.caption).padding(.horizontal, 8)
+                    .help("Older and dated versions, and models Codex hides from its own picker")
             }
             if !efforts.isEmpty {
                 Picker("Effort", selection: effort) {
@@ -479,12 +501,7 @@ struct SettingsPage: View {
         SettingsView()
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Theme.currentBackground ?? Color.clear)
-            // The window's toolbar is AppKit's (WindowToolbar.swift), so Done sits on the page.
-            .overlay(alignment: .topTrailing) {
-                Button("Done") { model.showingSettings = false }
-                    .keyboardShortcut(.cancelAction)
-                    .padding(12)
-            }
+            // Done is in the page's header (SettingsView); the window's toolbar is AppKit's.
     }
 }
 
@@ -495,6 +512,8 @@ private struct AppearanceSettingsView: View {
     @AppStorage(Theme.backgroundKey) private var themeBackground = "standard"
     @AppStorage(Theme.highlightKey) private var themeHighlight = "default"
     @AppStorage("readerGroupSteps") private var groupSteps = true
+    @AppStorage("sidebarLineSpacing") private var sidebarLineSpacing = 2.0
+    @AppStorage("sidebarRowSpacing") private var sidebarRowSpacing = 0.0
 
     private static let preview = """
     ## A quick preview
@@ -607,11 +626,17 @@ private struct AppearanceSettingsView: View {
                     slider("Conversation width", value: settings.$contentWidth, range: 560...1400, step: 20, unit: "pt",
                            hint: "The widest the chat column gets in a large window")
                 }
+                Section("Sidebar") {
+                    slider("Space between lines", value: $sidebarLineSpacing, range: 0...10, step: 1, unit: "pt",
+                           hint: "Between a project's name, tags, pins and latest line")
+                    slider("Space between projects", value: $sidebarRowSpacing, range: 0...24, step: 2, unit: "pt",
+                           hint: "Extra room between rows in the sidebar")
+                }
                 Section {
-                    Button("Restore Defaults") { settings.reset() }
+                    Button("Restore Defaults") { settings.reset(); sidebarLineSpacing = 2; sidebarRowSpacing = 0 }
                 }
             }
-            .formStyle(.grouped)
+            .formStyle(WideFormStyle())
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
@@ -636,7 +661,7 @@ private struct AppearanceSettingsView: View {
             .background(Color(nsColor: .textBackgroundColor))
             .overlay(alignment: .top) { Divider() }
         }
-        .frame(maxWidth: 640)
+        .frame(maxWidth: .infinity)
     }
 
     private func colorRow(_ title: String, selection: Binding<String>) -> some View {
@@ -728,8 +753,8 @@ private struct InstructionsSettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
-        .formStyle(.grouped)
-        .frame(maxWidth: 640, maxHeight: .infinity)
+        .formStyle(WideFormStyle())
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func save() {
@@ -972,8 +997,8 @@ private struct ProxySection: View {
 struct SecretsSettingsView: View {
     var body: some View {
         Form { SecretsSection() }
-            .formStyle(.grouped)
-            .frame(maxWidth: 640, maxHeight: .infinity)
+            .formStyle(WideFormStyle())
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -1104,7 +1129,7 @@ struct SecretEditor: View {
                     Text(error).foregroundStyle(.orange)
                 }
             }
-            .formStyle(.grouped)
+            .formStyle(WideFormStyle())
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)

@@ -147,25 +147,38 @@ struct ModelPopover: View {
             session.setBackend(.codex)
             session.setCodexModel(nil)
         }
-        ForEach(codexModels.filter { !$0.hidden || $0.model == chosen }) { m in
-            row(title: m.displayName, detail: "", selected: active == .codex && chosen == m.model) {
-                session.setBackend(.codex)
-                session.setCodexModel(m.model)
-            }
-        }
-        let hidden = codexModels.filter { $0.hidden && $0.model != chosen }
-        if !hidden.isEmpty {
-            DisclosureGroup("More models", isExpanded: $showHidden) {
-                ForEach(hidden) { m in
-                    row(title: m.displayName, detail: "Hidden from Codex's own picker", selected: false) {
+        let entries = CodexModelCatalog.entries(codexModels, chosen: chosen)
+        let current = entries.filter { $0.isCurrent || $0.model.model == chosen }
+        codexGroup(current.filter { !$0.isClaude }, heading: nil, chosen: chosen)
+        codexGroup(current.filter(\.isClaude), heading: "Claude via proxy", chosen: chosen)
+        let more = CodexModelCatalog.entries(codexModels.map { var m = $0; m.hidden = false; return m })
+            .filter { entry in !current.contains { $0.id == entry.id } && !entry.model.model.hasPrefix("gpt-image") }
+        if !more.isEmpty {
+            DisclosureGroup("All models", isExpanded: $showHidden) {
+                ForEach(more) { entry in
+                    row(title: entry.name, detail: entry.isClaude ? "Claude, through the proxy" : "", selected: false) {
                         session.setBackend(.codex)
-                        session.setCodexModel(m.model)
+                        session.setCodexModel(entry.model.model)
                     }
                 }
             }
             .font(.callout)
             .padding(.horizontal, 8)
             .padding(.top, 4)
+        }
+    }
+
+    @ViewBuilder
+    private func codexGroup(_ entries: [CodexModelCatalog.Entry], heading: String?, chosen: String?) -> some View {
+        if let heading, !entries.isEmpty {
+            Text(heading).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                .padding(.horizontal, 8).padding(.top, 8)
+        }
+        ForEach(entries) { entry in
+            row(title: entry.name, detail: "", selected: active == .codex && chosen == entry.model.model) {
+                session.setBackend(.codex)
+                session.setCodexModel(entry.model.model)
+            }
         }
     }
 

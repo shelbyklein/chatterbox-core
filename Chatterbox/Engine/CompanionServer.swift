@@ -757,15 +757,18 @@ enum CompanionMapper {
             Companion.ModelOption(id: $0.value, name: $0.displayName, detail: $0.detail, efforts: $0.efforts, defaultEffort: nil)
         }
         let codex = [Companion.ModelOption(id: "", name: "Codex default", detail: "Whatever Codex uses when none is picked", efforts: [], defaultEffort: nil)]
-            + CodexAppServer.shared.models.filter { !$0.hidden }.map {
-                Companion.ModelOption(id: $0.model, name: $0.displayName, detail: $0.isDefault ? "Codex's default" : "",
-                                      efforts: $0.efforts, defaultEffort: $0.defaultEffort)
+            + CodexModelCatalog.entries(CodexAppServer.shared.models, chosen: session.record.codex?.model)
+                .filter { $0.isCurrent || $0.model.model == session.record.codex?.model }.map { entry in
+                Companion.ModelOption(id: entry.model.model, name: entry.name,
+                                      detail: entry.isClaude ? "Claude, through the proxy" : (entry.model.isDefault ? "Codex's default" : ""),
+                                      efforts: entry.model.efforts, defaultEffort: entry.model.defaultEffort)
             }
         let modes = PermissionModes.modes(for: session.record.backend).map {
             Companion.ModeOption(id: $0.id, title: $0.title, detail: $0.detail, systemImage: $0.systemImage, isUnrestricted: $0.isUnrestricted)
         }
         let presets = ModelPresets.shared.presets.map {
-            Companion.PresetOption(id: $0.id, title: $0.title, backend: $0.backend.rawValue, isActive: ModelPresets.shared.matches($0, session: session))
+            Companion.PresetOption(id: $0.id, title: $0.title, backend: $0.backend.rawValue, isActive: ModelPresets.shared.matches($0, session: session),
+                                   nickname: $0.nickname, provider: $0.provider.rawValue)
         }
         return .init(backend: session.record.backend.rawValue,
                      // The phone matches by id: name the chat's model as the list does

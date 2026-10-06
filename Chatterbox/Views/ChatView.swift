@@ -71,6 +71,7 @@ struct ChatView: View {
             if session.record.archivedAt != nil { archivedBanner }
             if session.record.backend == .claude, let status = ClaudeModels.shared.statusMessage { claudeBanner(status) }
             if session.record.backend == .codex, let status = CodexAppServer.shared.statusMessage { claudeBanner(status) }
+            if find.isOpen { ChatFindBar(find: find) }
             transcript
             ThreadRestartStatus(session: session).padding(.horizontal, 20)
             composer
@@ -111,6 +112,10 @@ struct ChatView: View {
     /// How many of the newest rows to draw; "Show earlier" adds a page at a time.
     /// A chat opens with `firstRows` so it appears at once, then fills in to `rowPage`.
     @State private var shownRowCount = ChatView.firstRows
+    /// ⌘F: searching this chat (ChatFind.swift).
+    @State private var find = ChatFind()
+    /// Messages around a match far back in the history, drawn in place of the latest ones.
+    @State private var findWindow: Range<Int>?
     static let rowPage = 40
     static let firstRows = 12
     /// Step groups you've opened.
@@ -157,6 +162,7 @@ struct ChatView: View {
         }
         .onDisappear { (windowToolbar ?? ownToolbar).detach(owner: toolbarOwner) }
         .background(ChatWindowReader { windowNumber = $0.windowNumber })
+        .modifier(FindShortcut(find: find, session: session, enabled: tileContext == nil))
         // Agents often link files by bare path ("/Users/…/Print.pdf"), which macOS can't open as a URL.
         .environment(\.chatFolder, session.workingFolder)
         .environment(\.runInTerminal) { command in
@@ -385,12 +391,22 @@ struct ChatView: View {
                             Color.clear.frame(height: 1).id("bottom")
                         }
                     } else {
-                    let page = transcriptPage(rows: shownRowCount)
+                    let page = findWindow.map(windowPage) ?? transcriptPage(rows: shownRowCount)
                     let agents = page.agents
                     // A bounded eager stack keeps WebKit views and hit regions in the same
                     // layout pass. LazyVStack + bottom anchoring can blank the transcript
                     // on macOS 26 when offscreen web previews change size.
                     VStack(alignment: .leading, spacing: 0) {
+                        if findWindow != nil {
+                            Button { findWindow = nil; keepBottom(proxy) } label: {
+                                Label("Showing messages around a match \u{00B7} Back to latest", systemImage: "arrow.down.to.line")
+                                    .font(.callout)
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(Color.accentColor)
+                            .frame(maxWidth: .infinity)
+                            .padding(.bottom, 10)
+                        }
                         // Long chats draw only their newest rows; the rest wait behind a button.
                         if page.hasEarlier {
                             let earlier = earlierRowCount(before: page.start)
@@ -420,6 +436,7 @@ struct ChatView: View {
                                     }
                                 }
                                 .padding(.vertical, rowPadding(item))
+                                .background(findHighlight([item.id]))
                                 .id(item.id)
                             case .steps(let steps, let seconds, let active):
                                 StepGroup(steps: steps, seconds: seconds, isActive: active,
@@ -430,6 +447,7 @@ struct ChatView: View {
                                         .padding(.vertical, rowPadding(item))
                                 }
                                 .padding(.vertical, appearance.style.paragraphSpacing / 2)
+                                .background(findHighlight(steps.map(\.id)))
                                 .id(row.id)
                             }
                         }
@@ -478,12 +496,68 @@ struct ChatView: View {
                 // The new rows can take more than one pass to lay out; keep the newest in view until they settle.
                 keepBottom(proxy)
             }
-            .onChange(of: session.items.count) { scrollToBottom(proxy) }
+            .onChange(of: session.items.count) { if !find.isOpen { scrollToBottom(proxy) } else { find.recompute() } }
+            .onChange(of: find.jumpRequest) { jumpToMatch(proxy) }
+            // Closing find goes back to the latest messages if a match was far back.
+            .onChange(of: find.isOpen) { _, open in
+                if !open, findWindow != nil { findWindow = nil; keepBottom(proxy) }
+            }
             // The terminal takes room from the bottom: keep the newest messages in view above it.
             .onChange(of: showingTerminal) { keepBottom(proxy) }
             .onChange(of: terminalHeight) { keepBottom(proxy) }
             .onChange(of: session.items.last?.text) { scrollToBottom(proxy) }
         }
+    }
+
+    /// Matching messages get a soft highlight; the current one, a stronger one.
+    private func findHighlight(_ ids: [UUID]) -> some View {
+        let current = find.currentID.map(ids.contains) ?? false
+        let matched = current || (find.isOpen && ids.contains { find.matches.contains($0) })
+        return RoundedRectangle(cornerRadius: 8)
+            .fill(Color.yellow.opacity(current ? 0.22 : matched ? 0.08 : 0))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.yellow.opacity(current ? 0.7 : 0)))
+            .padding(.horizontal, -8)
+    }
+
+    /// Brings the current match into view: older rows are drawn first if it's among them, and
+    /// a folded group of steps holding it opens.
+    private func jumpToMatch(_ proxy: ScrollViewProxy) {
+        guard let id = find.currentID, let index = session.items.firstIndex(where: { $0.id == id }) else { return }
+        var page = paging.page(session.items, limit: shownRowCount)
+        if page.start > index {
+            // Within a few pages: draw them. Further back: show the messages around it instead.
+            let grown = paging.page(session.items, limit: shownRowCount + 3 * Self.rowPage)
+            if grown.start <= index {
+                shownRowCount += 3 * Self.rowPage
+                page = grown
+                findWindow = nil
+            } else {
+                let window = max(0, index - 30)..<min(session.items.count, index + 30)
+                findWindow = window
+                page = (paging.page(Array(session.items[window]), limit: .max).rows, window.lowerBound, false)
+            }
+        } else if let window = findWindow, !window.contains(index) {
+            findWindow = nil
+        }
+        let row = page.rows.first { row in
+            switch row {
+            case .item(let item): item.id == id
+            case .steps(let steps, _, _): steps.contains { $0.id == id }
+            }
+        }
+        if case .steps = row, let rowID = row?.id { openStepGroups.insert(rowID) }
+        let target = row?.id ?? id
+        // After the newly drawn rows lay out.
+        DispatchQueue.main.async {
+            withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(target, anchor: .center) }
+        }
+    }
+
+    /// The rows for messages `window` (a find match far back), in the transcript's shape.
+    private func windowPage(_ window: Range<Int>) -> (rows: [TranscriptRow], agents: [UUID: Backend], start: Int, hasEarlier: Bool) {
+        let window = window.clamped(to: 0..<session.items.count)
+        let rows = paging.page(Array(session.items[window]), limit: .max).rows
+        return (rows, session.agents(forItemsFrom: window.lowerBound), window.lowerBound, false)
     }
 
     private var paging: TranscriptPaging {
@@ -957,6 +1031,13 @@ struct ChatView: View {
             UsageMeter(compact: true, session: session, color: appearance.style.color(for: session.record.backend))
                 .fixedSize()
             Spacer(minLength: 0)
+            // The preset pills too (Command Center tiles), when the tile is wide enough for them;
+            // narrower, they're still in the menu beside them.
+            ViewThatFits(in: .horizontal) {
+                PresetPills(session: session, style: appearance.style).fixedSize()
+                Color.clear.frame(width: 0, height: 0)
+            }
+            .layoutPriority(-1)
             Menu {
                 Section("Mode") {
                     ForEach(PermissionModes.modes(for: session.record.backend)) { mode in
@@ -1023,7 +1104,7 @@ struct ChatView: View {
             let current = models.first { $0.model == codex.model }
             // With no pick, show what Codex will actually use.
             let resolved = current ?? models.first(where: \.isDefault)
-            let name = resolved?.displayName ?? "Codex default"
+            let name = resolved.map { CodexModelCatalog.name($0.model, models: models) } ?? "Codex default"
             let modelName = current == nil && resolved != nil ? "\(name) (default)" : name
             let effort = codex.effort ?? resolved?.defaultEffort
             let effortFull = codex.effort.map { Self.effortLabel($0) } ?? effort.map { "\(Self.effortLabel($0)) (default)" }
@@ -1381,7 +1462,7 @@ struct RepoChip: View {
                 }
             }
         } label: {
-            ToolbarLabel([repo, status.branch, syncText.isEmpty ? nil : syncText].compactMap { $0 }.joined(separator: " \u{00B7} "),
+            ToolbarLabel([repo, status.branch, syncText.isEmpty ? nil : syncText, status.mainDriftText].compactMap { $0 }.joined(separator: " \u{00B7} "),
                          systemImage: "arrow.triangle.branch")
         }
         .help(helpText)
@@ -1394,6 +1475,10 @@ struct RepoChip: View {
             text += ". \(ahead) to push, \(behind) to pull"
         } else {
             text += ". No upstream branch"
+        }
+        if let main = status.mainRef, let ahead = status.aheadOfMain, let behind = status.behindMain {
+            text += ". Against \(main): \(ahead) commit\(ahead == 1 ? "" : "s") not on it, \(behind) on it not here"
+            if let since = status.divergedAt { text += ", split off \(since.formatted(.relative(presentation: .named)))" }
         }
         return text + "."
     }

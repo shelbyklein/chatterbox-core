@@ -182,7 +182,7 @@ struct CommandCenterView: View {
                 #if DEBUG
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { CommandCenterDebug.add = $0 }
                 #endif
-            Button("Home", systemImage: "house") { model.showingHome = true }
+            Button("Studios", systemImage: "paintpalette") { model.showingHome = true }
         }
     }
 }

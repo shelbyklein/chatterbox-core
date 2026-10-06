@@ -49,6 +49,7 @@ struct ContentView: View {
     /// Active tag pills, comma-separated (a single tag, as before, still works).
     @AppStorage("sidebarTagFilter") private var tagFilter = ""
     @AppStorage("sidebarTagPills") private var showsTagPills = true
+    @AppStorage("sidebarRowSpacing") private var sidebarRowSpacing = 0.0
     @AppStorage(Theme.schemeKey) private var themeScheme = "system"
     @AppStorage(Theme.backgroundKey) private var themeBackground = "standard"
     @AppStorage(Theme.highlightKey) private var themeHighlight = "default"
@@ -261,7 +262,14 @@ struct ContentView: View {
         } message: { _ in
             Text("The conversation and its attachments are removed permanently. Archiving keeps them out of the way instead.")
         }
-        .task { await model.refreshProjectRepos() }
+        // Git status for every project folder (branch, sync, drift from main): when the
+        // projects arrive from the background service or change, and every 10 minutes.
+        .task(id: projectFoldersKey) {
+            while !Task.isCancelled {
+                await model.refreshProjectRepos()
+                try? await Task.sleep(for: .seconds(600))
+            }
+        }
         .task { Attention.shared.start(model: model) }
         .onChange(of: model.selectedID) { _, id in
             Diagnostics.signposts.emitEvent("Chat picked")
@@ -275,6 +283,14 @@ struct ContentView: View {
             }
         }
         .onAppear(perform: watchCommandKey)
+        // ⌘-Tab away is a ⌘ press this app sees and a release it doesn't: hide the badges
+        // when Chatterbox goes to the background, and show them again only on a fresh ⌘.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+            if showShortcuts { showShortcuts = false }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            if showShortcuts { showShortcuts = false }
+        }
         .onDisappear {
             if let flagsMonitor { NSEvent.removeMonitor(flagsMonitor) }
             flagsMonitor = nil
@@ -329,6 +345,10 @@ extension ContentView {
             }
         }
         .padding(.vertical, 2)
+    }
+
+    private var projectFoldersKey: String {
+        Set(model.sessions.compactMap(\.record.projectFolder)).sorted().joined(separator: "|")
     }
 
     private var isFiltering: Bool {
@@ -579,6 +599,8 @@ extension ContentView {
             } else {
                 SidebarRow(session: session, shortcut: showShortcuts ? number : nil, pins: PinStore.shared.pins(in: place),
                            onOpenPin: { model.selectedID = session.id })
+                    // Settings → Appearance → Sidebar: room between rows.
+                    .padding(.vertical, sidebarRowSpacing / 2)
             }
         }
             // Drop a link or file on a project to pin it there.
@@ -869,6 +891,9 @@ private struct SidebarRow: View {
     /// Called before a pill opens, so the page opens with this chat beside it.
     var onOpenPin: () -> Void = {}
     private let appearance = ReaderStyleSettings()
+    /// Settings → Appearance → Sidebar: room between a row's lines.
+    @AppStorage("sidebarLineSpacing") private var lineSpacing = 2.0
+    @AppStorage(ProjectSort.key) private var projectSort = ProjectSort.recent.rawValue
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -887,13 +912,28 @@ private struct SidebarRow: View {
                     .help(session.record.backend.label)
             }
             if session.record.projectFolder != nil {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: lineSpacing) {
                     Text(session.projectName).lineLimit(1)
                     if !session.tags.isEmpty {
                         TagPills(tags: session.tags)
                     }
                     if !pins.isEmpty {
                         PinPills(pins: pins, onOpen: onOpenPin)
+                    }
+                    // How far this checkout's branch has drifted from main (worktrees especially).
+                    if let status = GitStatusStore.shared.status(for: session.record.projectFolder), let drift = status.mainDriftText {
+                        Label(drift + (status.divergedAt.map { " \u{00B7} " + ShortAge.string(since: $0) } ?? ""), systemImage: "arrow.triangle.branch")
+                            .font(.caption2)
+                            .foregroundStyle((status.behindMain ?? 0) > 20 ? Color.orange : Color.secondary)
+                            .help("\(status.branch ?? "This branch") against \(status.mainRef ?? "main"): \(status.aheadOfMain ?? 0) commits not on it, \(status.behindMain ?? 0) on it not here")
+                    }
+                    // Sorted by Most Active: today's turns, the number the order is based on.
+                    if projectSort == ProjectSort.active.rawValue {
+                        let today = session.activityRank.day
+                        Label(today == 0 ? "No turns today" : "\(today) turn\(today == 1 ? "" : "s") today", systemImage: "flame")
+                            .font(.caption2)
+                            .foregroundStyle(today == 0 ? Color.secondary : Color.orange)
+                            .help("Turns started in the last 24 hours")
                     }
                     // What happened last, rather than the chat's title.
                     if let summary = session.lastActionSummary ?? (session.title != "New chat" ? session.title : nil) {
@@ -1167,7 +1207,20 @@ extension ContentView {
             .accessibilityHint(collapsed ? "Shows the section" : "Collapses the section")
             Spacer()
             switch section {
-            case .projects: tagFilterMenu
+            case .projects:
+                tagFilterMenu
+                Menu {
+                    Button("New Project\u{2026}") { model.showingNewProject = true }
+                    Button("Open Project\u{2026}") { model.chooseAndOpenProject() }
+                    Button("New Project from GitHub\u{2026}") { model.showingCloneFromGitHub = true }
+                } label: { Image(systemName: "plus") } primaryAction: {
+                    model.showingNewProject = true
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("New project (hold for Open Project or GitHub)")
+                .accessibilityLabel("New Project")
             case .studios:
                 Button { beginNewStudio() } label: { Image(systemName: "plus") }
                     .buttonStyle(.borderless).help("New Studio").accessibilityLabel("New Studio")
@@ -1215,6 +1268,7 @@ extension ContentView {
                 switch section {
                 case .projects:
                     let threads = model.sidebarProjects.filter(projectActivity.includes).flatMap(cardFamily)
+                    if showsTagPills, !model.allTags.isEmpty { tagPills }
                     cardGrid(threads)
                     if threads.isEmpty { Text("No matching projects").font(.caption).foregroundStyle(.secondary) }
                 case .chats:

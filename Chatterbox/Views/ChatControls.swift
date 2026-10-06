@@ -55,11 +55,16 @@ struct PresetPills: View {
 
     private func pill(_ preset: ModelPreset) -> some View {
         let active = presets.matches(preset, session: session)
-        let color = style.color(for: preset.backend)
+        let color = style.color(for: preset.provider)
         let targeted = dropTarget == preset.id
         return Button { presets.apply(preset, to: session) } label: {
-            Text(preset.displayName)
-                .lineLimit(1)
+            HStack(spacing: 4) {
+                // Its provider's mark, in that provider's color.
+                Image(preset.provider.iconName).resizable().scaledToFit()
+                    .frame(width: 10, height: 10)
+                    .foregroundStyle(color)
+                Text(preset.displayName).lineLimit(1)
+            }
                 .fixedSize()
                 .padding(.horizontal, 7)
                 .padding(.vertical, 2)

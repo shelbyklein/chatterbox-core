@@ -186,6 +186,10 @@ enum Companion {
         var title: String
         var backend: String
         var isActive: Bool
+        /// What you call it; shown in place of the title when set.
+        var nickname: String? = nil
+        /// Whose model it runs ("claude" for a Claude model through Codex); the agent otherwise.
+        var provider: String? = nil
     }
 
     /// Change any of a chat's settings; leave the rest nil.

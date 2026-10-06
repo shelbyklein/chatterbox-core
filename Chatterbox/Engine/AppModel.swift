@@ -90,8 +90,29 @@ final class AppModel {
         case .name: return projects.sorted(by: byName)
         case .recent: return projects.sorted { $0.lastActivity != $1.lastActivity ? $0.lastActivity > $1.lastActivity : byName($0, $1) }
         case .stalest: return projects.sorted { $0.lastActivity != $1.lastActivity ? $0.lastActivity < $1.lastActivity : byName($0, $1) }
+        case .active: return mostActive(projects)
         }
     }
+    /// Projects by how busy they are, counting their worktrees' and Sidechats' turns.
+    private func mostActive(_ projects: [ChatSession]) -> [ChatSession] {
+        var ranks: [UUID: (day: Int, week: Int, perDay: Double)] = [:]
+        for project in projects {
+            var total: (day: Int, week: Int, perDay: Double) = (0, 0, 0)
+            for chat in [project] + worktrees(of: project) + sidechats(of: project) {
+                let rank = chat.activityRank
+                total.day += rank.day; total.week += rank.week; total.perDay += rank.perDay
+            }
+            ranks[project.id] = total
+        }
+        return projects.sorted { a, b in
+            let x = ranks[a.id] ?? (0, 0, 0), y = ranks[b.id] ?? (0, 0, 0)
+            if x.day != y.day { return x.day > y.day }
+            if x.week != y.week { return x.week > y.week }
+            if x.perDay != y.perDay { return x.perDay > y.perDay }
+            return a.lastActivity > b.lastActivity
+        }
+    }
+
     /// Chats in neither a project nor a Studio. A chat whose Studio is gone shows here too.
     var sidebarChats: [ChatSession] {
         let studioIDs = Set(activeStudios.map(\.id))
@@ -723,7 +744,8 @@ final class AppModel {
             if let draft=state.draft{session.draft=draft.text;session.draftAttachments=draft.attachments}
             bindProjection(session);sessions.append(session)
         }
-        if selectedID==nil {selectedID=sessions.first(where:{!$0.isDot})?.id}
+        // Choosing a chat to have ready doesn't leave the Home page Chatterbox opens on.
+        if selectedID==nil {let home=showingHome;selectedID=sessions.first(where:{!$0.isDot})?.id;showingHome=home}
     }
     /// Reloads the chat list from the background service. One at a time: a request during a
     /// reload runs once after it. A failed reload retries (1, 2, 4 s, then every 10 s) while

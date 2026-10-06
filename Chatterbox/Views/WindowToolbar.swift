@@ -16,6 +16,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
     private enum ID {
         static let sidebar = NSToolbarItem.Identifier("chatterbox.sidebar")
         static let home = NSToolbarItem.Identifier("chatterbox.home")
+        static let studios = NSToolbarItem.Identifier("chatterbox.studios")
         static let commandCenter = NSToolbarItem.Identifier("chatterbox.commandCenter")
         static let settings = NSToolbarItem.Identifier("chatterbox.settings")
         static let newChat = NSToolbarItem.Identifier("chatterbox.newChat")
@@ -27,9 +28,11 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         static let images = NSToolbarItem.Identifier("chatterbox.images")
         static let usage = NSToolbarItem.Identifier("chatterbox.usage")
         static let terminal = NSToolbarItem.Identifier("chatterbox.terminal")
-        static let all: [NSToolbarItem.Identifier] = [sidebar, home, commandCenter, settings, newChat, .flexibleSpace,
-                                                       tone, place, repo, golem, remote, usage, images, terminal]
-        static let chat: [NSToolbarItem.Identifier] = [tone, place, repo, golem, remote, usage, images, terminal]
+        /// Home, New Chat, the chat view (sidebar icon) and Command Center on the left in every view;
+        /// the chat's own controls on the right, with Settings last.
+        static let all: [NSToolbarItem.Identifier] = [studios, newChat, sidebar, commandCenter, .flexibleSpace,
+                                                       tone, place, repo, golem, usage, images, terminal, settings]
+        static let chat: [NSToolbarItem.Identifier] = [tone, place, repo, golem, usage, images, terminal]
     }
 
     private let model: AppModel
@@ -65,6 +68,14 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         self.window = window
         window.toolbar = toolbar
         window.toolbarStyle = .unified
+        // Home's tabs are saved settings: switching them there moves the toolbar's highlight.
+        pageObserver = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let page = AppPreferences.defaults.string(forKey: "macHomePage")
+                if page != self.lastHomePage { self.lastHomePage = page; self.apply() }
+            }
+        }
         applyTheme()
         // Some SwiftUI pages (Settings' tabs) put a toolbar of their own on the window, which
         // would drop this one; put it back.
@@ -92,6 +103,8 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         track()
     }
     private var replaced: NSKeyValueObservation?
+    private var pageObserver: NSObjectProtocol?
+    private var lastHomePage: String?
     private var recentReinstalls: [Date] = []
 
     /// The theme's background (Settings → Appearance) behind the toolbar too, as the SwiftUI
@@ -122,18 +135,20 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
             : model.showingHome ? "Chatterbox" : session?.title ?? "Chatterbox"
         if window?.title != title { window?.title = title }
 
-        if let home = items[ID.home] {
-            let back = model.showingHome
-            home.image = NSImage(systemSymbolName: back ? "arrow.left" : "house", accessibilityDescription: back ? "Back to Chat" : "Home")
-            home.label = back ? "Back to Chat" : "Home"
-            home.toolTip = back ? "Return to the open thread" : "Home: full-window thread cards"
-        }
+        // Which of the left-hand views is showing.
+        let inChat = !model.showingHome && !model.showingCommandCenter && !model.showingSettings
+        // The chat view is the usual place, so its button isn't framed as selected.
+        _ = inChat
+        let current: [NSToolbarItem.Identifier: Bool] = [ID.studios: model.showingHome,
+                                                         ID.commandCenter: model.showingCommandCenter, ID.settings: model.showingSettings]
+        let selected = current.first { $0.value }?.key
+        if toolbar.selectedItemIdentifier != selected { toolbar.selectedItemIdentifier = selected }
 
         // A chat's own items show only with a chat, and only those that apply to it.
         let repo = session.flatMap { s in GitStatusStore.shared.status(for: s.record.projectFolder)?.remote(preferring: s.record.gitRemote)?.repo }
         let shown: [NSToolbarItem.Identifier: Bool] = [
             ID.tone: session != nil, ID.place: session != nil, ID.repo: repo != nil,
-            ID.golem: session?.isDot == true, ID.remote: session?.record.backend == .claude,
+            ID.golem: session?.isDot == true,
             ID.images: session != nil, ID.terminal: session != nil,
         ]
         for (id, visible) in shown { setVisible(id, visible) }
@@ -153,6 +168,8 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { ID.all }
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { ID.all }
+    /// The view buttons mark the view that's showing.
+    func toolbarSelectableItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { [ID.studios, ID.commandCenter, ID.settings] }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier,
                  willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
@@ -160,9 +177,11 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         let item: NSToolbarItem
         switch id {
         case ID.sidebar:
-            item = button(id, "sidebar.left", "Toggle Sidebar", "Show or hide sidebar (\u{2303}\u{2318}S)", #selector(toggleSidebar))
+            item = button(id, "sidebar.left", "Chats", "The chat view with its sidebar; from there, shows or hides the sidebar (\u{2303}\u{2318}S)", #selector(showChats))
         case ID.home:
-            item = button(id, "house", "Home", "Home: full-window thread cards", #selector(toggleHome))
+            item = button(id, "square.grid.2x2", "Home", "Home: your projects, Studios and chats", #selector(showHome))
+        case ID.studios:
+            item = button(id, "paintpalette", "Studios", "Your Studios, as thumbnails", #selector(showStudios))
         case ID.commandCenter:
             item = button(id, "rectangle.split.2x2", "Command Center", "Several live chats in one window", #selector(toggleCommandCenter))
         case ID.settings:
@@ -217,8 +236,25 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
 
     // MARK: - Actions
 
-    @objc private func toggleSidebar() { model.sidebarToggleRequest += 1 }
-    @objc private func toggleHome() { model.showingHome.toggle(); model.showingSettings = false }
+    /// To the chat view; already there, it shows or hides the sidebar.
+    @objc private func showChats() {
+        if model.showingHome || model.showingCommandCenter || model.showingSettings {
+            model.showingHome = false; model.showingCommandCenter = false; model.showingSettings = false
+        } else {
+            model.sidebarToggleRequest += 1
+        }
+    }
+    @objc private func showHome() {
+        // Home opens on Projects; Studios has its own button.
+        if AppPreferences.defaults.string(forKey: "macHomePage") == "Studios" { AppPreferences.defaults.set("Projects", forKey: "macHomePage") }
+        model.showingHome = true
+        apply()
+    }
+    @objc private func showStudios() {
+        AppPreferences.defaults.set("Studios", forKey: "macHomePage")
+        model.showingHome = true
+        apply()
+    }
     @objc private func toggleCommandCenter() { model.showingCommandCenter.toggle() }
     @objc private func toggleSettings() { model.showingSettings.toggle() }
     @objc private func showImages() { bridge.showImages() }
