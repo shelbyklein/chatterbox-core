@@ -145,7 +145,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
 
     private func apply() {
         let session = bridge.session
-        let title = model.showingSettings ? "Settings" : model.showingCommandCenter ? "Command Center"
+        let title = model.showingSettings ? "Settings" : model.showingAutomations ? "Automations" : model.showingCommandCenter ? "Command Center"
             : model.showingHome ? "Chatterbox" : session?.title ?? "Chatterbox"
         if window?.title != title { window?.title = title }
         if titleLabel.stringValue != title { titleLabel.stringValue = title }
@@ -154,7 +154,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
 
         // Which of the left-hand views is showing; none while Settings is.
         if let views = items[ID.views] as? NSToolbarItemGroup {
-            let index = model.showingSettings ? -1 : model.showingCommandCenter ? 2 : model.showingHome ? 1 : 0
+            let index = model.showingSettings ? -1 : model.showingAutomations ? 3 : model.showingCommandCenter ? 2 : model.showingHome ? 1 : 0
             if views.selectedIndex != index { views.selectedIndex = index }
         }
         let selected = model.showingSettings ? ID.settings : nil
@@ -209,13 +209,13 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
             item.isBordered = false
         case ID.views:
             let group = NSToolbarItemGroup(itemIdentifier: id,
-                                           images: ["sidebar.left", "paintpalette", "rectangle.split.2x2", "bubble.left"].compactMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) },
-                                           selectionMode: .selectOne, labels: ["Chats", "Studios", "Command Center", "New Chat"],
+                                           images: ["sidebar.left", "paintpalette", "rectangle.split.2x2", "clock.arrow.circlepath", "bubble.left"].compactMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) },
+                                           selectionMode: .selectOne, labels: ["Chats", "Studios", "Command Center", "Automations", "New Chat"],
                                            target: self, action: #selector(pickView(_:)))
             group.label = "View"
             group.paletteLabel = "View"
             let tips = ["The chat view with its sidebar; from there, shows or hides the sidebar (\u{2303}\u{2318}S)",
-                        "Your Studios, as thumbnails", "Several live chats in one window", "Start a new chat (⌘N)"]
+                        "Your Studios, as thumbnails", "Several live chats in one window", "All project automations", "Start a new chat (⌘N)"]
             for (sub, tip) in zip(group.subitems, tips) { sub.toolTip = tip }
             group.selectedIndex = 0
             item = group
@@ -270,6 +270,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
     // MARK: - Actions
 
     @objc private func startNewChat() {
+        model.showingAutomations = false
         model.showingHome = false
         model.showingCommandCenter = false
         model.showingSettings = false
@@ -286,6 +287,8 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
             model.showingHome = false; model.showingSettings = false
             model.showingCommandCenter = true
         case 3:
+            model.showingAutomations = true
+        case 4:
             startNewChat()
         default:
             showChats()
@@ -295,7 +298,8 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
 
     /// To the chat view; already there, it shows or hides the sidebar.
     @objc private func showChats() {
-        if model.showingHome || model.showingCommandCenter || model.showingSettings {
+        if model.showingAutomations || model.showingHome || model.showingCommandCenter || model.showingSettings {
+            model.showingAutomations = false
             model.showingHome = false; model.showingCommandCenter = false; model.showingSettings = false
         } else {
             model.sidebarToggleRequest += 1

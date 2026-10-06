@@ -14,6 +14,7 @@ final class AppModel {
     var selectedID: UUID? {
         didSet {
             showingHome = false
+            showingAutomations = false
             showingCommandCenter = false
             guard selectedID != oldValue, let session = sessions.first(where: { $0.id == selectedID }) else { return }
             Diagnostics.note("Opened \u{201C}\(session.title)\u{201D} (\(session.items.count) rows\(session.isRunning ? ", working" : ""))")
@@ -26,9 +27,10 @@ final class AppModel {
     var showingCloneFromGitHub = false
     var showingNewProject = false
     /// Settings, shown in the main window in place of the chat.
-    var showingHome = false { didSet { if showingHome { showingCommandCenter = false } } }
-    var showingCommandCenter = false { didSet { if showingCommandCenter { showingHome = false; showingSettings = false } } }
-    var showingSettings = false { didSet { if showingSettings { showingHome = false; showingCommandCenter = false } } }
+    var showingHome = false { didSet { if showingHome { showingCommandCenter = false; showingAutomations = false } } }
+    var showingCommandCenter = false { didSet { if showingCommandCenter { showingHome = false; showingSettings = false; showingAutomations = false } } }
+    var showingAutomations = false { didSet { if showingAutomations { showingHome = false; showingCommandCenter = false; showingSettings = false } } }
+    var showingSettings = false { didSet { if showingSettings { showingHome = false; showingCommandCenter = false; showingAutomations = false } } }
     /// The independent, always-on-top Golem mini window (⌘J).
     var showingDot = false {
         didSet {

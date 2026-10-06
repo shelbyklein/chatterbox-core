@@ -138,7 +138,7 @@ struct ContentView: View {
     }
 
     private var mainChatID: UUID? {
-        guard !model.showingCommandCenter, !model.showingHome, !model.showingSettings, model.webPage == nil, let session = model.selected,
+        guard !model.showingAutomations, !model.showingCommandCenter, !model.showingHome, !model.showingSettings, model.webPage == nil, let session = model.selected,
               !(session.isDot && model.showingDot) else { return nil }
         return session.id
     }
@@ -148,6 +148,8 @@ struct ContentView: View {
             if model.showingSettings {
                 // Settings takes the whole window: its pages are listed where the chats were.
                 SettingsPage()
+            } else if model.showingAutomations {
+                AutomationsCenter()
             } else if model.showingCommandCenter {
                 CommandCenterView(layout: commandCenter)
             } else if model.showingHome {
