@@ -19,7 +19,11 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         static let studios = NSToolbarItem.Identifier("chatterbox.studios")
         static let commandCenter = NSToolbarItem.Identifier("chatterbox.commandCenter")
         static let settings = NSToolbarItem.Identifier("chatterbox.settings")
-        static let newChat = NSToolbarItem.Identifier("chatterbox.newChat")
+        /// Chat view, Studios and Command Center, as one segmented group.
+        static let views = NSToolbarItem.Identifier("chatterbox.views")
+        /// The window's title, drawn as the first item: macOS leaves a stretchy gap after its own
+        /// title, which pushed the view buttons toward the middle.
+        static let title = NSToolbarItem.Identifier("chatterbox.title")
         static let tone = NSToolbarItem.Identifier("chatterbox.tone")
         static let place = NSToolbarItem.Identifier("chatterbox.place")
         static let repo = NSToolbarItem.Identifier("chatterbox.repo")
@@ -28,17 +32,26 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         static let images = NSToolbarItem.Identifier("chatterbox.images")
         static let usage = NSToolbarItem.Identifier("chatterbox.usage")
         static let terminal = NSToolbarItem.Identifier("chatterbox.terminal")
-        /// Home, New Chat, the chat view (sidebar icon) and Command Center on the left in every view;
-        /// the chat's own controls on the right, with Settings last.
-        static let all: [NSToolbarItem.Identifier] = [studios, newChat, sidebar, commandCenter, .flexibleSpace,
-                                                       tone, place, repo, golem, usage, images, terminal, settings]
+        /// The views on the left (chat, Studios, Command Center); the open chat's details in the
+        /// middle, its image library included (in the place item, so it shares their pill); usage and the terminal; Settings last.
+        /// New chats start from the sidebar, the Studios page and Cmd-N, not the toolbar.
+        static let all: [NSToolbarItem.Identifier] = [title, views, .flexibleSpace,
+                                                       tone, place, repo, golem, .flexibleSpace,
+                                                       usage, terminal, .space, settings]
         static let chat: [NSToolbarItem.Identifier] = [tone, place, repo, golem, usage, images, terminal]
     }
 
     private let model: AppModel
     private let bridge: ChatToolbarBridge
-    private let newStudio: () -> Void
     private let toolbar = NSToolbar(identifier: "chatterbox.main")
+    private let titleLabel: NSTextField = {
+        let label = NSTextField(labelWithString: "Chatterbox")
+        label.font = .boldSystemFont(ofSize: NSFont.systemFontSize + 2)
+        label.lineBreakMode = .byTruncatingTail
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        label.widthAnchor.constraint(lessThanOrEqualToConstant: 380).isActive = true
+        return label
+    }()
     private var items: [NSToolbarItem.Identifier: NSToolbarItem] = [:]
     private weak var window: NSWindow?
 
@@ -49,10 +62,9 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
     var debugState: String { "session=\(bridge.session?.title ?? "nil") installed=\(window?.toolbar === toolbar)" }
     #endif
 
-    init(model: AppModel, bridge: ChatToolbarBridge, newStudio: @escaping () -> Void) {
+    init(model: AppModel, bridge: ChatToolbarBridge) {
         self.model = model
         self.bridge = bridge
-        self.newStudio = newStudio
         super.init()
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
@@ -68,6 +80,8 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         self.window = window
         window.toolbar = toolbar
         window.toolbarStyle = .unified
+        // The title is the first toolbar item instead (it's still set, for the Window menu).
+        window.titleVisibility = .hidden
         // Home's tabs are saved settings: switching them there moves the toolbar's highlight.
         pageObserver = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -134,14 +148,16 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         let title = model.showingSettings ? "Settings" : model.showingCommandCenter ? "Command Center"
             : model.showingHome ? "Chatterbox" : session?.title ?? "Chatterbox"
         if window?.title != title { window?.title = title }
+        if titleLabel.stringValue != title { titleLabel.stringValue = title }
+        // SwiftUI turns the system title back on when some pages appear; keep it off.
+        if window?.titleVisibility != .hidden { window?.titleVisibility = .hidden }
 
-        // Which of the left-hand views is showing.
-        let inChat = !model.showingHome && !model.showingCommandCenter && !model.showingSettings
-        // The chat view is the usual place, so its button isn't framed as selected.
-        _ = inChat
-        let current: [NSToolbarItem.Identifier: Bool] = [ID.studios: model.showingHome,
-                                                         ID.commandCenter: model.showingCommandCenter, ID.settings: model.showingSettings]
-        let selected = current.first { $0.value }?.key
+        // Which of the left-hand views is showing; none while Settings is.
+        if let views = items[ID.views] as? NSToolbarItemGroup {
+            let index = model.showingSettings ? -1 : model.showingCommandCenter ? 2 : model.showingHome ? 1 : 0
+            if views.selectedIndex != index { views.selectedIndex = index }
+        }
+        let selected = model.showingSettings ? ID.settings : nil
         if toolbar.selectedItemIdentifier != selected { toolbar.selectedItemIdentifier = selected }
 
         // A chat's own items show only with a chat, and only those that apply to it.
@@ -149,7 +165,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         let shown: [NSToolbarItem.Identifier: Bool] = [
             ID.tone: session != nil, ID.place: session != nil, ID.repo: repo != nil,
             ID.golem: session?.isDot == true,
-            ID.images: session != nil, ID.terminal: session != nil,
+            ID.terminal: session != nil,
         ]
         for (id, visible) in shown { setVisible(id, visible) }
     }
@@ -169,7 +185,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { ID.all }
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { ID.all }
     /// The view buttons mark the view that's showing.
-    func toolbarSelectableItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { [ID.studios, ID.commandCenter, ID.settings] }
+    func toolbarSelectableItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { [ID.settings] }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier,
                  willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
@@ -186,12 +202,29 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
             item = button(id, "rectangle.split.2x2", "Command Center", "Several live chats in one window", #selector(toggleCommandCenter))
         case ID.settings:
             item = button(id, "gearshape", "Settings", "Settings (\u{2318},)", #selector(toggleSettings))
-        case ID.newChat:
-            item = hosted(id, "New Chat", NewChatMenu(newStudio: newStudio))
+        case ID.title:
+            item = NSToolbarItem(itemIdentifier: id)
+            item.view = titleLabel
+            item.label = "Title"
+            item.isBordered = false
+        case ID.views:
+            let group = NSToolbarItemGroup(itemIdentifier: id,
+                                           images: ["sidebar.left", "paintpalette", "rectangle.split.2x2"].compactMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) },
+                                           selectionMode: .selectOne, labels: ["Chats", "Studios", "Command Center"],
+                                           target: self, action: #selector(pickView(_:)))
+            group.label = "View"
+            group.paletteLabel = "View"
+            let tips = ["The chat view with its sidebar; from there, shows or hides the sidebar (\u{2303}\u{2318}S)",
+                        "Your Studios, as thumbnails", "Several live chats in one window"]
+            for (sub, tip) in zip(group.subitems, tips) { sub.toolTip = tip }
+            group.selectedIndex = 0
+            item = group
         case ID.tone:
             item = hosted(id, "Tone", ToneSlot(bridge: bridge))
         case ID.place:
-            item = hosted(id, "Project", PlaceSlot(bridge: bridge))
+            // The image library rides in the same item: a toolbar item holding only a button
+            // gets a pill of its own, apart from the chat's other details.
+            item = hosted(id, "Project", HStack(spacing: 8) { PlaceSlot(bridge: bridge); ImagesSlot(bridge: bridge) })
         case ID.repo:
             item = hosted(id, "Repository", RepoSlot(bridge: bridge))
         case ID.golem:
@@ -236,6 +269,20 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
 
     // MARK: - Actions
 
+    @objc private func pickView(_ sender: NSToolbarItemGroup) {
+        switch sender.selectedIndex {
+        case 1:
+            model.showingCommandCenter = false; model.showingSettings = false
+            showStudios()
+        case 2:
+            model.showingHome = false; model.showingSettings = false
+            model.showingCommandCenter = true
+        default:
+            showChats()
+        }
+        apply()
+    }
+
     /// To the chat view; already there, it shows or hides the sidebar.
     @objc private func showChats() {
         if model.showingHome || model.showingCommandCenter || model.showingSettings {
@@ -259,43 +306,6 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
     @objc private func toggleSettings() { model.showingSettings.toggle() }
     @objc private func showImages() { bridge.showImages() }
     @objc private func toggleTerminal() { bridge.toggleTerminal() }
-}
-
-/// New Chat: a click starts one; holding opens the choices.
-private struct NewChatMenu: View {
-    let newStudio: () -> Void
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        Menu {
-            if let studio = model.selected.flatMap(model.studio(for:)), studio.archivedAt == nil {
-                Button("New Chat in \u{201C}\(studio.name)\u{201D}") { model.newChat(in: studio) }
-                Divider()
-            }
-            Button("New Claude Chat") { model.newChat(backend: .claude) }
-            Button("New Codex Chat") { model.newChat(backend: .codex) }
-            Divider()
-            Button("New Project\u{2026}") { model.showingNewProject = true }
-            Button("Open Project\u{2026}") { model.chooseAndOpenProject() }
-            Button("New Project from GitHub\u{2026}") { model.showingCloneFromGitHub = true }
-            Divider()
-            if !model.activeStudios.isEmpty {
-                Menu("New Chat in Studio") {
-                    ForEach(model.activeStudios) { studio in
-                        Button(studio.name) { model.newChat(in: studio) }
-                    }
-                }
-            }
-            Button("New Studio\u{2026}") { newStudio() }
-        } label: {
-            Image(systemName: "square.and.pencil")
-        } primaryAction: {
-            model.newChat()
-        }
-        .menuStyle(.borderlessButton)
-        .help("New chat (\u{2318}N). Hold to pick Claude, Codex, or a project folder.")
-        .accessibilityLabel("New Chat")
-    }
 }
 
 /// The window's keyboard shortcuts that used to live on toolbar buttons. Toolbar items aren't

@@ -179,7 +179,7 @@ struct ContentView: View {
         .background(ChatWindowReader { window in
             model.mainChatWindow = window
             if windowToolbarOwner == nil {
-                windowToolbarOwner = WindowToolbar(model: model, bridge: chatToolbar, newStudio: { beginNewStudio() })
+                windowToolbarOwner = WindowToolbar(model: model, bridge: chatToolbar)
             }
             windowToolbarOwner?.install(in: window)
         })
