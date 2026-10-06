@@ -864,8 +864,6 @@ struct ChatDetailView: View {
             } else {
                 dictationButton
             }
-            #else
-            dictationButton
             #endif
 
             if summary.isRunning {
