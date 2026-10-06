@@ -382,6 +382,7 @@ struct GolemVoiceSettings: View {
             if voice.autoRead {
                 Toggle("Then listen for my reply", isOn: Binding(get: { voice.listensAfter }, set: { voice.listensAfter = $0 }))
             }
+            DictationPauseControl()
             ElevenLabsSpeedControl()
             if voice.hasKey {
                 if voice.voices.isEmpty {
@@ -407,7 +408,7 @@ struct GolemVoiceSettings: View {
         } header: {
             Text("Voice")
         } footer: {
-            Text((voice.autoRead && voice.listensAfter ? "After reading a reply, Golem listens for yours and sends it when you pause. Stay quiet to end the conversation. " : "") + (voice.hasKey
+            Text((voice.autoRead && voice.listensAfter ? "Golem reads each reply as it arrives and listens the whole time: talk over him to interrupt, and what you say sends when you pause. With headphones, the iPhone's microphone hears you, so keep it nearby. Stay quiet to end the conversation. " : "") + (voice.hasKey
                  ? "Replies are spoken with ElevenLabs: their text is sent to ElevenLabs and uses your plan's credits. The key stays on this iPhone."
                  : "Without a key, Golem uses this iPhone's own voice. Add an ElevenLabs API key for a natural voice; a key limited to text to speech, with a credit limit, is enough."))
         }
