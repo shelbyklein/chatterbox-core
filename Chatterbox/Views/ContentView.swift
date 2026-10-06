@@ -262,7 +262,14 @@ struct ContentView: View {
         } message: { _ in
             Text("The conversation and its attachments are removed permanently. Archiving keeps them out of the way instead.")
         }
-        .task { await model.refreshProjectRepos() }
+        // Git status for every project folder (branch, sync, drift from main): when the
+        // projects arrive from the background service or change, and every 10 minutes.
+        .task(id: projectFoldersKey) {
+            while !Task.isCancelled {
+                await model.refreshProjectRepos()
+                try? await Task.sleep(for: .seconds(600))
+            }
+        }
         .task { Attention.shared.start(model: model) }
         .onChange(of: model.selectedID) { _, id in
             Diagnostics.signposts.emitEvent("Chat picked")
@@ -338,6 +345,10 @@ extension ContentView {
             }
         }
         .padding(.vertical, 2)
+    }
+
+    private var projectFoldersKey: String {
+        Set(model.sessions.compactMap(\.record.projectFolder)).sorted().joined(separator: "|")
     }
 
     private var isFiltering: Bool {
