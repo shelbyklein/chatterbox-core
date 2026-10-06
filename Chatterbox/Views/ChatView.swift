@@ -74,6 +74,7 @@ struct ChatView: View {
             if find.isOpen { ChatFindBar(find: find) }
             transcript
             ThreadRestartStatus(session: session).padding(.horizontal, 20)
+            if let stopStatus { Text(stopStatus).font(.caption).foregroundStyle(.secondary).padding(.horizontal, 20) }
             composer
             if showingTerminal {
                 TerminalPanel(session: session, onClose: { showingTerminal = false }, pending: $terminalCommand)
@@ -81,6 +82,8 @@ struct ChatView: View {
         }
     }
 
+    @State private var stopStatus: String?
+    @State private var requestingStop = false
     @State private var attachError: String?
     @State private var isDropTargeted = false
     @State private var pasteMonitor: Any?
@@ -496,6 +499,7 @@ struct ChatView: View {
                 // The new rows can take more than one pass to lay out; keep the newest in view until they settle.
                 keepBottom(proxy)
             }
+            .onChange(of: session.isRunning) { _, running in if !running { stopStatus = nil; requestingStop = false } }
             .onChange(of: session.items.count) { if !find.isOpen { scrollToBottom(proxy) } else { find.recompute() } }
             .onChange(of: find.jumpRequest) { jumpToMatch(proxy) }
             // Closing find goes back to the latest messages if a match was far back.
@@ -611,6 +615,30 @@ struct ChatView: View {
 
     private func scrollToBottom(_ proxy: ScrollViewProxy) {
         withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo("bottom", anchor: .bottom) }
+    }
+
+    /// Confirm UI-to-service delivery; never claim a turn stopped before its state changes.
+    private func requestStop() {
+        guard !requestingStop else { return }
+        requestingStop = true
+        stopStatus = "Requesting stop…"
+        Task { @MainActor in
+            defer { requestingStop = false }
+            do {
+                if session.remoteCommand != nil {
+                    _ = try await RuntimeClient.shared.request("stop", body: ["chatID": .string(session.id.uuidString)], timeout: .seconds(10))
+                } else { session.interrupt() }
+                guard session.canStop else { stopStatus = nil; return }
+                stopStatus = "Stop requested. Waiting for the agent…"
+                for _ in 0..<20 {
+                    try await Task.sleep(for: .milliseconds(500))
+                    if !session.canStop { stopStatus = nil; return }
+                }
+                stopStatus = "The agent hasn’t confirmed stopping. You can try Stop again."
+            } catch {
+                stopStatus = "Couldn’t request stop: \(error.localizedDescription)"
+            }
+        }
     }
 
     // MARK: - Composer
@@ -846,7 +874,7 @@ struct ChatView: View {
                 .help("Working since \(started.formatted(date: .omitted, time: .shortened))")
             }
             if session.canStop {
-                Button(action: session.interrupt) {
+                Button(action: requestStop) {
                     Image(systemName: "stop.circle.fill").font(.system(size: 26))
                 }
                 .buttonStyle(.plain)
@@ -858,7 +886,7 @@ struct ChatView: View {
                 // Esc closes the menu instead. Kept in the background so it takes no room in the row.
                 .background {
                     if commandMatches.isEmpty {
-                        Button("Stop", action: session.interrupt)
+                        Button("Stop", action: requestStop)
                             .keyboardShortcut(tileActive ? KeyboardShortcut(.escape, modifiers: []) : nil)
                             .opacity(0)
                             .accessibilityHidden(true)
@@ -1524,13 +1552,15 @@ struct FlexibleWidth: Layout {
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         guard let content = subviews.first else { return .zero }
         let measured = content.sizeThatFits(ProposedViewSize(width: proposal.width.map { max($0, ChatView.minWidth) },
-                                                             height: proposal.height))
+                                                             height: nil))
         return CGSize(width: proposal.width ?? measured.width, height: measured.height)
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        // Match measurement: a finite height redistributes image rows and can draw the
+        // final messages past the scroll document's measured bottom.
         subviews.first?.place(at: CGPoint(x: bounds.midX, y: bounds.minY), anchor: .top,
-                              proposal: ProposedViewSize(width: bounds.width, height: bounds.height))
+                              proposal: ProposedViewSize(width: max(bounds.width, ChatView.minWidth), height: nil))
     }
 }
 

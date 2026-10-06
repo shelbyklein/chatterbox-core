@@ -186,3 +186,86 @@ struct AutomationsSheet: View {
         }
     }
 }
+
+/// All project routines, with the existing project editor as the single editing surface.
+struct AutomationsCenter: View {
+    @Environment(AppModel.self) private var model
+    @AppStorage("themeBackground") private var theme = "standard"
+    @State private var routines: [ProjectAutomation] = []
+    @State private var runs: [String: AutomationRunState] = [:]
+    @State private var editingFolder: String?
+    private var folders: [String] { Array(Set(routines.map(\.projectFolder))).sorted { name($0).localizedStandardCompare(name($1)) == .orderedAscending } }
+    private var projects: [String] { Array(Set(model.activeSessions.compactMap { $0.record.projectFolder })).sorted { name($0).localizedStandardCompare(name($1)) == .orderedAscending } }
+    private func name(_ folder: String) -> String {
+        model.activeSessions.first { $0.record.projectFolder == folder }?.projectName ?? URL(fileURLWithPath: folder).lastPathComponent
+    }
+    private func reload() { routines = ProjectAutomations.load(); runs = ProjectAutomations.loadState() }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                VStack(alignment: .leading) {
+                    Text("Automations").font(.largeTitle.bold())
+                    Text("All project routines · \(routines.count) total · \(routines.filter(\.enabled).count) enabled")
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Menu {
+                    ForEach(projects, id: \.self) { folder in
+                        Button(name(folder)) { editingFolder = folder }
+                    }
+                } label: { Label("Add Automation", systemImage: "plus") }
+                .disabled(projects.isEmpty)
+            }
+            if routines.isEmpty {
+                ContentUnavailableView("No automations yet", systemImage: "clock.arrow.circlepath",
+                    description: Text("Choose a project with Add Automation to create its first routine."))
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 16) {
+                        ForEach(folders, id: \.self) { folder in
+                            VStack(alignment: .leading, spacing: 12) {
+                                HStack {
+                                    Text(name(folder)).font(.title3.bold())
+                                    Spacer()
+                                    Button("Manage") { editingFolder = folder }
+                                }
+                                ForEach(routines.filter { $0.projectFolder == folder }) { routine in
+                                    HStack {
+                                        Image(systemName: routine.enabled ? "clock" : "pause.circle").foregroundStyle(.secondary)
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Text(routine.title).font(.headline)
+                                            Text(ProjectAutomations.scheduleText(routine) + (routine.enabled ? "" : " · Paused"))
+                                                .font(.callout).foregroundStyle(.secondary)
+                                            if routine.enabled, let next = ProjectAutomations.nextOccurrence(of: routine) {
+                                                Text("Next: \(next.formatted(date: .abbreviated, time: .shortened))").font(.caption).foregroundStyle(.secondary)
+                                            }
+                                            if let last = runs[routine.id.uuidString]?.lastRun {
+                                                Text("Last run: \(last.formatted(date: .abbreviated, time: .shortened))").font(.caption).foregroundStyle(.secondary)
+                                            }
+                                        }
+                                        Spacer()
+                                        if let thread = runs[routine.id.uuidString]?.threadID, model.sessions.contains(where: { $0.id == thread }) {
+                                            Button("Open Thread") { model.showingAutomations = false; model.selectedID = thread }
+                                        }
+                                    }
+                                }
+                            }
+                            .padding(18)
+                            .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 14))
+                            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.primary.opacity(0.12)))
+                        }
+                    }
+                }
+            }
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Theme.background(theme) ?? Color(nsColor: .windowBackgroundColor))
+        .sheet(isPresented: Binding(get: { editingFolder != nil }, set: { if !$0 { editingFolder = nil; reload() } })) {
+            if let folder = editingFolder { AutomationsSheet(projectFolder: folder, projectName: name(folder)).environment(model) }
+        }
+        .task {
+            while !Task.isCancelled { reload(); do { try await Task.sleep(for: .seconds(15)) } catch { return } }
+        }
+    }
+}
