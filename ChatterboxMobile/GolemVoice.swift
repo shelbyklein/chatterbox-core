@@ -1,5 +1,6 @@
 #if GOLEM_APP
 import AVFoundation
+import OSLog
 import Security
 import SwiftUI
 
@@ -7,7 +8,8 @@ import SwiftUI
 /// phone, otherwise (or if ElevenLabs fails) with the phone's own voice.
 ///
 /// The key stays in this phone's Keychain and goes only to ElevenLabs. Reply text is sent to
-/// ElevenLabs to be spoken, a paragraph or so at a time, the next fetched while one plays.
+/// ElevenLabs to be spoken, a sentence or two at a time while the reply is still being written, the
+/// next ones fetched while one plays.
 @MainActor
 @Observable
 final class GolemVoice: NSObject {
@@ -41,13 +43,34 @@ final class GolemVoice: NSObject {
 
     /// ElevenLabs' example voice, until you pick one.
     static let defaultVoice = "JBFqnCBsd6RMkjVDRZzb"
-    /// Long replies are read up to here, then "the rest is in the chat".
-    private static let spokenLimit = 5000
+    /// ElevenLabs requests in flight at once, and how far ahead of the segment playing they run.
+    private static let maxInFlight = 2
+    private static let lookahead = 2
+    private static let log = Logger(subsystem: "com.shelbyklein.Golem", category: "Voice")
 
-    @ObservationIgnored private var task: Task<Void, Never>?
+    // The reply being read. Everything here is reset by `teardown()`.
+    @ObservationIgnored private var current: UUID?
+    @ObservationIgnored private var epoch = 0                 // bumped on teardown; stale fetch callbacks check it
+    @ObservationIgnored private var halted = false            // stop() was called for `current`
+    @ObservationIgnored private var done = false              // `current` was read to the end
+    @ObservationIgnored private var turnEnded = false         // final text received
+    @ObservationIgnored private var segmenter = SpeechSegmenter()
+    @ObservationIgnored private var segments: [String] = []
+    @ObservationIgnored private var thenBlock: (() -> Void)?
+    @ObservationIgnored private var apiKey: String?
+
+    // ElevenLabs pipeline: fetch up to two ahead, play strictly in order.
+    @ObservationIgnored private var playIndex = 0             // the segment playing, or next to play
+    @ObservationIgnored private var nextFetch = 0
+    @ObservationIgnored private var fetching: [Int: Task<Void, Never>] = [:]
+    @ObservationIgnored private var fetched: [Int: Result<Data, Error>] = [:]
     @ObservationIgnored private var player: AVAudioPlayer?
+
+    // The phone's voice: used without a key, and for a failed segment and the rest.
+    @ObservationIgnored private var localMode = false
+    @ObservationIgnored private var localQueued = 0           // segments handed to the synthesizer
+    @ObservationIgnored private var localPending: [ObjectIdentifier: AVSpeechUtterance] = [:]
     @ObservationIgnored private let synthesizer = AVSpeechSynthesizer()
-    @ObservationIgnored private var finished: CheckedContinuation<Void, Never>?
 
     override init() {
         super.init()
@@ -61,82 +84,163 @@ final class GolemVoice: NSObject {
         if speakingID == id { stop() } else { speak(id, text: text) }
     }
 
-    /// `then` runs only if the reply was read to the end, not when it's stopped.
+    /// Reads a whole reply. `then` runs only if it was read to the end, not when it's stopped.
     func speak(_ id: UUID, text: String, then: (() -> Void)? = nil) {
-        stop()
-        let spoken = Self.spoken(text)
-        guard !spoken.isEmpty else { return }
-        speakingID = id
-        problem = nil
-        task = Task { [weak self] in
-            await self?.read(spoken)
-            guard let self, self.speakingID == id, !Task.isCancelled else { return }
-            self.speakingID = nil
-            self.deactivate()
-            then?()
-        }
+        begin(id)   // an explicit request restarts, even after stop() or a finished read
+        update(reply: id, text: text, final: true, then: then)
     }
 
+    /// Reads a reply while it is still being written: `text` is the reply's full text so far and
+    /// `final` is true once its turn ended. A new `id` replaces whatever was being read; the same
+    /// `id` continues, and sentences already queued are never read again. `then` (the latest one
+    /// given) runs only if the reply was read to the end after `final`, never after `stop()`.
+    /// After `stop()`, updates for that reply are ignored until a different `id` arrives.
+    func update(reply id: UUID, text: String, final isFinal: Bool, then: (() -> Void)? = nil) {
+        if id != current { begin(id) }
+        guard !halted, !done else { return }
+        if let then { thenBlock = then }
+        if isFinal { turnEnded = true }
+        let ready = segmenter.feed(text, final: isFinal)
+        if !ready.isEmpty {
+            if segments.isEmpty { activate() }
+            segments += ready
+            Self.log.notice("Reply segments queued: \(self.segments.count)")
+        }
+        advance()
+    }
+
+    /// Cancels fetches, playback and the queue. `then` isn't called.
     func stop() {
-        task?.cancel()
-        task = nil
+        halted = true
+        teardown()
+    }
+
+    private func begin(_ id: UUID) {
+        teardown()
+        current = id
+        halted = false
+        done = false
+        problem = nil
+        apiKey = Self.readKey()
+        speakingID = id
+    }
+
+    /// Tears down everything in flight and forgets the reply's progress.
+    private func teardown() {
+        epoch += 1
+        fetching.values.forEach { $0.cancel() }
+        fetching = [:]
+        fetched = [:]
+        player?.delegate = nil
         player?.stop()
         player = nil
-        if synthesizer.isSpeaking { synthesizer.stopSpeaking(at: .immediate) }
-        resumeFinished()
-        if speakingID != nil { speakingID = nil; deactivate() }
+        let hadPending = !localPending.isEmpty
+        localPending = [:]   // before stopping, so the delegate's didCancel finds nothing
+        if hadPending || synthesizer.isSpeaking { synthesizer.stopSpeaking(at: .immediate) }
+        segmenter = SpeechSegmenter()
+        segments = []
+        thenBlock = nil
+        turnEnded = false
+        playIndex = 0
+        nextFetch = 0
+        localMode = false
+        localQueued = 0
+        speakingID = nil
+        deactivate()
     }
 
-    private func read(_ text: String) async {
-        activate()
-        let chunks = Self.chunks(text)
-        guard let key = Self.readKey() else { await speakLocally(text); return }
-        var next: Task<Data, Error>? = Task { try await Self.fetch(chunks[0], key: key, voice: voiceID) }
-        defer { next?.cancel() }
-        var index = 0
-        do {
-            while let pending = next, !Task.isCancelled {
-                let data = try await pending.value
-                guard !Task.isCancelled else { return }
-                let following = index + 1
-                let voice = voiceID
-                next = following < chunks.count ? Task { try await Self.fetch(chunks[following], key: key, voice: voice) } : nil
-                try await play(data)
-                index += 1
+    // MARK: - Pipeline
+
+    /// Moves the reply along: starts fetches, starts the next segment when nothing is playing, and
+    /// finishes once the last one has been read. Called after every event.
+    private func advance() {
+        guard !halted, !done else { return }
+        if !localMode, apiKey == nil, !segments.isEmpty { localMode = true; localQueued = playIndex }
+        if localMode {
+            speakLocally()
+        } else if let key = apiKey {
+            prefetch(key: key)
+            if player == nil { playNext() }
+        }
+        let drained = segments.isEmpty
+            || (localMode ? localQueued == segments.count && localPending.isEmpty
+                          : playIndex == segments.count && player == nil)
+        if turnEnded, drained, !done, !halted { finish() }
+    }
+
+    private func finish() {
+        done = true
+        let completion = segments.isEmpty ? nil : thenBlock   // nothing was said: nothing to follow up on
+        thenBlock = nil
+        Self.log.notice("Reply finished (\(self.segments.count) segments)")
+        speakingID = nil
+        deactivate()
+        completion?()
+    }
+
+    private func prefetch(key: String) {
+        while fetching.count < Self.maxInFlight, nextFetch < segments.count, nextFetch <= playIndex + Self.lookahead {
+            let index = nextFetch, text = segments[index], epoch = self.epoch, voice = voiceID
+            nextFetch += 1
+            fetching[index] = Task { [weak self] in
+                let result: Result<Data, Error>
+                do { result = .success(try await Self.fetch(text, key: key, voice: voice)) } catch { result = .failure(error) }
+                guard let self, !Task.isCancelled, self.epoch == epoch else { return }
+                self.fetching[index] = nil
+                self.fetched[index] = result
+                self.advance()
             }
+        }
+    }
+
+    /// Plays the next segment once its audio has arrived; a failure switches to the phone's voice.
+    private func playNext() {
+        guard playIndex < segments.count, let result = fetched[playIndex] else { return }
+        fetched[playIndex] = nil
+        do {
+            let player = try AVAudioPlayer(data: try result.get())
+            player.delegate = self
+            self.player = player
+            guard player.play() else { throw VoiceError("Playback didn't start.") }
         } catch {
-            next?.cancel()
-            guard !Task.isCancelled else { return }
+            player?.delegate = nil
+            player = nil
             problem = "ElevenLabs: \(error.localizedDescription) Using the phone's voice."
-            await speakLocally(chunks[index...].joined(separator: "\n\n"))
+            Self.log.notice("ElevenLabs failed on segment \(self.playIndex + 1); using the phone's voice")
+            fetching.values.forEach { $0.cancel() }
+            fetching = [:]
+            fetched = [:]
+            localMode = true
+            localQueued = playIndex
+            advance()
         }
     }
 
-    private func play(_ data: Data) async throws {
-        let player = try AVAudioPlayer(data: data)
-        player.delegate = self
-        self.player = player
-        await withCheckedContinuation { continuation in
-            finished = continuation
-            if !player.play() { resumeFinished() }
-        }
-    }
-
-    private func speakLocally(_ text: String) async {
-        guard !Task.isCancelled else { return }
-        let utterance = AVSpeechUtterance(string: text)
-        utterance.voice = AVSpeechSynthesisVoice(language: Locale.current.identifier.replacingOccurrences(of: "_", with: "-"))
-            ?? AVSpeechSynthesisVoice(language: "en-US")
-        await withCheckedContinuation { continuation in
-            finished = continuation
+    private func speakLocally() {
+        while localQueued < segments.count {
+            let utterance = AVSpeechUtterance(string: segments[localQueued])
+            utterance.voice = Self.phoneVoice
+            localPending[ObjectIdentifier(utterance)] = utterance
+            localQueued += 1
             synthesizer.speak(utterance)
         }
     }
 
-    private func resumeFinished() {
-        let continuation = finished
-        finished = nil
-        continuation?.resume()
+    fileprivate func playerFinished(_ finished: AVAudioPlayer) {
+        guard let player, player === finished else { return }
+        self.player = nil
+        playIndex += 1
+        advance()
+    }
+
+    fileprivate func utteranceFinished(_ utterance: AVSpeechUtterance) {
+        guard localPending.removeValue(forKey: ObjectIdentifier(utterance)) != nil else { return }
+        advance()
+    }
+
+    private static var phoneVoice: AVSpeechSynthesisVoice? {
+        AVSpeechSynthesisVoice(language: Locale.current.identifier.replacingOccurrences(of: "_", with: "-"))
+            ?? AVSpeechSynthesisVoice(language: "en-US")
     }
 
     @ObservationIgnored private var holdsSession = false
@@ -239,61 +343,31 @@ final class GolemVoice: NSObject {
 
     // MARK: - What gets said
 
-    /// A reply as it should sound: no markdown marks, code blocks or full URLs and paths.
-    static func spoken(_ text: String) -> String {
-        var s = text
-        func replace(_ pattern: String, _ template: String, _ options: NSRegularExpression.Options = []) {
-            guard let regex = try? NSRegularExpression(pattern: pattern, options: options) else { return }
-            s = regex.stringByReplacingMatches(in: s, range: NSRange(s.startIndex..., in: s), withTemplate: template)
-        }
-        replace("```[\\s\\S]*?```", " (code in the chat) ")
-        replace("`([^`]+)`", "$1")
-        replace("!\\[[^\\]]*\\]\\([^)]*\\)", "")                   // images
-        replace("\\[([^\\]]+)\\]\\([^)]*\\)", "$1")                // links → their text
-        replace("https?://\\S+?(?=[.,;:!?)]*(?:\\s|$))", "a link")
-        replace("(?<![\\w.])(?:~|/[\\w.-]+)(?:/[\\w .-]+)+/([\\w.-]+)", "$1")   // paths → file name
-        replace("^[ \\t]*\\|?[ \\t]*:?-{3,}.*$", "", .anchorsMatchLines)  // table rules
-        replace("^[ \\t]*\\|[ \\t]*(.*?)[ \\t]*\\|[ \\t]*$", "$1.", .anchorsMatchLines)   // table rows → "a, b."
-        replace("[ \\t]*\\|[ \\t]*", ", ")
-        replace("^#{1,6}[ \\t]*", "", .anchorsMatchLines)
-        replace("^[ \\t]*[-*+][ \\t]+", "", .anchorsMatchLines)
-        replace("(\\*\\*|__|\\*|_)(\\S[^*_]*?\\S|\\S)\\1", "$2")
-        replace("[ \\t]+", " ")
-        replace("\\n{3,}", "\n\n")
-        s = s.trimmingCharacters(in: .whitespacesAndNewlines)
-        if s.count > spokenLimit {
-            let cut = s.prefix(spokenLimit)
-            let end = cut.lastIndex(where: { ".!?".contains($0) }) ?? cut.endIndex
-            s = String(s[..<end]) + ". The rest is in the chat."
-        }
-        return s
-    }
-
-    /// Paragraphs gathered into pieces of up to about 900 characters.
-    static func chunks(_ text: String) -> [String] {
-        var result: [String] = []
-        var current = ""
-        for paragraph in text.components(separatedBy: "\n\n") where !paragraph.isEmpty {
-            if current.count + paragraph.count > 900, !current.isEmpty { result.append(current); current = "" }
-            current += (current.isEmpty ? "" : "\n\n") + paragraph
-        }
-        if !current.isEmpty { result.append(current) }
-        return result.isEmpty ? [text] : result
-    }
+    /// A reply as it should sound: no markdown marks, code blocks or full URLs and paths, capped
+    /// at 5000 characters (see SpeechSegments, which also does the streaming cleaning).
+    static func spoken(_ text: String) -> String { SpeechSegments.spoken(text) }
 }
+
+/// Carries a non-Sendable delegate argument to the main actor. The object is only compared, never
+/// touched off the main actor, and holding it keeps its identity from being reused meanwhile.
+private struct Handoff<T>: @unchecked Sendable { let value: T }
 
 extension GolemVoice: AVAudioPlayerDelegate, AVSpeechSynthesizerDelegate {
     nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-        Task { @MainActor in self.resumeFinished() }
+        let box = Handoff(value: player)
+        Task { @MainActor in self.playerFinished(box.value) }
     }
     nonisolated func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
-        Task { @MainActor in self.resumeFinished() }
+        let box = Handoff(value: player)
+        Task { @MainActor in self.playerFinished(box.value) }
     }
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.resumeFinished() }
+        let box = Handoff(value: utterance)
+        Task { @MainActor in self.utteranceFinished(box.value) }
     }
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.resumeFinished() }
+        let box = Handoff(value: utterance)
+        Task { @MainActor in self.utteranceFinished(box.value) }
     }
 }
 
