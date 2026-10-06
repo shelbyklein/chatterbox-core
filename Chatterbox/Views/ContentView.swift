@@ -1268,6 +1268,7 @@ extension ContentView {
                 switch section {
                 case .projects:
                     let threads = model.sidebarProjects.filter(projectActivity.includes).flatMap(cardFamily)
+                    if showsTagPills, !model.allTags.isEmpty { tagPills }
                     cardGrid(threads)
                     if threads.isEmpty { Text("No matching projects").font(.caption).foregroundStyle(.secondary) }
                 case .chats:

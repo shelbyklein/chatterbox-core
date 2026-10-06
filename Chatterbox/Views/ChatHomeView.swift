@@ -20,6 +20,7 @@ struct ThreadCard: View {
     let open: () -> Void
     @State private var hovered = false
     @Environment(\.threadCardScale) private var scale
+    @AppStorage(ProjectSort.key) private var projectSort = ProjectSort.recent.rawValue
     @Environment(\.colorScheme) private var colorScheme
     @Environment(AppModel.self) private var model
 
@@ -130,6 +131,21 @@ struct ThreadCard: View {
                 if expanded, let parentID = session.record.sidechatOf {
                     ParentThreadLabel(parentID: parentID)
                 }
+                // The same details as the sidebar list: tags, drift from main, and today's
+                // turns while projects are sorted by Most Active.
+                if !session.tags.isEmpty { TagPills(tags: session.tags) }
+                if let status = GitStatusStore.shared.status(for: session.record.projectFolder), let drift = status.mainDriftText {
+                    Label(drift, systemImage: "arrow.triangle.branch").font(.caption2).lineLimit(1)
+                        .foregroundStyle((status.behindMain ?? 0) > 20 ? Color.orange : Color.secondary)
+                }
+                if projectSort == ProjectSort.active.rawValue, session.record.projectFolder != nil {
+                    let today = session.activityRank.day
+                    Label(expanded ? (today == 0 ? "No turns today" : "\(today) turn\(today == 1 ? "" : "s") today")
+                                   : (today == 0 ? "None today" : "\(today) today"), systemImage: "flame")
+                        .font(.caption2).lineLimit(1)
+                        .help("\(today) turn\(today == 1 ? "" : "s") started in the last 24 hours")
+                        .foregroundStyle(today == 0 ? Color.secondary : Color.orange)
+                }
                 Text(preview).font(.system(size: (expanded ? 13 : 10.5) * scale)).foregroundStyle(.secondary)
                     .lineLimit(expanded ? 4 : 2).frame(maxWidth: .infinity, alignment: .leading)
                 Spacer(minLength: 0)
@@ -144,8 +160,8 @@ struct ThreadCard: View {
             }
             .padding((expanded ? 18 : 10) * scale)
             .frame(maxWidth: .infinity, alignment: .leading)
+            // Room for tags and status lines: a card grows to fit them.
             .frame(minHeight: (expanded ? 250 : 144) * scale)
-            .frame(height: expanded ? nil : 144 * scale)
             .background(selected && !session.isWaitingOnYou ? Color.white : Color.primary.opacity(hovered ? 0.10 : 0.055), in: RoundedRectangle(cornerRadius: 12))
             .overlay {
                 RoundedRectangle(cornerRadius: 12).strokeBorder(session.isWaitingOnYou ? Color.orange : Color.primary.opacity(hovered ? 0.28 : 0.12), lineWidth: 1)
