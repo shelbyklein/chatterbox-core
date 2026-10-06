@@ -63,6 +63,15 @@ final class GolemMiniWindow: NSObject, NSWindowDelegate {
     /// Listen and mute buttons, when the app can talk (Golem's own app).
     var voiceProblem: String?
     var conversationActive = false
+    /// Only the reply whose audio finished is hidden; drafts and the next reply stay visible.
+    private(set) var hiddenSpokenReply: UUID?
+
+    func hideSpokenReply(_ id: UUID) {
+        guard let dot = model?.dot, !dot.isRunning, !dot.isWaitingOnYou,
+              dot.items.last(where: { $0.kind == .assistant && $0.phase != .commentary && !$0.text.isEmpty })?.id == id else { return }
+        if bubbleExpanded { setBubbleExpanded(false) }
+        withAnimation(.easeOut(duration: Self.dismissalDuration)) { hiddenSpokenReply = id }
+    }
     @ObservationIgnored var voice: MiniVoiceControls?
     /// The bubble grown to show a long message whole: the panel stretches up as far as the
     /// screen allows, Golem staying where he is. Its usual size comes back afterwards.
@@ -83,10 +92,10 @@ final class GolemMiniWindow: NSObject, NSWindowDelegate {
     }
 
     private func applyReplyFit(height: CGFloat, reserve: CGFloat) {
-        guard let panel, !collapsed, !dismissing, !bubbleExpanded, height.isFinite, height > 0 else { return }
+        guard let panel, !collapsed, !dismissing, !bubbleExpanded, height.isFinite, height >= 0 else { return }
         let screen = panel.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? panel.frame
         let available = max(0, screen.height - 24)
-        let desired = min(ceil(max(20, height) + reserve), available)
+        let desired = min(ceil(max(0, height) + reserve), available)
         fittingReply = true
         guard abs(panel.frame.height - desired) > 1 else { return }
         var frame = panel.frame
@@ -213,6 +222,7 @@ final class GolemMiniWindow: NSObject, NSWindowDelegate {
     /// Fade the outgoing content at its existing size before trimming transparent bounds.
     /// Keeping layout intact avoids reflow and clipping during dismissal.
     func setCollapsed(_ value: Bool) {
+        if !value { hiddenSpokenReply = nil }
         dismissal?.cancel()
         dismissal = nil
         if dismissing {
@@ -456,6 +466,7 @@ private struct GolemMiniContent: View {
     private var updateText: String? {
         if session.isWaitingOnYou { return session.lastActionSummary }
         if session.isRunning { return "Replying\u{2026}" }
+        if latestReply?.id == controller.hiddenSpokenReply { return nil }
         return latestReply?.text
     }
     private var canSend: Bool { !session.isRestartingThread && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty) }
@@ -754,7 +765,8 @@ private struct GolemMiniContent: View {
 
     private func fitReply() {
         guard bubbleShow else { return }
-        controller.fitReply(height: bubbleTextHeight, reserve: bubbleReserve)
+        controller.fitReply(height: updateText == nil ? 0 : bubbleTextHeight,
+                            reserve: updateText == nil ? controller.collapsedSize.height : bubbleReserve)
     }
 
     private func bubble(_ text: String, maxHeight: CGFloat, overflows: Bool) -> some View {
