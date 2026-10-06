@@ -848,6 +848,7 @@ private struct DotActivitySettings: View {
             })) {
                 ForEach(GolemMiniWindow.sizes, id: \.label) { Text($0.label).tag(Double($0.scale)) }
             }
+            GolemMiniBackdropSettings()
             Toggle("Show his reply bubble", isOn: $bubbleShow)
             if bubbleShow {
                 Picker("Bubble", selection: $bubbleStyle) {

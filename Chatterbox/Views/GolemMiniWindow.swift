@@ -536,6 +536,7 @@ private struct GolemMiniContent: View {
     private var character: some View {
         GolemAnimated(mood: GolemAvatar.mood(of: session))
             .frame(width: controller.characterSize, height: controller.characterSize)
+            .background(GolemMiniBackdrop().padding(4))
             .background(Circle().fill(session.isWaitingOnYou ? Color.yellow.opacity(0.18) : .clear).padding(4))
             // Watching you type: he leans and turns toward the end of your text.
             .rotationEffect(.degrees(gaze * 9), anchor: .bottom)
