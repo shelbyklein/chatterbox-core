@@ -21,6 +21,7 @@ final class Dictation {
     @ObservationIgnored private var generation = UUID()
     @ObservationIgnored private var heard = ""
     @ObservationIgnored private var lastHeard = Date()
+    @ObservationIgnored private var holdsSession = false
 
     /// Starts listening. `onText` gets the whole transcription so far, each time it changes.
     /// With `onPause`, it stops by itself: once you've spoken and then paused for `pause`
@@ -45,9 +46,8 @@ final class Dictation {
             return
         }
         do {
-            let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.record, mode: .measurement, options: .duckOthers)
-            try session.setActive(true, options: .notifyOthersOnDeactivation)
+            try GolemAudioSession.shared.beginCapture()
+            holdsSession = true
 
             let request = SFSpeechAudioBufferRecognitionRequest()
             request.shouldReportPartialResults = true
@@ -117,7 +117,7 @@ final class Dictation {
         request = nil
         task = nil
         isListening = false
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        if holdsSession { holdsSession = false; GolemAudioSession.shared.endCapture() }
     }
 
     /// Asks once for the microphone and speech recognition.

@@ -139,13 +139,18 @@ final class GolemVoice: NSObject {
         continuation?.resume()
     }
 
+    @ObservationIgnored private var holdsSession = false
+
     private func activate() {
-        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
-        try? AVAudioSession.sharedInstance().setActive(true)
+        guard !holdsSession else { return }
+        holdsSession = true
+        GolemAudioSession.shared.beginPlayback()
     }
 
     private func deactivate() {
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        guard holdsSession else { return }
+        holdsSession = false
+        GolemAudioSession.shared.endPlayback()
     }
 
     // MARK: - ElevenLabs
