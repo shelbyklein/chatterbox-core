@@ -882,6 +882,7 @@ private struct SidebarRow: View {
     private let appearance = ReaderStyleSettings()
     /// Settings → Appearance → Sidebar: room between a row's lines.
     @AppStorage("sidebarLineSpacing") private var lineSpacing = 2.0
+    @AppStorage(ProjectSort.key) private var projectSort = ProjectSort.recent.rawValue
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -907,6 +908,14 @@ private struct SidebarRow: View {
                     }
                     if !pins.isEmpty {
                         PinPills(pins: pins, onOpen: onOpenPin)
+                    }
+                    // Sorted by Most Active: today's turns, the number the order is based on.
+                    if projectSort == ProjectSort.active.rawValue {
+                        let today = session.activityRank.day
+                        Label(today == 0 ? "No turns today" : "\(today) turn\(today == 1 ? "" : "s") today", systemImage: "flame")
+                            .font(.caption2)
+                            .foregroundStyle(today == 0 ? Color.secondary : Color.orange)
+                            .help("Turns started in the last 24 hours")
                     }
                     // What happened last, rather than the chat's title.
                     if let summary = session.lastActionSummary ?? (session.title != "New chat" ? session.title : nil) {
