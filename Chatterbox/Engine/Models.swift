@@ -210,6 +210,12 @@ struct ConversationRecord: Codable {
 
     var backend: Backend { activeBackend ?? (codex == nil ? .claude : .codex) }
 
+    /// Model provider can differ from the agent when Codex runs Claude through a proxy.
+    var provider: Backend {
+        if backend == .codex, codex?.model?.lowercased().hasPrefix("claude") == true { return .claude }
+        return backend
+    }
+
     /// The folder this chat is tied to: its project's, or its Studio's.
     var boundFolder: String? { sidechatFolder ?? projectFolder ?? studioWorkingFolder ?? studioFolder }
 

@@ -20,7 +20,6 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         static let commandCenter = NSToolbarItem.Identifier("chatterbox.commandCenter")
         static let settings = NSToolbarItem.Identifier("chatterbox.settings")
         /// Chat view, Studios and Command Center, as one segmented group.
-        static let newChat = NSToolbarItem.Identifier("chatterbox.newChat")
         static let views = NSToolbarItem.Identifier("chatterbox.views")
         /// The window's title, drawn as the first item: macOS leaves a stretchy gap after its own
         /// title, which pushed the view buttons toward the middle.
@@ -36,7 +35,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         /// The views on the left (chat, Studios, Command Center); the open chat's details in the
         /// middle, its image library included (in the place item, so it shares their pill); usage and the terminal; Settings last.
         /// New chats start from the sidebar, the Studios page and Cmd-N, not the toolbar.
-        static let all: [NSToolbarItem.Identifier] = [title, views, newChat, .flexibleSpace,
+        static let all: [NSToolbarItem.Identifier] = [title, views, .flexibleSpace,
                                                        tone, place, repo, golem, .flexibleSpace,
                                                        usage, terminal, .space, settings]
         static let chat: [NSToolbarItem.Identifier] = [tone, place, repo, golem, usage, images, terminal]
@@ -208,17 +207,15 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
             item.view = titleLabel
             item.label = "Title"
             item.isBordered = false
-        case ID.newChat:
-            item = button(id, "plus", "New Chat", "Start a new chat (⌘N)", #selector(startNewChat))
         case ID.views:
             let group = NSToolbarItemGroup(itemIdentifier: id,
-                                           images: ["sidebar.left", "paintpalette", "rectangle.split.2x2"].compactMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) },
-                                           selectionMode: .selectOne, labels: ["Chats", "Studios", "Command Center"],
+                                           images: ["sidebar.left", "paintpalette", "rectangle.split.2x2", "bubble.left"].compactMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) },
+                                           selectionMode: .selectOne, labels: ["Chats", "Studios", "Command Center", "New Chat"],
                                            target: self, action: #selector(pickView(_:)))
             group.label = "View"
             group.paletteLabel = "View"
             let tips = ["The chat view with its sidebar; from there, shows or hides the sidebar (\u{2303}\u{2318}S)",
-                        "Your Studios, as thumbnails", "Several live chats in one window"]
+                        "Your Studios, as thumbnails", "Several live chats in one window", "Start a new chat (⌘N)"]
             for (sub, tip) in zip(group.subitems, tips) { sub.toolTip = tip }
             group.selectedIndex = 0
             item = group
@@ -288,6 +285,8 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         case 2:
             model.showingHome = false; model.showingSettings = false
             model.showingCommandCenter = true
+        case 3:
+            startNewChat()
         default:
             showChats()
         }

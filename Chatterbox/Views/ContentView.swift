@@ -872,19 +872,16 @@ private struct SidebarRow: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             if let folder = session.record.projectFolder, let icon = ProjectIcons.shared.icons[folder] {
-                // The project's logo stands in for the agent's mark.
                 Image(nsImage: icon).resizable().scaledToFit().frame(width: 15, height: 15)
                     .clipShape(RoundedRectangle(cornerRadius: 3.5, style: .continuous))
                     .alignmentGuide(.firstTextBaseline) { $0.height / 2 + 4 }
-                    .accessibilityLabel("\(session.projectName), \(session.record.backend.label)")
-                    .help(session.record.backend.label)
-            } else {
-                Image(session.record.backend.iconName)
-                    .resizable().scaledToFit().frame(width: 11, height: 11)
-                    .accessibilityLabel(session.record.backend.label)
-                    .foregroundStyle(.secondary)
-                    .help(session.record.backend.label)
+                    .accessibilityLabel(session.projectName)
             }
+            Image(session.record.provider.iconName)
+                .resizable().scaledToFit().frame(width: 11, height: 11)
+                .accessibilityLabel(session.record.provider.label)
+                .foregroundStyle(.secondary)
+                .help(session.record.provider == session.record.backend ? session.record.provider.label : "Claude model via Codex")
             if session.record.projectFolder != nil {
                 VStack(alignment: .leading, spacing: lineSpacing) {
                     Text(session.projectName).lineLimit(1)

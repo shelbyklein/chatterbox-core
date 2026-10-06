@@ -34,7 +34,7 @@ struct ThreadCard: View {
         return "Ready"
     }
     private var messageCount: Int { session.items.filter { $0.kind == .user || $0.kind == .assistant }.count }
-    private var tint: Color { session.isWaitingOnYou ? .orange : (session.record.backend == .codex ? .green : .orange) }
+    private var tint: Color { session.isWaitingOnYou ? .orange : (session.record.provider == .codex ? .green : .orange) }
     private var preview: String {
         guard let text = session.items.last(where: { $0.kind == .assistant || $0.kind == .user })?.text else { return "No messages yet" }
         return ChatSession.firstSentence(of: text, limit: expanded ? 320 : 110) ?? "Open to view the conversation"
@@ -46,22 +46,24 @@ struct ThreadCard: View {
         return nil
     }
 
-    @ViewBuilder private var backendIcon: some View {
-        if let folder = session.record.projectFolder, let icon = ProjectIcons.shared.icons[folder] {
-            Image(nsImage: icon).resizable().scaledToFit()
-                .frame(width: (expanded ? 24 : 16) * scale, height: (expanded ? 24 : 16) * scale)
-                .clipShape(RoundedRectangle(cornerRadius: expanded ? 5 : 3.5, style: .continuous))
-                .help(session.record.backend.label)
-        } else {
-            Image(session.record.backend.iconName).resizable().scaledToFit()
+    private var backendIcon: some View {
+        HStack(spacing: 5) {
+            if let folder = session.record.projectFolder, let icon = ProjectIcons.shared.icons[folder] {
+                Image(nsImage: icon).resizable().scaledToFit()
+                    .frame(width: (expanded ? 24 : 16) * scale, height: (expanded ? 24 : 16) * scale)
+                    .clipShape(RoundedRectangle(cornerRadius: expanded ? 5 : 3.5, style: .continuous))
+            }
+            Image(session.record.provider.iconName).resizable().scaledToFit()
                 .frame(width: (expanded ? 19 : 13) * scale, height: (expanded ? 19 : 13) * scale)
                 .foregroundStyle(tint)
-                .task(id: session.record.projectFolder) { ProjectIcons.shared.load(session.record.projectFolder) }
+                .accessibilityLabel(session.record.provider.label)
+                .help(session.record.provider == session.record.backend ? session.record.provider.label : "Claude model via Codex")
         }
+        .task(id: session.record.projectFolder) { ProjectIcons.shared.load(session.record.projectFolder) }
     }
 
     private var agentBadge: some View {
-        Image(session.record.backend.iconName).resizable().scaledToFit()
+        Image(session.record.provider.iconName).resizable().scaledToFit()
             .foregroundStyle(tint).frame(width: 11 * scale, height: 11 * scale)
             .padding(4)
             .background(Circle().fill(Color.black.opacity(0.72)))
@@ -83,7 +85,7 @@ struct ThreadCard: View {
                 .frame(width: 64 * scale, height: 64 * scale)
                 .overlay(alignment: .bottomTrailing) { agentBadge }
         } else {
-            Image(session.record.backend.iconName).resizable().scaledToFit()
+            Image(session.record.provider.iconName).resizable().scaledToFit()
                 .foregroundStyle(tint).frame(width: 28 * scale, height: 28 * scale)
         }
     }
@@ -91,7 +93,7 @@ struct ThreadCard: View {
     var body: some View {
         Button(action: open) {
             if iconOnly {
-                VStack(spacing: 8) {
+                VStack(spacing: 6) {
                     ZStack(alignment: .topTrailing) {
                         tileFace
                             .frame(width: 64 * scale, height: 64 * scale)
@@ -101,9 +103,9 @@ struct ThreadCard: View {
                         Circle().fill(session.isWaitingOnYou ? .orange : session.isRunning ? tint : Attention.shared.unread.contains(session.id) ? .blue : .secondary.opacity(0.4))
                             .frame(width: 6, height: 6).padding(8)
                     }
-                    Text(title).font(.system(size: 10.5 * scale, weight: .medium)).lineLimit(2)
-                        .multilineTextAlignment(.center).frame(height: 30 * scale, alignment: .top)
-                }.frame(width: 96 * scale, height: 104 * scale)
+                    Text(title).font(.system(size: 8.5 * scale, weight: .medium)).lineLimit(2)
+                        .multilineTextAlignment(.center).frame(height: 24 * scale, alignment: .top)
+                }.frame(width: 80 * scale, height: 94 * scale)
                     .task(id: ThreadThumbnails.key(session)) { ThreadThumbnails.shared.refresh(session) }
                     .task(id: session.record.projectFolder) { ProjectIcons.shared.load(session.record.projectFolder) }
                     .background(selected && !session.isWaitingOnYou ? Color.white : Color.clear, in: RoundedRectangle(cornerRadius: 14))
@@ -374,19 +376,22 @@ struct ChatHomeView: View {
         .accessibilityLabel("Home \(page.rawValue.lowercased()) page")
     }
     private func studioGroups(_ groups: [HomeThreadGroup]) -> some View {
-        StudioGroupFlow(spacing: 32) {
+        StudioGroupFlow(spacing: 16) {
             ForEach(withEmptyStudios(groups)) { group in
                 let studio = model.activeStudios.first { $0.id.uuidString == group.id }
                 let columns = min(4, group.threads.count + (studio == nil ? 0 : 1))
-                let tile = CGFloat(96 * tileScale)
-                let width = max(160, CGFloat(columns) * tile + CGFloat(columns - 1) * 16)
-                VStack(alignment: .leading, spacing: 14) {
+                let tile = CGFloat(80 * tileScale)
+                let width = max(160, CGFloat(columns) * tile + CGFloat(columns - 1) * 8)
+                VStack(alignment: .leading, spacing: 10) {
                     groupHeading(group)
-                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(tile), spacing: 16), count: columns), alignment: .leading, spacing: 16) {
+                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(tile), spacing: 8), count: columns), alignment: .leading, spacing: 10) {
                         ForEach(group.threads) { card($0, true) }
                         if let studio { newChatTile(studio, side: tile) }
                     }
                 }.frame(width: width, alignment: .topLeading)
+                .padding(16)
+                .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 18))
+                .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(Color.primary.opacity(0.12)))
                 #if DEBUG
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { MacHomeDebug.studioGroups[group.id] = $0 }
                 #endif
@@ -411,15 +416,15 @@ struct ChatHomeView: View {
             model.showingHome = false
         } label: {
             // Same geometry as an icon-only ThreadCard, so it sits in line with the thumbnails.
-            VStack(spacing: 8) {
+            VStack(spacing: 6) {
                 RoundedRectangle(cornerRadius: 14)
                     .strokeBorder(Color.secondary.opacity(0.5), style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
                     .frame(width: 64 * tileScale, height: 64 * tileScale)
                     .overlay { Image(systemName: "plus").font(.system(size: 20 * tileScale, weight: .light)).foregroundStyle(.secondary) }
-                Text("New Chat").font(.system(size: 10.5 * tileScale, weight: .medium)).foregroundStyle(.secondary)
-                    .frame(height: 30 * tileScale, alignment: .top)
+                Text("New Chat").font(.system(size: 8.5 * tileScale, weight: .medium)).foregroundStyle(.secondary)
+                    .frame(height: 24 * tileScale, alignment: .top)
             }
-            .frame(width: side, height: 104 * tileScale)
+            .frame(width: side, height: 94 * tileScale)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
