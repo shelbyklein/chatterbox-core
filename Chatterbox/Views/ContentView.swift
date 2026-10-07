@@ -885,6 +885,14 @@ struct SidebarRow: View {
                     .alignmentGuide(.firstTextBaseline) { $0.height / 2 + 4 }
                     .accessibilityLabel(session.projectName)
             }
+            // A Studio chat shows its latest image, as its card on the Studios page does.
+            if session.record.studioID != nil, let thumbnail = ThreadThumbnails.shared.images[session.id] {
+                Image(nsImage: thumbnail).resizable().scaledToFill().frame(width: 30, height: 30)
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Color.primary.opacity(0.12)))
+                    .alignmentGuide(.firstTextBaseline) { $0.height / 2 + 4 }
+                    .accessibilityHidden(true)
+            }
             Image(session.record.provider.iconName)
                 .resizable().scaledToFit().frame(width: 11, height: 11)
                 .accessibilityLabel(session.record.provider.label)
@@ -979,6 +987,9 @@ struct SidebarRow: View {
         }
         .padding(.trailing, model.linkedStudio(for: session.record.projectFolder) == nil ? 0 : 28)
         .overlay(alignment: .bottomTrailing) { LinkedStudioShortcut(folder: session.record.projectFolder) }
+        .task(id: session.record.studioID == nil ? "" : ThreadThumbnails.key(session)) {
+            if session.record.studioID != nil { ThreadThumbnails.shared.refresh(session) }
+        }
     }
 }
 
@@ -1093,6 +1104,7 @@ extension ContentView {
     var sidebarColumn: some View {
         VStack(spacing: 0) {
             DesktopOverviewControls().padding(.horizontal, 12).padding(.vertical, 8)
+            UnseenRepliesStrip().padding(.horizontal, 12).padding(.bottom, 6)
             if !isFiltering && model.studioSidebarID == nil {
                 #if GOLEM_APP
                 List { Section { dotRow } }

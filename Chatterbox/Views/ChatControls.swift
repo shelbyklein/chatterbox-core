@@ -302,3 +302,58 @@ struct FinishedChatsList: View {
         }.buttonStyle(.plain)
     }
 }
+
+/// At the top of the sidebar: replies that finished while you were elsewhere, newest first,
+/// until you open them. The same list as the bell's; hidden when you're caught up.
+struct UnseenRepliesStrip: View {
+    @Environment(AppModel.self) private var model
+    @AppStorage("sidebarUnseenRepliesExpanded") private var expanded = true
+    private let appearance = ReaderStyleSettings()
+    private var chats: [ChatSession] { Attention.shared.finishedChats(in: model) }
+    var body: some View {
+        if !chats.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                Button { withAnimation(.smooth(duration: 0.2)) { expanded.toggle() } } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "chevron.right").font(.caption2.weight(.semibold))
+                            .rotationEffect(.degrees(expanded ? 90 : 0))
+                        Text("New replies").font(.subheadline.weight(.semibold))
+                        Text("\(chats.count)").font(.caption.weight(.semibold).monospacedDigit())
+                            .padding(.horizontal, 6).padding(.vertical, 1)
+                            .background(Capsule().fill(Color.blue.opacity(0.85))).foregroundStyle(.white)
+                        Spacer()
+                    }.contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("New replies, \(chats.count)")
+                if expanded {
+                    VStack(spacing: 2) {
+                        ForEach(chats.prefix(6)) { row($0) }
+                        if chats.count > 6 {
+                            Text("\(chats.count - 6) more in the bell").font(.caption).foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading).padding(.leading, 26)
+                        }
+                    }
+                }
+            }
+        }
+    }
+    private func row(_ session: ChatSession) -> some View {
+        Button { Attention.shared.openFinishedChat(session.id, in: model) } label: {
+            HStack(spacing: 8) {
+                Circle().fill(.blue).frame(width: 6, height: 6)
+                Image(session.record.provider.iconName).resizable().scaledToFit()
+                    .frame(width: 12, height: 12)
+                    .foregroundStyle(appearance.style.color(for: session.record.provider))
+                Text(session.record.projectFolder != nil ? session.projectName : session.title)
+                    .lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+                Text(ShortAge.string(since: session.record.updatedAt))
+                    .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 4).padding(.horizontal, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(session.items.last(where: { $0.kind == .assistant && $0.phase == .final })?.text.prefix(200).description ?? "Reply finished")
+    }
+}
