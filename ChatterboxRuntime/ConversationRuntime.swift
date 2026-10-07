@@ -285,7 +285,24 @@ struct CommandReceipt: Codable {
         DispatchQueue.main.asyncAfter(deadline:.now()+(streamed ? 0.1:0)) { [weak self] in
             guard let self else { return };self.saveScheduled=false
             if streamed { self.publish(s,kind:"turn.progress") }
-            do { try self.flush() } catch { RuntimeHooks.note("Runtime save failed: \(error.localizedDescription)") }
+            // Saving writes the chat's whole transcript and the runtime state; ten times a second
+            // that kept the service busy on long chats. While streaming, save at most once a
+            // second (clients still get progress every 0.1 s); anything else saves right away.
+            if streamed, Date().timeIntervalSince(self.lastFlush) < 1 { self.flushSoon(); return }
+            self.flushNow()
+        }
+    }
+    private var lastFlush=Date.distantPast,flushPending=false
+    private func flushNow() {
+        lastFlush=Date()
+        do { try flush() } catch { RuntimeHooks.note("Runtime save failed: \(error.localizedDescription)") }
+    }
+    private func flushSoon() {
+        guard !flushPending else { return }
+        flushPending=true
+        DispatchQueue.main.asyncAfter(deadline:.now()+1) { [weak self] in
+            guard let self else { return };self.flushPending=false
+            if !self.dirty.isEmpty { self.flushNow() }
         }
     }
     private func publish(_ s: ChatSession, kind: String) {
