@@ -227,7 +227,9 @@ struct FinishedChatsBell: View {
             HStack(spacing: 4) {
                 Image(systemName: "watch.analog")
                 if !chats.isEmpty { Text("\(chats.count)").font(.caption.weight(.semibold).monospacedDigit()) }
-            }.padding(.horizontal, 4)
+            }
+            // It's the last item in its toolbar pill: give it room before the pill's edge.
+            .padding(.leading, 4).padding(.trailing, 12)
         }
         .buttonStyle(.plain)
         .help("\(chats.count) unseen finished chats · \(Attention.shared.workingChats(in: model).count) working")
