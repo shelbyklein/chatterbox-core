@@ -60,6 +60,7 @@ final class GolemMiniWindow: NSObject, NSWindowDelegate {
     @ObservationIgnored private var openedAt: Date?
     /// Golem is listening for a spoken reply: the box shows what's heard, and sends on a pause.
     var listening = false
+    var listeningStatus = "Waiting for microphone sound…"
     /// Listen and mute buttons, when the app can talk (Golem's own app).
     var voiceProblem: String?
     var conversationActive = false
@@ -496,6 +497,13 @@ private struct GolemMiniContent: View {
                         .zIndex(0)
                         .transition(.opacity)
                         .opacity(controller.dismissing ? 0 : 1)
+                }
+                if open, controller.listening {
+                    Text(controller.listeningStatus)
+                        .font(.caption).foregroundStyle(.secondary)
+                        .padding(.horizontal, 10).padding(.vertical, 6)
+                        .background(.regularMaterial, in: Capsule())
+                        .zIndex(3)
                 }
                 if open, let problem = controller.voiceProblem {
                     Label(problem, systemImage: "exclamationmark.triangle.fill")
