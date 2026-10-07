@@ -266,7 +266,8 @@ struct ChatView: View {
         .sheet(item: $reviewing) { image in
             // As big as the window allows, so the image or document gets the most room.
             let window = (NSApp.mainWindow ?? NSApp.keyWindow)?.contentLayoutRect.size ?? NSSize(width: 1200, height: 800)
-            ImageReviewView(attachment: image) { text, files in session.send(text, attachments: files) }
+            // Previous and Next step through the chat's images, oldest to newest.
+            ImageReviewView(attachment: image, gallery: ChatImageGallery.collect(session).reversed().map(\.url)) { text, files in session.send(text, attachments: files) }
                 .frame(width: max(900, window.width - 40), height: max(600, window.height - 40))
         }
         .alert("That folder already has a chat", isPresented: Binding(get: { projectConflict != nil }, set: { if !$0 { projectConflict = nil } }), presenting: projectConflict) { owner in

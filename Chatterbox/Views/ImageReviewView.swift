@@ -29,8 +29,19 @@ struct ImageMark: Identifiable {
 /// A large view of an image where you mark areas and write a note for each. Sending attaches
 /// a copy with the numbered marks drawn on it, plus the original, and lists the notes.
 struct ImageReviewView: View {
-    let attachment: Attachment
+    /// The image showing; Previous and Next move it through the chat's other images.
+    @State private var attachment: Attachment
+    /// The chat's images in order, for Previous and Next (empty: just this one).
+    let gallery: [URL]
     let onSend: (_ text: String, _ attachments: [Attachment]) -> Void
+
+    init(attachment: Attachment, gallery: [URL] = [], onSend: @escaping (_ text: String, _ attachments: [Attachment]) -> Void) {
+        _attachment = State(initialValue: attachment)
+        self.gallery = gallery
+        self.onSend = onSend
+    }
+    /// Marks and notes made on other images while browsing, kept until the sheet closes.
+    @State private var drafts: [String: (marks: [ImageMark], overall: String)] = [:]
     @Environment(\.dismiss) private var dismiss
 
     @State private var image: NSImage?
@@ -48,11 +59,67 @@ struct ImageReviewView: View {
             canvas
                 .frame(minWidth: 520, maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color.black.opacity(0.85))
+                .overlay { browseButtons }
             Divider()
             sidebar.frame(width: 280)
         }
         .frame(minWidth: 900, minHeight: 600)
-        .task { image = NSImage(contentsOf: attachment.url) }
+        .task(id: attachment.path) { image = NSImage(contentsOf: attachment.url) }
+    }
+
+    // MARK: - Browsing
+
+    private var position: Int? { gallery.firstIndex { $0.path == attachment.path } }
+
+    /// Moves to the previous (-1) or next (+1) image in the chat, keeping each one's marks.
+    private func step(_ offset: Int) {
+        guard let position, gallery.indices.contains(position + offset) else { return }
+        let url = gallery[position + offset]
+        drafts[attachment.path] = (marks, overall)
+        let draft = drafts[url.path]
+        marks = draft?.marks ?? []
+        overall = draft?.overall ?? ""
+        error = nil
+        image = nil
+        attachment = Attachment(name: url.lastPathComponent, path: url.path,
+                                mediaType: "image/" + url.pathExtension.lowercased(), kind: .image)
+    }
+
+    @ViewBuilder private var browseButtons: some View {
+        if let position, gallery.count > 1 {
+            HStack {
+                // ⌘[ and ⌘], not bare arrows: those move the cursor in the note fields.
+                browseButton("chevron.left", "Previous image (⌘[)", enabled: position > 0) { step(-1) }
+                    .keyboardShortcut("[", modifiers: .command)
+                Spacer()
+                browseButton("chevron.right", "Next image (⌘])", enabled: position < gallery.count - 1) { step(1) }
+                    .keyboardShortcut("]", modifiers: .command)
+            }
+            .padding(.horizontal, 14)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .overlay(alignment: .bottom) {
+                Text("\(position + 1) of \(gallery.count)")
+                    .font(.caption.monospacedDigit()).foregroundStyle(.white.opacity(0.85))
+                    .padding(.horizontal, 10).padding(.vertical, 4)
+                    .background(Capsule().fill(.black.opacity(0.55)))
+                    .padding(.bottom, 14)
+                    .allowsHitTesting(false)
+            }
+        }
+    }
+
+    private func browseButton(_ symbol: String, _ label: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol).font(.system(size: 18, weight: .semibold))
+                .frame(width: 40, height: 40)
+                .background(Circle().fill(.black.opacity(0.55)))
+                .foregroundStyle(.white)
+        }
+        .buttonStyle(.plain)
+        .opacity(enabled ? 1 : 0.25)
+        .disabled(!enabled)
+        .help(label)
+        .accessibilityLabel(label)
     }
 
     // MARK: - Image and marks
