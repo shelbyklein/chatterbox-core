@@ -188,6 +188,7 @@ final class AppModel {
     @ObservationIgnored private var legacyOwnership: RuntimeOwnership?
     @ObservationIgnored private var projecting = false
     @ObservationIgnored private var refreshTasks: [UUID:Task<Void,Never>] = [:]
+    @ObservationIgnored private var refreshAgain: Set<UUID> = []
 
     var selected: ChatSession? { sessions.first { $0.id == selectedID } }
 
@@ -358,6 +359,10 @@ final class AppModel {
     func delete(_ session: ChatSession) {
         if RuntimeClient.usesDaemon {
             RuntimeClient.shared.command("delete",body:["chatID":.string(session.id.uuidString)])
+            // Gone from the lists now, not after the service's next full chat list (seconds
+            // when it's busy). If the delete fails, that list brings the chat back.
+            sessions.removeAll { $0.id == session.id }
+            if selectedID == session.id { selectedID = activeSessions.first?.id }
             return
         }
         session.shutdown()
@@ -808,12 +813,15 @@ final class AppModel {
         if event.kind=="runtime.resync" || event.kind=="runtime.configuration" || event.kind=="chat.created" || event.kind=="chat.deleted" {
             requestResync()
         }else if let id=event.chatID {
-            guard refreshTasks[id]==nil else{return}
+            // One refresh per chat at a time; a change that lands mid-refresh gets one more after
+            // it, since the refresh in flight may have read the chat before that change.
+            guard refreshTasks[id]==nil else{refreshAgain.insert(id);return}
             refreshTasks[id]=Task {
                 try? await Task.sleep(for:.milliseconds(100))
-                defer{refreshTasks[id]=nil}
                 do{let state=try await RuntimeClient.shared.request("get",body:["chatID":.string(id.uuidString),"limit":40]).decode(RuntimeChatState.self);applyProjection(state)}
                 catch{Diagnostics.note(error.localizedDescription)}
+                refreshTasks[id]=nil
+                if refreshAgain.remove(id) != nil { runtimeEvent(event) }
             }
         }
     }
