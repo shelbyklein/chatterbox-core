@@ -124,6 +124,9 @@ struct ChatDetailView: View {
 
     var body: some View {
         transcript
+        // Opening a chat here, from anywhere, clears it from New replies.
+        .onAppear { MobileSeenReplies.shared.markSeen(chat.id) }
+        .onDisappear { MobileSeenReplies.shared.markSeen(chat.id) }
         .safeAreaInset(edge: .bottom) {
             #if GOLEM_APP
             composer

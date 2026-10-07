@@ -19,7 +19,9 @@ struct ClaudeCodeModel: Identifiable, Hashable {
     }
 }
 
-/// The Claude models and account from the user's Claude Code install, loaded once per launch.
+/// The Claude models and account from the user's Claude Code install. Loaded at first use and
+/// again once an hour old, so a model Claude Code adds (an update, a new release) appears
+/// without restarting the app or the background service.
 @MainActor
 @Observable
 final class ClaudeModels {
@@ -33,6 +35,7 @@ final class ClaudeModels {
     /// Set when Claude Code is missing or couldn't start.
     private(set) var statusMessage: String?
     @ObservationIgnored private var loading = false
+    @ObservationIgnored private var loadedAt = Date.distantPast
 
     /// The model for a `--model` value, matching aliases and full ids alike. A full id
     /// ("claude-opus-5-5") names its own model (Opus 5.5) before "Default", which may point
@@ -50,12 +53,13 @@ final class ClaudeModels {
     }
 
     func refresh(force: Bool = false) async {
-        guard !loading, force || models.isEmpty else { return }
+        guard !loading, force || models.isEmpty || Date().timeIntervalSince(loadedAt) > 3600 else { return }
         loading = true
         defer { loading = false }
         do {
             let info = try await ClaudeCodeInfo.probe()
             models = info.models
+            loadedAt = Date()
             commands = info.commands
             accountEmail = info.accountEmail
             plan = info.plan

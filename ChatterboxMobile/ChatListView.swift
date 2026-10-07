@@ -259,6 +259,7 @@ struct ChatListView: View {
                     Label(problem, systemImage: "wifi.exclamationmark").font(.callout).foregroundStyle(.orange)
                 }
                 if let list = store.chatList {
+                    if search.isEmpty { MobileNewReplies(activity: list.activity ?? [], summary: summary(for:), open: open) }
                     if search.isEmpty, let pins = list.pins, !pins.isEmpty { MobilePinPills(pins: pins) }
                     emptyPage
                     ForEach(groups) { group in
@@ -304,6 +305,10 @@ struct ChatListView: View {
                 }
             }
             if let list = store.chatList {
+                if search.isEmpty {
+                    MobileNewReplies(activity: list.activity ?? [], summary: summary(for:), open: open)
+                        .listRowInsets(EdgeInsets()).listRowBackground(Color.clear)
+                }
                 if search.isEmpty, let pins = list.pins, !pins.isEmpty {
                     Section("Pins") { MobilePinPills(pins: pins) }
                 }
@@ -408,6 +413,11 @@ struct ChatListView: View {
     }
 
     /// Opens a chat, even one the list doesn't show yet (a new, empty chat).
+    /// The chat with this id in the current list (any page).
+    private func summary(for id: UUID) -> Companion.ChatSummary? {
+        store.chatList?.groups.lazy.flatMap(\.chats).first { $0.id == id }
+    }
+
     private func open(_ chat: Companion.ChatSummary) {
         opened = chat
         selection = chat.id
