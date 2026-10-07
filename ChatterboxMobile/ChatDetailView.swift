@@ -41,6 +41,8 @@ struct ChatDetailView: View {
     @Namespace private var golemSpace
     /// Next Steps suggestions you closed on this device, until new ones arrive.
     @State private var dismissedSteps: [String]?
+    /// The Next Steps set you opened; a new set arrives folded to one line.
+    @State private var expandedSteps: [String]?
     @State private var confirmingRestart = false
     @State private var controllingSession = false
     @State private var sessionControlStatus: String?
@@ -686,11 +688,25 @@ struct ChatDetailView: View {
     /// Next Steps (a Chatterbox plugin, Settings → Plugins on the Mac): tap one to put it in
     /// the box as a draft you can edit. Nothing is sent on its own.
     private func nextStepsChips(_ steps: [String]) -> some View {
-        // One per line, in full, so each can be read before tapping.
-        VStack(alignment: .leading, spacing: 5) {
+        // Folded to one line until you open it, so suggestions don't take over the screen;
+        // open, one per line, in full, so each can be read before tapping.
+        let expanded = expandedSteps == steps
+        return VStack(alignment: .leading, spacing: 5) {
             HStack {
-                Text("Next").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                Spacer()
+                Button {
+                    withAnimation(.snappy(duration: 0.2)) { expandedSteps = expanded ? nil : steps }
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "chevron.right").font(.caption2.weight(.semibold))
+                            .rotationEffect(.degrees(expanded ? 90 : 0))
+                        Text("Next steps · \(steps.count)").font(.caption.weight(.semibold))
+                    }
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(expanded ? "Hide suggested next steps" : "Show \(steps.count) suggested next steps")
                 Button { dismissedSteps = steps } label: {
                     Image(systemName: "xmark").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
                         .frame(width: 28, height: 22)
@@ -698,7 +714,7 @@ struct ChatDetailView: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Dismiss suggestions")
             }
-            ForEach(steps, id: \.self) { step in
+            if expanded { ForEach(steps, id: \.self) { step in
                 Button { draft = step } label: {
                     Text(step).font(.footnote)
                         .multilineTextAlignment(.leading)
@@ -709,7 +725,7 @@ struct ChatDetailView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityHint("Puts it in the message box to edit")
-            }
+            } }
         }
         .padding(.horizontal, 4)
     }
