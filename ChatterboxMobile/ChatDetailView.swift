@@ -781,8 +781,9 @@ struct ChatDetailView: View {
         GolemVoice.shared.stop()
     }
 
-    /// Reads the newest reply as it streams in, and opens the ears while he talks so you can
-    /// interrupt him. Replies already here when the chat opened stay quiet.
+    /// Reads the newest reply as it streams in, with the microphone warm so your turn starts the
+    /// moment he's done. He always finishes unless you press stop or mute. Replies already here
+    /// when the chat opened stay quiet.
     private func followReplyAloud() {
         guard let reply = latestReply, scenePhase == .active, !voiceEnded else { return }
         // The first reply observed was already here.
@@ -812,6 +813,8 @@ struct ChatDetailView: View {
     /// One finished utterance: send it and keep listening on the same microphone. Silence while he
     /// talks just keeps listening; silence on your turn ends the conversation.
     private func heardUtterance(_ spoken: String) {
+        // Heard while he was talking: not yours to send (and possibly his own voice).
+        if GolemVoice.shared.speakingID != nil, dictation.conversationActive { dictation.nextUtterance(); return }
         if spoken.isEmpty {
             if GolemVoice.shared.speakingID != nil, dictation.conversationActive { dictation.nextUtterance(); return }
             endVoiceConversation()
@@ -842,16 +845,12 @@ struct ChatDetailView: View {
         let session = voiceGeneration
         voiceInput = composerState.inputGeneration
         listeningTask = Task {
-            let started = await dictation.startConversation(giveUp: 30, onSpeechDetected: {
-                // Talking over him: he stops, and what you say still sends on the pause.
-                guard session == voiceGeneration, GolemVoice.shared.speakingID != nil else { return }
-                GolemVoice.shared.stop()
-                voiceReply = nil
-            }, onUtterance: { spoken in
+            // Speech while he talks doesn't stop him (only stop and mute do), and isn't typed or sent.
+            let started = await dictation.startConversation(giveUp: 30, onSpeechDetected: {}, onUtterance: { spoken in
                 guard session == voiceGeneration else { return }
                 heardUtterance(spoken)
             }, onText: { spoken in
-                guard session == voiceGeneration, let input = voiceInput else { return }
+                guard session == voiceGeneration, let input = voiceInput, GolemVoice.shared.speakingID == nil else { return }
                 composerState.applyTranscription(spoken, prefix: "", generation: input)
             })
             guard session == voiceGeneration else { return }
