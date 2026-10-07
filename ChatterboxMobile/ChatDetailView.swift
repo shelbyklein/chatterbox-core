@@ -41,6 +41,10 @@ struct ChatDetailView: View {
     @Namespace private var golemSpace
     /// Next Steps suggestions you closed on this device, until new ones arrive.
     @State private var dismissedSteps: [String]?
+    #if GOLEM_APP
+    /// Golem's quick prompts (Settings → Quick Prompts).
+    @AppStorage(GolemQuickPrompts.key) private var quickPromptData = Data()
+    #endif
     private var detail: Companion.ChatDetail? { history.detail }
     /// The newest reply that has finished streaming.
     private var latestFinishedReply: Companion.Item? {
@@ -646,6 +650,29 @@ struct ChatDetailView: View {
         .padding(.horizontal, 4)
     }
 
+    #if GOLEM_APP
+    /// Golem's quick prompts: a tap sends the prompt, with `{since}` and `{now}` filled in.
+    private var quickPromptChips: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(GolemQuickPrompts.decode(quickPromptData)) { prompt in
+                    Button {
+                        draft = GolemQuickPrompts.expand(prompt.text)
+                        Task { await send() }
+                    } label: {
+                        Text(prompt.label).font(.footnote.weight(.medium))
+                            .padding(.horizontal, 12).padding(.vertical, 7)
+                            .background(Capsule().fill(Color(uiColor: .secondarySystemBackground)))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("Sends it to Golem")
+                }
+            }
+            .padding(.horizontal, 4)
+        }
+    }
+    #endif
+
     private var composer: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let detail, detail.turnStartedAt != nil || !(detail.backgroundTasks ?? []).isEmpty || detail.contextFraction != nil {
@@ -653,6 +680,10 @@ struct ChatDetailView: View {
             }
             if !pendingImages.isEmpty { pendingTray }
             if let steps = detail?.nextSteps, !steps.isEmpty, !summary.isRunning, dismissedSteps != steps { nextStepsChips(steps) }
+            #if GOLEM_APP
+            if isConversation, !summary.isRunning, draft.isEmpty, !dictation.isListening,
+               !GolemQuickPrompts.decode(quickPromptData).isEmpty { quickPromptChips }
+            #endif
             if dictation.isListening {
                 Label(listeningHint, systemImage: "waveform")
                     .font(.caption).foregroundStyle(.red)
