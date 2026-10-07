@@ -24,6 +24,11 @@ final class ChatSession: Identifiable {
                     record.turnDates = Array(((record.turnDates ?? []) + [Date()]).suffix(500))
                 }
             } else {
+                if !RuntimeClient.usesDaemon {
+                    let event = Companion.TurnCompletion(id: UUID(), chatID: id, title: title,
+                                                         backend: record.backend.rawValue, endedAt: Date())
+                    record.turnCompletions = Array(((record.turnCompletions ?? []) + [event]).suffix(500))
+                }
                 noteTurnDuration()
             }
         }

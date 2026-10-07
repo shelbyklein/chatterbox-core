@@ -241,7 +241,31 @@ final class CompanionServer {
 
     // MARK: - Routes
 
-    private func respondAsync(to request:HTTPRequest,local:Bool) async -> HTTPResponse {
+    func respondAsync(to request:HTTPRequest,local:Bool) async -> HTTPResponse {
+        let restartParts = request.path.split(separator: "/").map(String.init)
+        if request.method == "POST", restartParts.count == 4,
+           restartParts[0] == "v1", restartParts[1] == "chats", restartParts[3] == "restart" {
+            guard !local else { return .error(403, "Only a paired mobile app can restart a thread here.") }
+            guard let device = authorize(request) else { return .error(401, "Pair this device again.") }
+            let product = request.headers["x-chatterbox-product"] ?? "chatterbox"
+            guard (device.product ?? "chatterbox") == product else { return .error(403, "This pairing belongs to another app.") }
+            guard let model, let id = UUID(uuidString: restartParts[2]), let target = model.sessions.first(where: { $0.id == id && $0.isDot == (product == "golem") }) else {
+                return .error(404, "That chat is gone.")
+            }
+            #if CHATTERBOX_HEADLESS
+            if product == "golem", model.runtime.state.integrationEnabled != true { return .error(403, "Golem integration is disabled.") }
+            #endif
+            var response = await mutations.respondAsync(device: device.id, request: request) {
+                guard !target.isRestartingThread, !target.awaitingHostResume else { return .error(409, "This thread is reconnecting. Try again shortly.") }
+                await target.restartThread()
+                guard target.threadRestartStatus?.hasPrefix("Thread restarted.") == true else {
+                    return .error(409, target.threadRestartStatus ?? "Couldn't restart. History and draft are kept.")
+                }
+                return .json(CompanionMapper.detail(target, model: model))
+            }
+            response.headers.merge(mutations.headers()) { _, new in new }
+            return response
+        }
         #if CHATTERBOX_HEADLESS
         let parts=request.path.split(separator:"/").map(String.init)
         if parts.count==3,parts[0]=="v1",parts[1]=="golem",["health","control"].contains(parts[2]) {
@@ -656,7 +680,16 @@ enum CompanionMapper {
         let chats = model.sidebarChats.filter { !$0.items.isEmpty || $0.record.sidechatOf != nil || !model.sidechats(of: $0).isEmpty }
             .flatMap { [$0] + model.sidechats(of: $0) }
         if !chats.isEmpty { groups.append(.init(id: "chats", kind: .chats, title: "Chats", chats: chats.map(summary))) }
-        return Companion.ChatList(revision: model.companionListRevision, groups: groups, pins: PinStore.shared.globalPins.map(pin))
+        var activity: [Companion.TurnCompletion] = []
+        for session in model.sessions where !session.isDot {
+            activity.append(contentsOf: session.record.turnCompletions ?? [])
+        }
+        activity.sort { a, b in
+            if a.endedAt == b.endedAt { return a.id.uuidString < b.id.uuidString }
+            return a.endedAt > b.endedAt
+        }
+        return Companion.ChatList(revision: model.companionListRevision, groups: groups,
+                                  pins: PinStore.shared.globalPins.map(pin), activity: Array(activity.prefix(500)))
     }
 
     static func pin(_ pin: Pin) -> Companion.Pin {

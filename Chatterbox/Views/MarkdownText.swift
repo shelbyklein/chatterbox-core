@@ -234,12 +234,15 @@ struct MarkdownText: View {
             if let intent = run.inlinePresentationIntent, intent.contains(.code) {
                 result[run.range].font = style.code
                 result[run.range].backgroundColor = Color.primary.opacity(0.09)
-                if run.link == nil, let paths, let url = paths.url(for: String(result[run.range].characters)) {
-                    result[run.range].link = url
-                    result[run.range].underlineStyle = Text.LineStyle(pattern: .dot)
-                }
             }
-            if run.link != nil {
+            // A standalone path may be plain or bold, rather than a code span.
+            // Resolve it on disk before making it clickable, and preserve explicit links.
+            if run.link == nil, let paths, let url = paths.url(for: String(result[run.range].characters)) {
+                result[run.range].link = url
+                result[run.range].foregroundColor = Color.highlight
+                result[run.range].underlineStyle = run.inlinePresentationIntent?.contains(.code) == true
+                    ? Text.LineStyle(pattern: .dot) : .single
+            } else if run.link != nil {
                 result[run.range].foregroundColor = Color.highlight
                 result[run.range].underlineStyle = .single
             }

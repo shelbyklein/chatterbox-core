@@ -205,6 +205,8 @@ struct ConversationRecord: Codable {
     var turnStartedAt: Date?
     /// When each of the latest 500 turns started, for sorting by how active a chat is.
     var turnDates: [Date]?
+    /// Exact completion times; optional for conversations saved before the activity timeline.
+    var turnCompletions: [Companion.TurnCompletion]?
     /// Context usage per agent ("claude"/"codex") as last reported, so the meter shows at once.
     var savedContext: [String: ContextUsage]?
     /// "!" commands you ran and their output, delivered with your next message to the agent.

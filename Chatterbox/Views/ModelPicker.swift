@@ -6,30 +6,80 @@ struct ModelPicker: View {
     let session: ChatSession
     /// Toolbar style: an icon and "Model". Otherwise the full summary with the agent's color.
     var compact = false
+    /// Composer: one current selection, with a left chevron revealing presets, then an up chevron opening the picker.
+    var selectionPill = false
     let summary: String
     let color: Color
+    var details: String? = nil
     /// Bumped by Chat → Choose Model (⌘⇧M) to toggle the popover.
     var openRequest = 0
     var handlesKeyboardRequest: () -> Bool = { true }
     @State private var isOpen = false
+    @State private var showingPresets = false
+    @State private var selectionHovered = false
+    private let appearance = ReaderStyleSettings()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        Button { isOpen.toggle() } label: {
-            if compact {
-                Label("Model", systemImage: "cpu")
-            } else {
+        Group {
+            if selectionPill {
                 HStack(spacing: 6) {
-                    Circle().fill(color).frame(width: 8, height: 8)
-                    // Truncates rather than disappearing when space is tight.
-                    Text(summary).lineLimit(1).truncationMode(.tail)
-                    Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
+                    Button {
+                        if showingPresets { isOpen.toggle() } else { showingPresets = true }
+                    } label: {
+                        Image(systemName: showingPresets ? "chevron.up" : "chevron.left")
+                            .font(.system(size: 10, weight: .semibold))
+                            .frame(width: 20, height: 24).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .opacity(showingPresets || selectionHovered ? 1 : 0)
+                    .animation(.easeOut(duration: 0.12), value: selectionHovered)
+                    .accessibilityLabel(showingPresets ? "Choose model and effort" : "Show presets")
+                    .help(showingPresets ? "Choose model and effort" : "Show presets")
+                    if showingPresets {
+                        ScrollView(.horizontal) {
+                            PresetPills(session: session, style: appearance.style,
+                                        onSelect: { showingPresets = false }, animateReveal: true, excludingCurrent: true)
+                        }
+                        .scrollIndicators(.hidden).fixedSize(horizontal: false, vertical: true)
+                        .transition(.opacity)
+                        Button { showingPresets = false } label: {
+                            Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
+                                .frame(width: 20, height: 24).contentShape(Rectangle())
+                        }.buttonStyle(.plain).help("Hide presets").accessibilityLabel("Hide presets")
+                    }
+                        Button { showingPresets.toggle() } label: {
+                            HStack(spacing: 5) {
+                                Image(session.record.provider.iconName).resizable().scaledToFit().frame(width: 12, height: 12)
+                                    .foregroundStyle(color)
+                                    .help(details ?? summary)
+                                Text(summary).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                            }
+                            .padding(.horizontal, 9).padding(.vertical, 4)
+                            .background(Capsule().fill(color.opacity(0.15)))
+                            .overlay(Capsule().strokeBorder(color.opacity(0.65), lineWidth: 1))
+                        }.buttonStyle(.plain).help(details ?? summary)
+                        .transition(.identity)
                 }
-                .foregroundStyle(.secondary)
                 .contentShape(Rectangle())
+                .onHover { selectionHovered = $0 }
+                .animation(.easeOut(duration: reduceMotion ? 0.12 : 0.24), value: showingPresets)
+            } else {
+                Button { isOpen.toggle() } label: {
+                    if compact {
+                        Label("Model", systemImage: "cpu")
+                    } else {
+                        HStack(spacing: 6) {
+                            Circle().fill(color).frame(width: 8, height: 8)
+                            Text(summary).lineLimit(1).truncationMode(.tail)
+                            Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
+                        }.foregroundStyle(.secondary).contentShape(Rectangle())
+                    }
+                }
+                .buttonStyle(compact ? AnyButtonStyle(.automatic) : AnyButtonStyle(.plain))
+                .help(summary + ". Click to change (\u{2318}\u{21E7}M).")
             }
         }
-        .buttonStyle(compact ? AnyButtonStyle(.automatic) : AnyButtonStyle(.plain))
-        .help(summary + ". Click to change (\u{2318}\u{21E7}M).")
         .onChange(of: openRequest) {
             if isOpen || handlesKeyboardRequest() { isOpen.toggle() }
         }
@@ -87,6 +137,26 @@ struct ModelPopover: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
+                    if !ModelPresets.shared.presets.isEmpty {
+                        Text("Presets").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        ForEach(ModelPresets.shared.presets) { preset in
+                            Button {
+                                ModelPresets.shared.apply(preset, to: session)
+                                close()
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Image(preset.provider.iconName).resizable().scaledToFit().frame(width: 14, height: 14)
+                                    Text(preset.displayName)
+                                    Spacer()
+                                    if ModelPresets.shared.matches(preset, session: session) { Image(systemName: "checkmark") }
+                                }.padding(.vertical, 5).contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(session.isRunning && preset.backend != active)
+                            .help(preset.configurationDescription)
+                        }
+                        Divider()
+                    }
                     if tab == .claude { claudeRows } else { codexRows }
                 }
             }

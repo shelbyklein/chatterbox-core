@@ -34,16 +34,32 @@ struct ToneMenu: View {
 struct PresetPills: View {
     let session: ChatSession
     let style: ReaderStyle
+    var onSelect: () -> Void = {}
+    var animateReveal = false
+    var excludingCurrent = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var revealed = false
     private let presets = ModelPresets.shared
     @State private var renaming: ModelPreset?
     @State private var newTitle = ""
     @State private var dropTarget: UUID?
 
+    private var visiblePresets: [ModelPreset] {
+        presets.presets.filter { !excludingCurrent || !presets.matches($0, session: session) }
+    }
+
     var body: some View {
         HStack(spacing: 6) {
-            // Dot only takes Claude presets.
-            ForEach(presets.presets) { preset in pill(preset) }
+            ForEach(Array(visiblePresets.enumerated()), id: \.element.id) { index, preset in
+                pill(preset)
+                    .opacity(animateReveal && !revealed ? 0 : 1)
+                    .offset(x: animateReveal && !reduceMotion && !revealed ? 14 : 0)
+                    .animation(animateReveal ? .easeOut(duration: reduceMotion ? 0.12 : 0.2)
+                        .delay(reduceMotion ? 0 : Double(visiblePresets.count - 1 - index) * 0.045) : nil,
+                               value: revealed)
+            }
         }
+        .onAppear { revealed = true }
         .alert("Rename Preset", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Name", text: $newTitle)
             Button("Rename") {
@@ -57,17 +73,17 @@ struct PresetPills: View {
         let active = presets.matches(preset, session: session)
         let color = style.color(for: preset.provider)
         let targeted = dropTarget == preset.id
-        return Button { presets.apply(preset, to: session) } label: {
-            HStack(spacing: 4) {
+        return Button { presets.apply(preset, to: session); onSelect() } label: {
+            HStack(spacing: 5) {
                 // Its provider's mark, in that provider's color.
                 Image(preset.provider.iconName).resizable().scaledToFit()
-                    .frame(width: 10, height: 10)
+                    .frame(width: 12, height: 12)
                     .foregroundStyle(color)
                 Text(preset.displayName).lineLimit(1)
             }
                 .fixedSize()
-                .padding(.horizontal, 7)
-                .padding(.vertical, 2)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 4)
                 .background(Capsule().fill(color.opacity(active ? 0.3 : 0.1)))
                 .overlay(Capsule().strokeBorder(active || targeted ? color : .clear, lineWidth: 1))
                 .foregroundStyle(active ? Color.primary : Color.secondary)
@@ -94,5 +110,195 @@ struct PresetPills: View {
             presets.move(id, to: preset.id)
             return true
         } isTargeted: { dropTarget = $0 ? preset.id : (dropTarget == preset.id ? nil : dropTarget) }
+    }
+}
+
+/// User notes live separately from agent transcripts and message drafts.
+struct PinnedNote: Codable, Identifiable, Equatable {
+    var id = UUID()
+    var text: String
+    var createdAt = Date()
+}
+
+@MainActor @Observable final class PinnedNotesStore {
+    static let shared = PinnedNotesStore()
+    private let defaults: UserDefaults
+    private(set) var notes: [String: [PinnedNote]]
+    private(set) var drafts: [String: String]
+    init(defaults: UserDefaults = AppPreferences.defaults) {
+        self.defaults = defaults
+        notes = defaults.data(forKey: "macPinnedNotes").flatMap { try? JSONDecoder().decode([String: [PinnedNote]].self, from: $0) } ?? [:]
+        drafts = defaults.dictionary(forKey: "macPinnedNoteDrafts") as? [String: String] ?? [:]
+    }
+    static func scope(for record: ConversationRecord) -> String {
+        if let folder = record.worktreeOf ?? record.sidechatProjectFolder ?? record.projectFolder {
+            return "project:" + AppModel.normalize(folder)
+        }
+        return "chat:" + record.id.uuidString
+    }
+    func setDraft(_ text: String, for scope: String) {
+        drafts[scope] = text.isEmpty ? nil : text
+        defaults.set(drafts, forKey: "macPinnedNoteDrafts")
+    }
+    @discardableResult func add(for scope: String) -> Bool {
+        let text = (drafts[scope] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return false }
+        notes[scope, default: []].insert(PinnedNote(text: text), at: 0)
+        save(); setDraft("", for: scope)
+        return true
+    }
+    func remove(_ id: UUID, for scope: String) {
+        notes[scope]?.removeAll { $0.id == id }; save()
+    }
+    private func save() {
+        if let data = try? JSONEncoder().encode(notes) { defaults.set(data, forKey: "macPinnedNotes") }
+    }
+}
+
+struct ChatNotes: View {
+    let scope: String
+    let project: Bool
+    var panelWidth: CGFloat = 280
+    @State var expanded = false
+    @State private var store = PinnedNotesStore.shared
+    @Environment(\.colorScheme) private var scheme
+    private var entries: [PinnedNote] { store.notes[scope] ?? [] }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) { expanded.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "note.text")
+                    if expanded { Text(project ? "Project notes" : "Chat notes").font(.headline) }
+                    else if !entries.isEmpty { Text("\(entries.count)").font(.caption.monospacedDigit()) }
+                    if expanded { Spacer(); Image(systemName: "chevron.up").font(.caption) }
+                }
+                .padding(expanded ? 0 : 8)
+            }
+            .buttonStyle(.plain).help(expanded ? "Collapse notes" : "Open notes")
+            .accessibilityLabel(expanded ? "Collapse notes" : "Open notes")
+            if expanded {
+                TextEditor(text: Binding(get: { store.drafts[scope] ?? "" }, set: { store.setDraft($0, for: scope) }))
+                    .font(.body).scrollContentBackground(.hidden)
+                    .padding(6).frame(height: 90)
+                    .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+                    .accessibilityLabel("Write a note")
+                HStack {
+                    Text("Notes are saved on this Mac.").font(.caption2).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Add Note") { store.add(for: scope) }
+                        .disabled((store.drafts[scope] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                if entries.isEmpty { Text("No notes yet").font(.caption).foregroundStyle(.secondary) }
+                else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 10) {
+                            ForEach(entries) { note in
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text(note.text).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                                    HStack {
+                                        Text(note.createdAt, format: .dateTime.month(.abbreviated).day()).font(.caption2).foregroundStyle(.secondary)
+                                        Spacer()
+                                        Button { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(note.text, forType: .string) } label: { Image(systemName: "doc.on.doc") }.help("Copy note")
+                                        Button { store.remove(note.id, for: scope) } label: { Image(systemName: "trash") }.help("Delete note")
+                                    }.buttonStyle(.borderless)
+                                }.padding(10).background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 7))
+                            }
+                        }
+                    }.frame(maxHeight: 300)
+                }
+            }
+        }
+        .padding(expanded ? 14 : 0)
+        .frame(width: expanded ? panelWidth : nil, alignment: .leading)
+        .background(scheme == .dark ? Color(white: 0.10) : Color(white: 0.97), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12)))
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+struct FinishedChatsBell: View {
+    @Environment(AppModel.self) private var model
+    @State private var open = false
+    private var chats: [ChatSession] { Attention.shared.finishedChats(in: model) }
+    var body: some View {
+        Button { open.toggle() } label: {
+            HStack(spacing: 4) {
+                Image(systemName: chats.isEmpty ? "bell" : "bell.badge")
+                if !chats.isEmpty { Text("\(chats.count)").font(.caption.weight(.semibold).monospacedDigit()) }
+            }.padding(.horizontal, 4)
+        }
+        .buttonStyle(.plain)
+        .help("\(chats.count) unseen finished chats · \(Attention.shared.workingChats(in: model).count) working")
+        .accessibilityLabel("Finished chats, \(chats.count) unseen")
+        .popover(isPresented: $open, arrowEdge: .bottom) {
+            FinishedChatsList { open = false }.environment(model)
+        }
+    }
+}
+
+struct FinishedChatsList: View {
+    @Environment(AppModel.self) private var model
+    var close: () -> Void = {}
+    private let appearance = ReaderStyleSettings()
+    private var chats: [ChatSession] { Attention.shared.finishedChats(in: model) }
+    private var working: [ChatSession] { Attention.shared.workingChats(in: model) }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Chat activity").font(.headline)
+            Text("Finished replies and sessions working now").font(.caption).foregroundStyle(.secondary)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Finished · \(chats.count)").font(.subheadline.weight(.semibold))
+                    if chats.isEmpty {
+                        Label("You're caught up", systemImage: "checkmark.circle")
+                            .font(.caption).foregroundStyle(.secondary).padding(.vertical, 8)
+                    } else {
+                        ForEach(chats) { session in activityRow(session, running: false) }
+                    }
+                    Divider().padding(.vertical, 6)
+                    Text("Working · \(working.count)").font(.subheadline.weight(.semibold))
+                    if working.isEmpty {
+                        Text("No sessions are working right now").font(.caption).foregroundStyle(.secondary).padding(.vertical, 8)
+                    } else {
+                        ForEach(working) { session in activityRow(session, running: true) }
+                    }
+                }
+            }.frame(maxHeight: 420)
+        }.padding(16).frame(width: 330)
+    }
+    private func activityRow(_ session: ChatSession, running: Bool) -> some View {
+        Button {
+            let opened = running ? Attention.shared.openWorkingChat(session.id, in: model)
+                                 : Attention.shared.openFinishedChat(session.id, in: model)
+            if opened { close() }
+        } label: {
+            HStack(alignment: .top, spacing: 10) {
+                if running {
+                    ActivitySpinner(color: appearance.style.color(for: session.record.provider))
+                        .frame(width: 16, height: 16)
+                } else {
+                    Image(session.record.provider.iconName).resizable().scaledToFit()
+                        .frame(width: 16, height: 16)
+                        .foregroundStyle(appearance.style.color(for: session.record.provider))
+                }
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(session.record.projectFolder != nil ? session.projectName : session.title)
+                        .font(.body.weight(.semibold)).lineLimit(1)
+                    if running {
+                        Text("\(session.record.provider.label) is working").font(.caption).foregroundStyle(.secondary)
+                        if let started = session.record.turnStartedAt {
+                            Text(started, style: .timer).font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Text(session.items.last(where: { $0.kind == .assistant && $0.phase == .final })?.text ?? "Reply finished")
+                            .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                        Text(session.record.updatedAt, style: .relative).font(.caption2).foregroundStyle(.secondary)
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+            }.padding(10).contentShape(Rectangle())
+        }.buttonStyle(.plain)
     }
 }

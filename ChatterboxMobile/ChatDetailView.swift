@@ -41,6 +41,9 @@ struct ChatDetailView: View {
     @Namespace private var golemSpace
     /// Next Steps suggestions you closed on this device, until new ones arrive.
     @State private var dismissedSteps: [String]?
+    @State private var confirmingRestart = false
+    @State private var controllingSession = false
+    @State private var sessionControlStatus: String?
     private var detail: Companion.ChatDetail? { history.detail }
     /// The newest reply that has finished streaming.
     private var latestFinishedReply: Companion.Item? {
@@ -194,6 +197,12 @@ struct ChatDetailView: View {
         .navigationTitle(chatNavigationTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { chatToolbar }
+        .alert("Restart Thread?", isPresented: $confirmingRestart) {
+            Button("Restart Thread") { controlSession(restart: true) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This interrupts any active reply and reconnects this session. History and your draft are kept; send a message to continue.")
+        }
         .tint(isConversation ? Color.primary : agentAccent)
         .sheet(isPresented: $showingSettings) {
             if let options = detail?.options {
@@ -512,6 +521,11 @@ struct ChatDetailView: View {
                 Label("Refresh Chat", systemImage: "arrow.clockwise")
             }
             .disabled(history.refreshing)
+            Button { controlSession(restart: false) } label: { Label("Stop Reply", systemImage: "stop.circle") }
+                .disabled(!summary.isRunning || controllingSession)
+            Button { confirmingRestart = true } label: { Label("Restart Thread", systemImage: "arrow.triangle.2.circlepath") }
+                .disabled(detail == nil || controllingSession)
+            if let sessionControlStatus { Text(sessionControlStatus) }
             Button { showingSettings = true } label: { Label("Chat Settings", systemImage: "slider.horizontal.3") }
                 .disabled(detail?.options == nil)
             Button { newTitle = summary.title; renaming = true } label: { Label("Rename", systemImage: "pencil") }
@@ -556,6 +570,24 @@ struct ChatDetailView: View {
     }
 
     /// Runs a call to the Mac and shows the chat as it comes back.
+    private func controlSession(restart: Bool) {
+        guard !controllingSession else { return }
+        controllingSession = true
+        sessionControlStatus = restart ? "Restarting…" : "Stopping…"
+        Task {
+            defer { controllingSession = false }
+            do {
+                let result = restart ? try await store.restart(chat.id) : try await store.stop(chat.id)
+                history.apply(result)
+                sessionControlStatus = restart ? "Thread restarted. History kept." : "Stop requested."
+                error = nil
+            } catch {
+                sessionControlStatus = nil
+                self.error = error.localizedDescription
+            }
+        }
+    }
+
     private func perform(_ call: @escaping () async throws -> Companion.ChatDetail) {
         Task {
             do {
@@ -920,7 +952,7 @@ struct ChatDetailView: View {
             #endif
 
             if summary.isRunning {
-                Button { perform { try await store.stop(chat.id) } } label: {
+                Button { controlSession(restart: false) } label: {
                     Image(systemName: "stop.circle.fill")
                         .resizable()
                         .scaledToFit()
@@ -929,6 +961,7 @@ struct ChatDetailView: View {
                         .contentShape(Rectangle())
                         .foregroundStyle(.secondary)
                 }
+                .disabled(controllingSession)
                 .accessibilityLabel("Stop")
             }
 

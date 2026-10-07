@@ -177,7 +177,11 @@ final class PinStore {
         Task {
             // The icons the page names come first (apple-touch-icon is the largest), then
             // /favicon.ico: plenty of sites, Spoolside among them, have only the former.
-            let candidates = await Self.declaredIcons(page: url) + [root.appendingPathComponent("favicon.ico")]
+            // GitHub's touch icon includes a filled circular background. PinIcon tints
+            // GitHub as a template, so use its transparent mark rather than that circle.
+            let isGitHub = ["github.com", "www.github.com"].contains(host.lowercased())
+            let candidates = isGitHub ? [root.appendingPathComponent("favicon.ico")]
+                : await Self.declaredIcons(page: url) + [root.appendingPathComponent("favicon.ico")]
             for candidate in candidates {
                 if let image = await Self.image(at: candidate) { favicons[host] = image; return }
             }

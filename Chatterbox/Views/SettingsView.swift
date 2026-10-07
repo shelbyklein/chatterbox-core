@@ -14,6 +14,7 @@ struct SettingsView: View {
     @AppStorage("defaultEffort") private var defaultEffort = ""
     @AppStorage("codexDefaultModel") private var codexDefaultModel = ""
     @AppStorage("codexDefaultEffort") private var codexDefaultEffort = ""
+    @AppStorage(ModelPresets.newStudioKey) private var newStudioPreset = ""
     /// The preset open for editing, if any.
     @State private var editingPreset: UUID?
     @AppStorage("showAllCodexModels") private var showAllCodexModels = false
@@ -231,6 +232,22 @@ struct SettingsView: View {
                 Picker("Codex mode", selection: $codexDefaultMode) {
                     ForEach(PermissionModes.codex) { Text($0.title).tag($0.id) }
                 }
+            }
+            Section {
+                Picker("Start with", selection: $newStudioPreset) {
+                    let maestro = ModelPresets.shared.presets.first { $0.nickname?.caseInsensitiveCompare(ModelPresets.newStudioDefaultNickname) == .orderedSame }
+                    Text(maestro.map { "\($0.displayName) (default)" } ?? "Maestro (default, no preset has that nickname)").tag("")
+                    Text("Same as new chats").tag("none")
+                    Divider()
+                    ForEach(ModelPresets.shared.presets.filter { $0.id != maestro?.id }) { preset in
+                        Text(preset.displayName).tag(preset.id.uuidString)
+                    }
+                }
+            } header: {
+                Text("New Studios")
+            } footer: {
+                Text("The preset a new Studio's first chat uses. Chats you add to a Studio later use the new-chat settings above.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
         .formStyle(WideFormStyle())

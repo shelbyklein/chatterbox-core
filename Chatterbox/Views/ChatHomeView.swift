@@ -23,6 +23,7 @@ struct ThreadCard: View {
     @AppStorage(ProjectSort.key) private var projectSort = ProjectSort.recent.rawValue
     @Environment(\.colorScheme) private var colorScheme
     @Environment(AppModel.self) private var model
+    private let appearance = ReaderStyleSettings()
 
     private var title: String { session.isDot ? model.dotName : (session.record.projectFolder != nil ? session.projectName : session.title) }
     private var status: String {
@@ -34,7 +35,22 @@ struct ThreadCard: View {
         return "Ready"
     }
     private var messageCount: Int { session.items.filter { $0.kind == .user || $0.kind == .assistant }.count }
-    private var tint: Color { session.isWaitingOnYou ? .orange : (session.record.provider == .codex ? .green : .orange) }
+    private var tint: Color { appearance.style.color(for: session.record.provider) }
+    @ViewBuilder private var activityIndicator: some View {
+        if session.isRunning {
+            ActivitySpinner(color: tint).frame(width: 10, height: 10)
+                .help("\(session.record.provider.label) is working")
+        } else {
+            Circle().fill(session.isWaitingOnYou ? .orange : Attention.shared.unread.contains(session.id) ? .blue : .secondary.opacity(0.4))
+                .frame(width: 6, height: 6)
+        }
+    }
+    // Cards are also used outside List, where listRowBackground cannot highlight them.
+    // Waiting on the user takes priority over the selected-card appearance.
+    private var cardBackground: Color {
+        if session.isWaitingOnYou { return Color.yellow.opacity(colorScheme == .dark ? 0.22 : 0.18) }
+        return selected ? .white : Color.primary.opacity(hovered ? 0.10 : 0.055)
+    }
     private var preview: String {
         guard let text = session.items.last(where: { $0.kind == .assistant || $0.kind == .user })?.text else { return "No messages yet" }
         return ChatSession.firstSentence(of: text, limit: expanded ? 320 : 110) ?? "Open to view the conversation"
@@ -97,11 +113,10 @@ struct ThreadCard: View {
                     ZStack(alignment: .topTrailing) {
                         tileFace
                             .frame(width: 64 * scale, height: 64 * scale)
-                            .background(selected && !session.isWaitingOnYou ? Color.white : Color.primary.opacity(hovered ? 0.10 : 0.055), in: RoundedRectangle(cornerRadius: 14))
+                            .background(cardBackground, in: RoundedRectangle(cornerRadius: 14))
                             .clipShape(RoundedRectangle(cornerRadius: 14))
-                            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(session.isWaitingOnYou ? Color.orange : Color.primary.opacity(0.16)))
-                        Circle().fill(session.isWaitingOnYou ? .orange : session.isRunning ? tint : Attention.shared.unread.contains(session.id) ? .blue : .secondary.opacity(0.4))
-                            .frame(width: 6, height: 6).padding(8)
+                            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(session.isWaitingOnYou ? Color.orange : Color.primary.opacity(0.16), lineWidth: session.isWaitingOnYou ? 2 : 1))
+                        activityIndicator.padding(8)
                     }
                     Text(title).font(.system(size: 8.5 * scale, weight: .medium)).lineLimit(2)
                         .multilineTextAlignment(.center).frame(height: 24 * scale, alignment: .top)
@@ -121,8 +136,7 @@ struct ThreadCard: View {
                     #endif
                     Spacer(minLength: 0)
                     if expanded { Text(status).font(.system(size: 10.5 * scale, weight: .medium)).lineLimit(1) }
-                    Circle().fill(session.isWaitingOnYou ? .orange : session.isRunning ? tint : Attention.shared.unread.contains(session.id) ? .blue : .secondary.opacity(0.4))
-                        .frame(width: 6, height: 6)
+                    activityIndicator
                 }
                 Text(title).font(.system(size: (expanded ? 15 : 11.5) * scale, weight: .semibold))
                     .lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
@@ -164,14 +178,19 @@ struct ThreadCard: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             // Room for tags and status lines: a card grows to fit them.
             .frame(minHeight: (expanded ? 250 : 144) * scale)
-            .background(selected && !session.isWaitingOnYou ? Color.white : Color.primary.opacity(hovered ? 0.10 : 0.055), in: RoundedRectangle(cornerRadius: 12))
+            .background(cardBackground, in: RoundedRectangle(cornerRadius: 12))
             .overlay {
-                RoundedRectangle(cornerRadius: 12).strokeBorder(session.isWaitingOnYou ? Color.orange : Color.primary.opacity(hovered ? 0.28 : 0.12), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 12).strokeBorder(session.isWaitingOnYou ? Color.orange : Color.primary.opacity(hovered ? 0.28 : 0.12), lineWidth: session.isWaitingOnYou ? 2 : 1)
             }
             .contentShape(RoundedRectangle(cornerRadius: 12))
             }
         }
         .buttonStyle(.plain)
+        .overlay(alignment: .bottomTrailing) {
+            if !iconOnly {
+                LinkedStudioShortcut(folder: session.record.projectFolder).padding(10 * scale)
+            }
+        }
         .environment(\.colorScheme, selected && !session.isWaitingOnYou ? .light : colorScheme)
         #if DEBUG
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { MacHomeDebug.cards[session.id] = $0 }
@@ -338,8 +357,6 @@ struct ChatHomeView: View {
                     Spacer()
                     cardSizeControl
                     Button("New Studio", systemImage: "plus") { newStudio() }
-                    Button("Command Center", systemImage: "rectangle.split.2x2") { model.showingCommandCenter = true }
-                    Button("Back to Chat", systemImage: "arrow.left") { model.showingHome = false }
                 }
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 16) { searchField; filterPicker.frame(width: 300) }
@@ -466,20 +483,20 @@ struct ChatHomeView: View {
 
 struct DesktopOverviewControls: View {
     @Environment(AppModel.self) private var model
-    @AppStorage("macSidebarCards") private var cards = false
+    @AppStorage("macProjectsSidebarCards") private var projectsCards = true
+    @AppStorage("macChatsSidebarCards") private var chatsCards = false
+    @AppStorage("macStudioSidebarCards") private var studioCards = false
+    private var cards: Binding<Bool> {
+        Binding(get: { model.studioSidebarID != nil ? studioCards : model.showingChatsSidebar ? chatsCards : projectsCards },
+                set: { if model.studioSidebarID != nil { studioCards = $0 } else if model.showingChatsSidebar { chatsCards = $0 } else { projectsCards = $0 } })
+    }
     var body: some View {
         HStack(spacing: 8) {
-            Picker("Sidebar view", selection: $cards) {
+            Picker("Sidebar view", selection: cards) {
                 Image(systemName: "list.bullet").tag(false).accessibilityLabel("List")
                 Image(systemName: "square.grid.2x2").tag(true).accessibilityLabel("Cards")
             }.pickerStyle(.segmented).labelsHidden().frame(width: 86).help("List or cards")
             Spacer()
-            Button { model.showingHome = true; model.showingSettings = false } label: {
-                Label("Studios", systemImage: "paintpalette")
-            }.buttonStyle(.borderless).help("Your Studios, as thumbnails")
-            #if DEBUG
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { MacHomeDebug.home = $0 }
-            #endif
         }
     }
 }

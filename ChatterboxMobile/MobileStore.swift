@@ -170,6 +170,10 @@ final class MobileStore {
         try await call("/v1/chats/\(id.uuidString)/stop", method: "POST", body: Data("{}".utf8))
     }
 
+    func restart(_ id: UUID) async throws -> Companion.ChatDetail {
+        try await call("/v1/chats/\(id.uuidString)/restart", method: "POST", body: Data("{}".utf8))
+    }
+
     /// "approved", "approvedForSession", or "denied".
     func decide(_ decision: String, item: UUID, in chat: UUID) async throws -> Companion.ChatDetail {
         let body = try JSONEncoder().encode(Companion.DecisionRequest(decision: decision))
@@ -330,7 +334,7 @@ final class MobileStore {
         request.httpMethod = method
         request.httpBody = body
         // Images take longer to send than a message.
-        request.timeoutInterval = (body?.count ?? 0) > 200_000 ? 60 : 6
+        request.timeoutInterval = path.hasSuffix("/restart") ? 60 : (body?.count ?? 0) > 200_000 ? 60 : 6
         if let token { request.setValue(token, forHTTPHeaderField: Companion.tokenHeader) }
         #if GOLEM_APP
         request.setValue("golem",forHTTPHeaderField:"X-Chatterbox-Product")

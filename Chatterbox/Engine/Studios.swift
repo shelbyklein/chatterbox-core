@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import Observation
 
 extension AppModel {
     /// Studios by name, leaving out archived ones.
@@ -57,7 +58,12 @@ extension AppModel {
         studio.ensureDesignFile()
         studios.append(studio)
         saveStudios()
-        if let session { move(session, to: studio) } else { newChat(in: studio) }
+        if let session {
+            move(session, to: studio)
+        } else {
+            let first = newChat(in: studio)
+            if let preset = ModelPresets.shared.newStudioPreset { ModelPresets.shared.apply(preset, to: first) }
+        }
         return studio
     }
 
@@ -135,6 +141,7 @@ extension AppModel {
         let session = newChat(backend: backend)
         session.setStudio(studio)
         setStudio(studio.id, collapsed: false)
+        selectedID = session.id
         return session
     }
 
@@ -262,5 +269,37 @@ extension AppModel {
         guard let index = studios.firstIndex(where: { $0.id == id }) else { return }
         change(&studios[index])
         saveStudios()
+    }
+}
+
+/// Mac navigation links; separate from Studio membership and runtime-owned chat records.
+@MainActor @Observable
+final class ProjectStudioLinks {
+    static let shared = ProjectStudioLinks()
+    private(set) var links: [String: UUID]
+    @ObservationIgnored private let defaults: UserDefaults
+    private static let key = "macProjectStudioLinks"
+    init(defaults: UserDefaults = AppPreferences.defaults) {
+        self.defaults = defaults
+        links = defaults.data(forKey: Self.key).flatMap { try? JSONDecoder().decode([String: UUID].self, from: $0) } ?? [:]
+    }
+    func studioID(for folder: String) -> UUID? { links[AppModel.normalize(folder)] }
+    func set(_ studioID: UUID?, for folder: String) {
+        links[AppModel.normalize(folder)] = studioID
+        if let data = try? JSONEncoder().encode(links) { defaults.set(data, forKey: Self.key) }
+    }
+}
+
+extension AppModel {
+    func linkedStudio(for folder: String?) -> Studio? {
+        guard let folder, let id = ProjectStudioLinks.shared.studioID(for: folder) else { return nil }
+        return activeStudios.first { $0.id == id }
+    }
+    @discardableResult
+    func openLinkedStudioChat(_ chatID: UUID, for folder: String) -> Bool {
+        guard let studio = linkedStudio(for: folder), chats(in: studio).contains(where: { $0.id == chatID }) else { return false }
+        showingSettings = false
+        selectedID = chatID
+        return true
     }
 }

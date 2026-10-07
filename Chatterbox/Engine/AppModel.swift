@@ -16,6 +16,11 @@ final class AppModel {
             showingHome = false
             showingAutomations = false
             showingCommandCenter = false
+            if let session = sessions.first(where: { $0.id == selectedID }) {
+                studioSidebarID = session.record.studioID
+                showingChatsSidebar = studioSidebarID == nil && session.record.projectFolder == nil
+                if studioSidebarID != nil { AppPreferences.defaults.set(false, forKey: "sidebarStudiosCollapsed") }
+            }
             guard selectedID != oldValue, let session = sessions.first(where: { $0.id == selectedID }) else { return }
             Diagnostics.note("Opened \u{201C}\(session.title)\u{201D} (\(session.items.count) rows\(session.isRunning ? ", working" : ""))")
             if RuntimeClient.usesDaemon {Task { [weak self] in
@@ -26,6 +31,10 @@ final class AppModel {
     }
     var showingCloneFromGitHub = false
     var showingNewProject = false
+    /// Projects and standalone chats have separate sidebar pages in the Mac UI.
+    var showingChatsSidebar = false
+    var studioSidebarID: UUID?
+    var sidebarStudio: Studio? { studio(studioSidebarID) }
     /// Settings, shown in the main window in place of the chat.
     var showingHome = false { didSet { if showingHome { showingCommandCenter = false; showingAutomations = false } } }
     var showingCommandCenter = false { didSet { if showingCommandCenter { showingHome = false; showingSettings = false; showingAutomations = false } } }

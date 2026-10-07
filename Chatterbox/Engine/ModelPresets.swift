@@ -127,6 +127,20 @@ final class ModelPresets {
         return model + (preset.effort.map { " \u{00B7} " + RuntimePaths.effortLabel($0) } ?? "")
     }
 
+    /// Settings → New Chats → New Studios: the preset a new Studio's first chat starts with.
+    /// Saved as the preset's id; empty means the default (the preset nicknamed Maestro),
+    /// "none" means the usual new-chat defaults.
+    static let newStudioKey = "newStudioPreset"
+    static let newStudioDefaultNickname = "Maestro"
+
+    var newStudioPreset: ModelPreset? {
+        let saved = AppPreferences.defaults.string(forKey: Self.newStudioKey) ?? ""
+        if saved == "none" { return nil }
+        if let id = UUID(uuidString: saved), let preset = presets.first(where: { $0.id == id }) { return preset }
+        return presets.first { $0.nickname?.trimmingCharacters(in: .whitespacesAndNewlines)
+            .caseInsensitiveCompare(Self.newStudioDefaultNickname) == .orderedSame }
+    }
+
     func apply(_ preset: ModelPreset, to session: ChatSession) {
         session.setBackend(preset.backend)
         guard session.record.backend == preset.backend else { return } // a turn is still running
