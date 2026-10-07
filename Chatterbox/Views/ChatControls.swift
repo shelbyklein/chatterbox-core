@@ -225,13 +225,13 @@ struct FinishedChatsBell: View {
     var body: some View {
         Button { open.toggle() } label: {
             HStack(spacing: 4) {
-                Image(systemName: chats.isEmpty ? "bell" : "bell.badge")
+                Image(systemName: "watch.analog")
                 if !chats.isEmpty { Text("\(chats.count)").font(.caption.weight(.semibold).monospacedDigit()) }
             }.padding(.horizontal, 4)
         }
         .buttonStyle(.plain)
         .help("\(chats.count) unseen finished chats · \(Attention.shared.workingChats(in: model).count) working")
-        .accessibilityLabel("Finished chats, \(chats.count) unseen")
+        .accessibilityLabel("Chat activity, \(chats.count) unseen")
         .popover(isPresented: $open, arrowEdge: .bottom) {
             FinishedChatsList { open = false }.environment(model)
         }
@@ -244,10 +244,11 @@ struct FinishedChatsList: View {
     private let appearance = ReaderStyleSettings()
     private var chats: [ChatSession] { Attention.shared.finishedChats(in: model) }
     private var working: [ChatSession] { Attention.shared.workingChats(in: model) }
+    private var recent: [ChatSession] { Attention.shared.recentChats(in: model) }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Chat activity").font(.headline)
-            Text("Finished replies and sessions working now").font(.caption).foregroundStyle(.secondary)
+            Text("Finished replies, sessions working now, and the last 12 hours").font(.caption).foregroundStyle(.secondary)
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Finished · \(chats.count)").font(.subheadline.weight(.semibold))
@@ -264,10 +265,36 @@ struct FinishedChatsList: View {
                     } else {
                         ForEach(working) { session in activityRow(session, running: true) }
                     }
+                    Divider().padding(.vertical, 6)
+                    Text("Last 12 hours · \(recent.count)").font(.subheadline.weight(.semibold))
+                    if recent.isEmpty {
+                        Text("Nothing else in the last 12 hours").font(.caption).foregroundStyle(.secondary).padding(.vertical, 8)
+                    } else {
+                        ForEach(recent) { session in recentRow(session) }
+                    }
                 }
-            }.frame(maxHeight: 420)
+            }.frame(maxHeight: 520)
         }.padding(16).frame(width: 330)
     }
+    /// One line per chat: the provider, its name, and how long ago it was last active.
+    private func recentRow(_ session: ChatSession) -> some View {
+        Button {
+            if Attention.shared.openRecentChat(session.id, in: model) { close() }
+        } label: {
+            HStack(spacing: 10) {
+                Image(session.record.provider.iconName).resizable().scaledToFit()
+                    .frame(width: 14, height: 14)
+                    .foregroundStyle(appearance.style.color(for: session.record.provider))
+                Text(session.record.projectFolder != nil ? session.projectName : session.title)
+                    .lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+                Text(ShortAge.string(since: session.lastActivity))
+                    .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+            }.padding(.horizontal, 10).padding(.vertical, 6).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(session.items.last(where: { $0.kind == .assistant && $0.phase == .final })?.text.prefix(200).description ?? "")
+    }
+
     private func activityRow(_ session: ChatSession, running: Bool) -> some View {
         Button {
             let opened = running ? Attention.shared.openWorkingChat(session.id, in: model)

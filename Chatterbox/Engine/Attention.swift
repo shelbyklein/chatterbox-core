@@ -111,6 +111,20 @@ final class Attention: NSObject, UNUserNotificationCenterDelegate {
         return counts
     }
 
+    /// Chats active in the last `hours`, newest first, apart from those already listed as
+    /// working or with an unseen reply: a quick way back to what you're in the middle of.
+    func recentChats(in model: AppModel, hours: Double = 12) -> [ChatSession] {
+        let since = Date().addingTimeInterval(-hours * 3600)
+        return model.sessions.filter { $0.lastActivity >= since && !$0.isRunning && !$0.isDot && $0.record.archivedAt == nil && !unread.contains($0.id) }
+            .sorted { $0.lastActivity > $1.lastActivity }
+    }
+
+    @discardableResult func openRecentChat(_ id: UUID, in model: AppModel) -> Bool {
+        guard let session = model.sessions.first(where: { $0.id == id && $0.record.archivedAt == nil }) else { return false }
+        openActivityChat(session, in: model)
+        return true
+    }
+
     @discardableResult func openWorkingChat(_ id: UUID, in model: AppModel) -> Bool {
         guard let session = workingChats(in: model).first(where: { $0.id == id }) else { return false }
         openActivityChat(session, in: model)
