@@ -60,6 +60,7 @@ final class GolemMiniWindow: NSObject, NSWindowDelegate {
     @ObservationIgnored private var openedAt: Date?
     /// Golem is listening for a spoken reply: the box shows what's heard, and sends on a pause.
     var listening = false
+    /// What the microphone is hearing, shown in the empty message box while listening.
     var listeningStatus = "Waiting for microphone sound…"
     /// Listen and mute buttons, when the app can talk (Golem's own app).
     var voiceProblem: String?
@@ -453,6 +454,8 @@ private struct GolemMiniContent: View {
     @State private var composerWidth: CGFloat = 300
     @State private var focused = false
     @State private var bubbleTextHeight: CGFloat = 0
+    /// The voice problem notice's height, kept out of the bubble's room.
+    @State private var problemHeight: CGFloat = 0
 
     init(session: ChatSession, controller: GolemMiniWindow) {
         self.session = session
@@ -483,6 +486,8 @@ private struct GolemMiniContent: View {
             .onChange(of: controller.bubbleExpanded) { fitReply() }
             .onChange(of: bubbleShow) { fitReply() }
             .onChange(of: attachments.count) { fitReply() }
+            .onChange(of: controller.voiceProblem) { fitReply() }
+            .onChange(of: problemHeight) { fitReply() }
     }
 
     private var miniLayout: some View {
@@ -492,18 +497,11 @@ private struct GolemMiniContent: View {
                 if open, bubbleShow, let text = updateText {
                     bubble(text, maxHeight: max(48, geometry.size.height - bubbleReserve),
                            overflows: bubbleTextHeight > geometry.size.height - bubbleReserve + 1)
-                        // Tucked down behind his top stone, like a speech bubble.
-                        .padding(.bottom, -controller.bubbleOverlap)
+                        // Tucked down behind his top stone, like a speech bubble (but not over a problem notice).
+                        .padding(.bottom, controller.voiceProblem == nil ? -controller.bubbleOverlap : 8)
                         .zIndex(0)
                         .transition(.opacity)
                         .opacity(controller.dismissing ? 0 : 1)
-                }
-                if open, controller.listening {
-                    Text(controller.listeningStatus)
-                        .font(.caption).foregroundStyle(.secondary)
-                        .padding(.horizontal, 10).padding(.vertical, 6)
-                        .background(.regularMaterial, in: Capsule())
-                        .zIndex(3)
                 }
                 if open, let problem = controller.voiceProblem {
                     Label(problem, systemImage: "exclamationmark.triangle.fill")
@@ -513,6 +511,7 @@ private struct GolemMiniContent: View {
                         .padding(10)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { problemHeight = $0 }
                         .padding(.bottom, 8)
                         .zIndex(3)
                 }
@@ -686,7 +685,7 @@ private struct GolemMiniContent: View {
             .foregroundStyle(.secondary)
             .accessibilityLabel("More options")
             // Up to four lines, then scrolls. Return sends, Shift-Return starts a new line, ⌘↩ sends now.
-            ComposerBox(text: Binding(get: { draft }, set: { draft = $0 }), placeholder: controller.listening ? "Listening\u{2026} pause to send" : "Message \(session.title)", isFocused: $focused,
+            ComposerBox(text: Binding(get: { draft }, set: { draft = $0 }), placeholder: controller.listening ? controller.listeningStatus : "Message \(session.title)", isFocused: $focused,
                         font: .systemFont(ofSize: 14), maxHeight: 4 * 18,
                         onKey: { key, modifiers in
                             guard key == .return, modifiers.contains(.command) else { return false }
@@ -769,6 +768,7 @@ private struct GolemMiniContent: View {
     private var bubbleReserve: CGFloat {
         132 + controller.characterSize - 36 * controller.scale
             + (attachments.isEmpty ? 0 : 38) + (attachmentError == nil ? 0 : 42)
+            + (controller.voiceProblem == nil ? 0 : problemHeight + 16 + controller.bubbleOverlap)
     }
 
     private func fitReply() {
