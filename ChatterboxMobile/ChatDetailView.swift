@@ -785,17 +785,20 @@ struct ChatDetailView: View {
     /// moment he's done. He always finishes unless you press stop or mute. Replies already here
     /// when the chat opened stay quiet.
     private func followReplyAloud() {
-        guard let reply = latestReply, scenePhase == .active, !voiceEnded else { return }
+        guard let reply = latestReply, scenePhase == .active else { return }
         // The first reply observed was already here.
         guard seenReply != nil else { seenReply = reply.id; return }
         if reply.id != seenReply {
             seenReply = reply.id
             voiceReply = nil
+            // Ending a conversation (or dismissing his notice) silences the reply it was on, not
+            // the ones after it.
+            voiceEnded = false
             guard voiceConversation || GolemVoice.shared.autoRead else { return }
             voiceReply = reply.id
             if voiceConversation || GolemVoice.shared.listensAfter { listenForReply() }
         }
-        guard voiceReply == reply.id else { return }
+        guard !voiceEnded, voiceReply == reply.id else { return }
         let session = voiceGeneration
         GolemVoice.shared.update(reply: reply.id, text: reply.text, final: !reply.isStreaming && !summary.isRunning) {
             guard session == voiceGeneration, !voiceEnded else { return }
