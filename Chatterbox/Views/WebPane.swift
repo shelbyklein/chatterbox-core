@@ -52,6 +52,8 @@ struct WebPaneView: View {
     let onClose: () -> Void
     @State private var address = ""
     @FocusState private var editingAddress: Bool
+    @State private var publishing = false
+    @State private var published: SnippetResult?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -69,6 +71,17 @@ struct WebPaneView: View {
                         if let url = PinStore.normalizedURL(address) { page.load(url) }
                         editingAddress = false
                     }
+                if page.url.isFileURL, ["html", "htm"].contains(page.url.pathExtension.lowercased()) {
+                    Menu {
+                        Button("Publish Public Link") { publish(privately: false) }
+                        Button("Publish Private Link") { publish(privately: true) }
+                    } label: {
+                        Image(systemName: publishing ? "ellipsis" : "square.and.arrow.up")
+                    }
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                    .disabled(publishing)
+                    .help("Publish this page and the files it uses to snippets.shelbyklein.com")
+                }
                 Button { NSWorkspace.shared.open(page.url) } label: { Image(systemName: "safari") }
                     .help("Open in your browser")
                 Button(action: onClose) { Image(systemName: "xmark.circle.fill") }
@@ -82,8 +95,64 @@ struct WebPaneView: View {
             Divider()
             WebPageView(page: page)
         }
+        .alert(published?.title ?? "", isPresented: Binding(get: { published != nil }, set: { if !$0 { published = nil } }), presenting: published) { result in
+            if let link = result.link {
+                Button("Open Link") { NSWorkspace.shared.open(link) }
+            }
+            Button("OK", role: .cancel) {}
+        } message: { result in Text(result.message) }
         .onAppear { address = page.url.absoluteString }
         .onChange(of: page.url) { _, url in if !editingAddress { address = url.absoluteString } }
+    }
+}
+
+/// What publishing a snippet reported; the link is already on the clipboard.
+struct SnippetResult {
+    var title: String
+    var message: String
+    var link: URL?
+}
+
+extension WebPaneView {
+    /// Runs the bundled `snippet` command (bin/snippet), the same one chats' agents use.
+    private func publish(privately: Bool) {
+        let file = page.url.path
+        publishing = true
+        Task.detached {
+            let process = Process()
+            process.executableURL = Bundle.main.url(forResource: "snippet", withExtension: nil, subdirectory: "bin")
+                ?? URL(fileURLWithPath: NSHomeDirectory() + "/.local/bin/snippet")
+            process.arguments = ["publish", file] + (privately ? ["--private"] : [])
+            let output = Pipe(), errors = Pipe()
+            process.standardOutput = output
+            process.standardError = errors
+            var result: SnippetResult
+            do {
+                try process.run()
+                process.waitUntilExit()
+                let out = String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+                let err = String(data: errors.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+                let lines = out.split(separator: "\n").map(String.init)
+                if process.terminationStatus == 0, let first = lines.first, let link = URL(string: first) {
+                    result = SnippetResult(title: privately ? "Published privately" : "Published",
+                                           message: ([first] + lines.dropFirst().map { $0.trimmingCharacters(in: .whitespaces) } + ["The link is copied."]).joined(separator: "\n"),
+                                           link: link)
+                } else {
+                    result = SnippetResult(title: "Couldn't publish",
+                                           message: err.replacingOccurrences(of: "snippet: ", with: "").trimmingCharacters(in: .whitespacesAndNewlines))
+                }
+            } catch {
+                result = SnippetResult(title: "Couldn't publish", message: error.localizedDescription)
+            }
+            await MainActor.run {
+                if let link = result.link {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(link.absoluteString, forType: .string)
+                }
+                publishing = false
+                published = result
+            }
+        }
     }
 }
 
