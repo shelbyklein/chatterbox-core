@@ -334,7 +334,12 @@ final class ChatSession: Identifiable {
 
     /// Answers a question card; nil means you skipped it.
     func answerQuestions(_ itemID: UUID, answers: [String: [String]]?) {
-        if let remoteCommand {remoteCommand("answer",["itemID":.string(itemID.uuidString),"answers":(try? .value(answers)) ?? .null]);return}
+        if let remoteCommand {
+            // Skipping sends no answers at all (older services couldn't read a null here).
+            var body: [String: JSON] = ["itemID": .string(itemID.uuidString)]
+            if let answers, let value = try? JSON.value(answers) { body["answers"] = value }
+            remoteCommand("answer", .object(body)); return
+        }
         if let item = record.items.first(where: { $0.id == itemID }), let suggested = item.suggested {
             RuntimeHooks.answered(self, item, suggested, answers)
         }
