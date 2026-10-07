@@ -65,7 +65,8 @@ struct CommandReceipt: Codable {
     private var dirty: Set<UUID> = []
     private var saveScheduled = false
     private var wasRunning: [UUID:Bool] = [:]
-    private var pendingCards: Set<UUID> = []
+    /// Each chat's approval and question cards still waiting on the user.
+    private var pendingByChat: [UUID: Set<UUID>] = [:]
     private let encoder: JSONEncoder = { let e=JSONEncoder();e.dateEncodingStrategy = .iso8601;return e }()
     private let decoder: JSONDecoder = { let d=JSONDecoder();d.dateDecodingStrategy = .iso8601;return d }()
 
@@ -93,7 +94,7 @@ struct CommandReceipt: Codable {
         sessions.sort { $0.record.updatedAt > $1.record.updatedAt }
         studios = (try? Data(contentsOf: root.appendingPathComponent("Studios.json"))).flatMap { try? decoder.decode([Studio].self,from:$0) } ?? []
         ChatSession.studioLookup = { [weak self] id in self?.studios.first { $0.id == id } }
-        for session in sessions { attach(session);wasRunning[session.id]=session.isRunning;pendingCards.formUnion(session.items.filter { $0.approvalState == .pending }.map(\.id)) }
+        for session in sessions { attach(session);wasRunning[session.id]=session.isRunning;pendingByChat[session.id]=Set(session.items.filter { $0.approvalState == .pending }.map(\.id)) }
         try encoder.encode(["schema":1,"owner":"chatterboxd"] as JSON).write(to: root.appendingPathComponent("runtime-owner.json"), options: .atomic)
         try persistState()
     }
@@ -260,12 +261,24 @@ struct CommandReceipt: Codable {
         let before=wasRunning[s.id] ?? false
         if before != s.isRunning { publish(s,kind:s.isRunning ? "turn.started":"turn.finished") }
         wasRunning[s.id]=s.isRunning
-        for card in s.items where card.approvalState == .pending && !pendingCards.contains(card.id) {
-            pendingCards.insert(card.id);publish(s,kind:card.kind == .questions ? "question.waiting":"approval.waiting")
+        // This runs for every streamed chunk, so it mustn't read a long chat's whole transcript
+        // each time (that kept the service busy enough to stall every request). New cards
+        // arrive at the end, so a streamed change checks only the recent rows.
+        var pending=pendingByChat[s.id] ?? []
+        let recent=streamed ? s.items.suffix(64) : s.items[...]
+        for card in recent where card.approvalState == .pending && !pending.contains(card.id) {
+            pending.insert(card.id);publish(s,kind:card.kind == .questions ? "question.waiting":"approval.waiting")
         }
-        for card in s.items where pendingCards.contains(card.id) && card.approvalState != .pending {
-            pendingCards.remove(card.id);publish(s,kind:card.kind == .questions ? "question.resolved":"approval.resolved")
+        // Answered cards: only chats with one waiting need a look.
+        if !pending.isEmpty {
+            var still=Set<UUID>()
+            for card in s.items where pending.contains(card.id) {
+                if card.approvalState == .pending { still.insert(card.id) }
+                else { publish(s,kind:card.kind == .questions ? "question.resolved":"approval.resolved") }
+            }
+            pending=still
         }
+        pendingByChat[s.id]=pending
         if !streamed { publish(s,kind:"chat.changed") }
         guard !saveScheduled else { return }
         saveScheduled=true
