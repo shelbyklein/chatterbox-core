@@ -44,6 +44,10 @@ struct ChatDetailView: View {
     @State private var confirmingRestart = false
     @State private var controllingSession = false
     @State private var sessionControlStatus: String?
+    #if GOLEM_APP
+    /// Golem's quick prompts (Settings → Quick Prompts), in his menu at the top left.
+    @AppStorage(GolemQuickPrompts.key) private var quickPromptData = Data()
+    #endif
     private var detail: Companion.ChatDetail? { history.detail }
     /// The newest reply that has finished streaming.
     private var latestFinishedReply: Companion.Item? {
@@ -256,7 +260,7 @@ struct ChatDetailView: View {
                                     .frame(minHeight: 44)
                             }
                             .foregroundStyle(.secondary)
-                            .accessibilityHint("Dismisses this notice and hides Golem. The message stays in your history.")
+                            .accessibilityHint("Dismisses this notice and dims Golem. The message stays in your history.")
                         }
                         if isConversation && summary.isRunning {
                             Text("•••").font(.title2.bold()).foregroundStyle(.secondary)
@@ -380,8 +384,11 @@ struct ChatDetailView: View {
         dismissedNotice = reply.id.uuidString
     }
 
+    /// Golem at the top left: tap for the quick prompts (Settings → Quick Prompts) and Jump to Newest.
     private var toolbarGolem: some View {
-        Button { pinRequests += 1 } label: {
+        // The animation redraws many times a second, and a menu whose label keeps changing closes
+        // as soon as it opens. So he's drawn behind, and the menu's own label is still.
+        ZStack {
             Group {
                 if MobileGolem.shared.hasAnimations {
                     MobileGolemAnimated(mood: MobileGolem.mood(summary))
@@ -390,15 +397,41 @@ struct ChatDetailView: View {
                 }
             }
             .frame(width: 44, height: 44)
-            .contentShape(Rectangle())
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+            Menu {
+                let prompts = GolemQuickPrompts.decode(quickPromptData)
+                if !prompts.isEmpty {
+                    Section(summary.isRunning ? "Golem is replying\u{2026}" : "Ask Golem") {
+                        ForEach(prompts) { prompt in
+                            Button(prompt.label) { sendQuickPrompt(prompt) }.disabled(summary.isRunning)
+                        }
+                    }
+                }
+                Button { pinRequests += 1 } label: { Label("Jump to Newest", systemImage: "arrow.down.to.line") }
+            } label: {
+                Color.clear.frame(width: 44, height: 44).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Golem")
+            .accessibilityHint("Quick prompts, and jump to the newest message")
         }
-        .buttonStyle(.plain)
-        .opacity(noticeDismissed ? 0 : 1)
-        .allowsHitTesting(!noticeDismissed)
+        // Dismissing his reply quiets him, but his menu stays in reach.
+        .opacity(noticeDismissed ? 0.4 : 1)
         .animation(.easeOut(duration: reduceMotion ? 0.15 : 0.3), value: noticeDismissed)
-        .accessibilityHidden(noticeDismissed)
-        .accessibilityLabel("Scroll to newest message")
-        .accessibilityHint("Golem takes you to the bottom of the conversation")
+    }
+
+    /// Sends a quick prompt as its own message; whatever is in the message box stays there.
+    private func sendQuickPrompt(_ prompt: GolemQuickPrompt) {
+        pinRequests += 1
+        Task {
+            do {
+                history.apply(try await store.send(GolemQuickPrompts.expand(prompt.text), to: chat.id))
+                error = nil
+            } catch {
+                self.error = error.localizedDescription
+            }
+        }
     }
     #endif
 
@@ -677,6 +710,7 @@ struct ChatDetailView: View {
         }
         .padding(.horizontal, 4)
     }
+
 
     private var composer: some View {
         VStack(alignment: .leading, spacing: 8) {
