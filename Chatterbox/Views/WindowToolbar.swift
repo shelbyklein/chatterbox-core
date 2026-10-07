@@ -19,6 +19,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         static let studios = NSToolbarItem.Identifier("chatterbox.studios")
         static let commandCenter = NSToolbarItem.Identifier("chatterbox.commandCenter")
         static let settings = NSToolbarItem.Identifier("chatterbox.settings")
+        static let newChat = NSToolbarItem.Identifier("chatterbox.newChat")
         /// Chat view, Studios and Command Center, as one segmented group.
         static let views = NSToolbarItem.Identifier("chatterbox.views")
         /// The window's title, drawn as the first item: macOS leaves a stretchy gap after its own
@@ -32,12 +33,13 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         static let images = NSToolbarItem.Identifier("chatterbox.images")
         static let usage = NSToolbarItem.Identifier("chatterbox.usage")
         static let terminal = NSToolbarItem.Identifier("chatterbox.terminal")
+        static let finished = NSToolbarItem.Identifier("chatterbox.finished")
         /// The views on the left (chat, Studios, Command Center); the open chat's details in the
         /// middle, its image library included (in the place item, so it shares their pill); usage and the terminal; Settings last.
         /// New chats start from the sidebar, the Studios page and Cmd-N, not the toolbar.
         static let all: [NSToolbarItem.Identifier] = [title, views, .flexibleSpace,
                                                        tone, place, repo, golem, .flexibleSpace,
-                                                       usage, terminal, .space, settings]
+                                                       usage, terminal, finished, .space, settings, newChat]
         static let chat: [NSToolbarItem.Identifier] = [tone, place, repo, golem, usage, images, terminal]
     }
 
@@ -49,7 +51,9 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         label.font = .boldSystemFont(ofSize: NSFont.systemFontSize + 2)
         label.lineBreakMode = .byTruncatingTail
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        label.widthAnchor.constraint(lessThanOrEqualToConstant: 380).isActive = true
+        // Reserve the same title space on every page so navigation never follows the
+        // length of a session name or collapses toward the traffic lights on overview pages.
+        label.widthAnchor.constraint(equalToConstant: 200).isActive = true
         return label
     }()
     private var items: [NSToolbarItem.Identifier: NSToolbarItem] = [:]
@@ -120,6 +124,29 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
     private var pageObserver: NSObjectProtocol?
     private var lastHomePage: String?
     private var recentReinstalls: [Date] = []
+    private var lastViewCounts: Attention.ViewCounts?
+    private static let viewSymbols = ["folder", "paintpalette", "rectangle.split.2x2", "clock.arrow.circlepath", "bubble.left"]
+    private static let viewLabels = ["Projects", "Studios", "Command Center", "Automations", "Chats"]
+
+    /// Fixed-size icons reserve badge space even when the count is zero.
+    private static func viewImage(_ symbol: String, count: Int) -> NSImage {
+        NSImage(size: NSSize(width: 32, height: 22), flipped: false) { rect in
+            let icon = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+                .withSymbolConfiguration(.init(paletteColors: [.labelColor]))
+            // Center the base icon in its full slot. The badge overlaps its corner;
+            // reserving space only on the right made every unbadged icon look off-center.
+            icon?.draw(in: NSRect(x: 7.5, y: 3, width: 17, height: 17))
+            if count > 0 {
+                NSColor.systemOrange.setFill()
+                NSBezierPath(ovalIn: NSRect(x: 16, y: 7, width: 16, height: 15)).fill()
+                let text = count > 9 ? "9+" : String(count)
+                let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.boldSystemFont(ofSize: 9), .foregroundColor: NSColor.white]
+                let size = (text as NSString).size(withAttributes: attributes)
+                (text as NSString).draw(at: NSPoint(x: 24 - size.width / 2, y: 14.5 - size.height / 2), withAttributes: attributes)
+            }
+            return true
+        }
+    }
 
     /// The theme's background (Settings → Appearance) behind the toolbar too, as the SwiftUI
     /// toolbar's background used to be; the system's window color for Standard.
@@ -144,18 +171,30 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
     }
 
     private func apply() {
-        let session = bridge.session
+        let overview = model.showingSettings || model.showingAutomations || model.showingCommandCenter || model.showingHome
+        let session = overview ? nil : bridge.session
         let title = model.showingSettings ? "Settings" : model.showingAutomations ? "Automations" : model.showingCommandCenter ? "Command Center"
-            : model.showingHome ? "Chatterbox" : session?.title ?? "Chatterbox"
+            : model.showingHome ? "Studios" : model.selected?.title ?? session?.title ?? "Chatterbox"
         if window?.title != title { window?.title = title }
         if titleLabel.stringValue != title { titleLabel.stringValue = title }
+        titleLabel.toolTip = title
         // SwiftUI turns the system title back on when some pages appear; keep it off.
         if window?.titleVisibility != .hidden { window?.titleVisibility = .hidden }
 
         // Which of the left-hand views is showing; none while Settings is.
         if let views = items[ID.views] as? NSToolbarItemGroup {
-            let index = model.showingSettings ? -1 : model.showingAutomations ? 3 : model.showingCommandCenter ? 2 : model.showingHome ? 1 : 0
+            let index = model.showingSettings ? -1 : model.showingAutomations ? 3 : model.showingCommandCenter ? 2 : (model.showingHome || model.studioSidebarID != nil) ? 1 : model.showingChatsSidebar ? 4 : 0
             if views.selectedIndex != index { views.selectedIndex = index }
+            let counts = Attention.shared.viewCounts(in: model)
+            if counts != lastViewCounts {
+                lastViewCounts = counts
+                let values = [counts.projects, counts.studios, 0, 0, counts.chats]
+                for (i, subitem) in views.subitems.enumerated() {
+                    guard i == 0 || i == 1 || i == 4 else { continue }
+                    subitem.image = Self.viewImage(Self.viewSymbols[i], count: values[i])
+                    subitem.toolTip = Self.viewLabels[i] + (values[i] > 0 ? " · \(values[i]) sessions need you (unseen replies or pending requests)" : " · Nothing waiting for you")
+                }
+            }
         }
         let selected = model.showingSettings ? ID.settings : nil
         if toolbar.selectedItemIdentifier != selected { toolbar.selectedItemIdentifier = selected }
@@ -165,9 +204,10 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         let shown: [NSToolbarItem.Identifier: Bool] = [
             ID.tone: session != nil, ID.place: session != nil, ID.repo: repo != nil,
             ID.golem: session?.isDot == true,
-            ID.terminal: session != nil,
         ]
         for (id, visible) in shown { setVisible(id, visible) }
+        // Global actions keep their place even when there is no single chat to act on.
+        items[ID.terminal]?.isEnabled = session != nil
     }
 
     private func setVisible(_ id: NSToolbarItem.Identifier, _ visible: Bool) {
@@ -209,16 +249,18 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
             item.isBordered = false
         case ID.views:
             let group = NSToolbarItemGroup(itemIdentifier: id,
-                                           images: ["sidebar.left", "paintpalette", "rectangle.split.2x2", "clock.arrow.circlepath", "bubble.left"].compactMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) },
-                                           selectionMode: .selectOne, labels: ["Chats", "Studios", "Command Center", "Automations", "New Chat"],
+                                           images: Self.viewSymbols.map { Self.viewImage($0, count: 0) },
+                                           selectionMode: .selectOne, labels: Self.viewLabels,
                                            target: self, action: #selector(pickView(_:)))
             group.label = "View"
             group.paletteLabel = "View"
-            let tips = ["The chat view with its sidebar; from there, shows or hides the sidebar (\u{2303}\u{2318}S)",
-                        "Your Studios, as thumbnails", "Several live chats in one window", "All project automations", "Start a new chat (⌘N)"]
+            let tips = ["Projects and their sessions",
+                        "Your Studios, as thumbnails", "Several live chats in one window", "All project automations", "Standalone chat sessions"]
             for (sub, tip) in zip(group.subitems, tips) { sub.toolTip = tip }
             group.selectedIndex = 0
             item = group
+        case ID.newChat:
+            item = button(id, "plus", "New Chat", "Start a new chat (⌘N)", #selector(startNewChat))
         case ID.tone:
             item = hosted(id, "Tone", ToneSlot(bridge: bridge))
         case ID.place:
@@ -237,6 +279,8 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
             item = button(id, "photo.on.rectangle.angled", "Images", "Every image made in this chat", #selector(showImages))
         case ID.terminal:
             item = button(id, "terminal", "Terminal", "A terminal in this chat's folder, at the bottom of the window (\u{2303}`)", #selector(toggleTerminal))
+        case ID.finished:
+            item = hosted(id, "Finished chats", FinishedChatsBell())
         default:
             return nil
         }
@@ -270,6 +314,8 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
     // MARK: - Actions
 
     @objc private func startNewChat() {
+        model.showingChatsSidebar = true
+        AppPreferences.defaults.set(false, forKey: "sidebarChatsCollapsed")
         model.showingAutomations = false
         model.showingHome = false
         model.showingCommandCenter = false
@@ -289,7 +335,11 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         case 3:
             model.showingAutomations = true
         case 4:
-            startNewChat()
+            model.studioSidebarID = nil
+            model.showingChatsSidebar = true
+            AppPreferences.defaults.set(false, forKey: "sidebarChatsCollapsed")
+            model.showingAutomations = false; model.showingHome = false
+            model.showingCommandCenter = false; model.showingSettings = false
         default:
             showChats()
         }
@@ -298,10 +348,13 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
 
     /// To the chat view; already there, it shows or hides the sidebar.
     @objc private func showChats() {
+        let wasChats = model.showingChatsSidebar || model.studioSidebarID != nil
+        model.studioSidebarID = nil
+        model.showingChatsSidebar = false
         if model.showingAutomations || model.showingHome || model.showingCommandCenter || model.showingSettings {
             model.showingAutomations = false
             model.showingHome = false; model.showingCommandCenter = false; model.showingSettings = false
-        } else {
+        } else if !wasChats {
             model.sidebarToggleRequest += 1
         }
     }

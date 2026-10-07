@@ -24,6 +24,18 @@ final class ChatSession: Identifiable {
                     record.turnDates = Array(((record.turnDates ?? []) + [Date()]).suffix(500))
                 }
             } else {
+                // Whoever runs the conversation records its completions: the service, or the
+                // app when it runs conversations itself.
+                #if CHATTERBOX_HEADLESS
+                let records = true
+                #else
+                let records = !RuntimeClient.usesDaemon
+                #endif
+                if records {
+                    let event = Companion.TurnCompletion(id: UUID(), chatID: id, title: title,
+                                                         backend: record.backend.rawValue, endedAt: Date())
+                    record.turnCompletions = Array(((record.turnCompletions ?? []) + [event]).suffix(500))
+                }
                 noteTurnDuration()
             }
         }
@@ -620,7 +632,13 @@ final class ChatSession: Identifiable {
     }
 
     func setArchived(_ archived: Bool) {
-        if let remoteCommand {remoteCommand("archive",["archived":.bool(archived)]);return}
+        if let remoteCommand {
+            remoteCommand("archive",["archived":.bool(archived)])
+            // Show it now rather than after the service's round trip, which can take seconds
+            // when it's busy; its next update confirms (or, if the command failed, restores) it.
+            record.archivedAt = archived ? Date() : nil
+            return
+        }
         record.archivedAt = archived ? Date() : nil
         onChange?(self)
     }

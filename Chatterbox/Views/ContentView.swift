@@ -10,7 +10,10 @@ struct ContentView: View {
     @State private var windowToolbarOwner: WindowToolbar?
     @State private var chatSwitch: ChatSwitchTransition
     @State private var commandCenter: CommandCenterLayout
-    @AppStorage("macSidebarCards") private var sidebarCards = false
+    @AppStorage("macProjectsSidebarCards") private var projectsCards = true
+    @AppStorage("macChatsSidebarCards") private var chatsCards = false
+    @AppStorage("macStudioSidebarCards") private var studioCards = false
+    private var sidebarCards: Bool { model.studioSidebarID != nil ? studioCards : model.showingChatsSidebar ? chatsCards : projectsCards }
     @AppStorage("showArchived") private var showArchived = false
     @AppStorage("sidebarSectionWeights") private var sectionWeights = "1,1,1"
     @AppStorage("sidebarProjectsCollapsed") private var projectsCollapsed = false
@@ -339,14 +342,15 @@ extension ContentView {
     }
 
     private var isFiltering: Bool {
-        activeTag != nil || !searchText.trimmingCharacters(in: .whitespaces).isEmpty
+        (!model.showingChatsSidebar && model.studioSidebarID == nil && activeTag != nil) || !searchText.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
     /// Search matches every word against the chat title, project name, and tags.
     private func isShown(_ session: ChatSession) -> Bool {
+        if let studioID = model.studioSidebarID, session.record.studioID != studioID { return false }
         if session.record.sidechatOf == nil, model.sidechats(of: session).contains(where: isShown) { return true }
         if session.record.convertedProjectFolder != nil, model.worktrees(of: session).contains(where: isShown) { return true }
-        if !activeTags.isEmpty, !session.tags.contains(where: { tag in activeTags.contains { $0.caseInsensitiveCompare(tag) == .orderedSame } }) {
+        if !model.showingChatsSidebar, model.studioSidebarID == nil, !activeTags.isEmpty, !session.tags.contains(where: { tag in activeTags.contains { $0.caseInsensitiveCompare(tag) == .orderedSame } }) {
             return false
         }
         let text = ([session.title, session.projectName, model.studio(for: session)?.name ?? ""] + session.tags).joined(separator: " ")
@@ -576,7 +580,7 @@ extension ContentView {
                 SidebarRow(session: session, shortcut: nil, pins: PinStore.shared.pins(in: place),
                            onOpenPin: { model.selectedID = session.id })
                     // Settings → Appearance → Sidebar: room between rows.
-                    .padding(.vertical, sidebarRowSpacing / 2)
+                    .padding(.vertical, sidebarRowSpacing / 2 + (model.showingChatsSidebar ? 6 : 0))
             }
         }
             // Drop a link or file on a project to pin it there.
@@ -612,6 +616,7 @@ extension ContentView {
                         .disabled(!model.canFork(session))
                 }
                 if let folder = session.record.projectFolder {
+                    ProjectStudioLinkMenu(folder: folder)
                     if let place {
                         Button("Add Pin\u{2026}") { model.pinSheet = PinSheetRequest(place: place, current: place) }
                     }
@@ -854,7 +859,8 @@ private struct StudioRow: View {
     }
 }
 
-private struct SidebarRow: View {
+struct SidebarRow: View {
+    @Environment(AppModel.self) private var model
     /// Centers a shape (spinner, dot) on the first line of text, which it's baseline-aligned
     /// with; shapes have no baseline, so they'd otherwise sit on it and look low.
     static func centerOnTextLine(_ d: ViewDimensions) -> CGFloat { d.height / 2 + 4 }
@@ -952,10 +958,10 @@ private struct SidebarRow: View {
                         }
                     }
                 }
-                ActivitySpinner(color: appearance.style.color(for: session.record.backend))
+                ActivitySpinner(color: appearance.style.color(for: session.record.provider))
                     .frame(width: 10, height: 10)
                     .alignmentGuide(.firstTextBaseline, computeValue: Self.centerOnTextLine)
-                    .help("\(session.record.backend.label) is working")
+                    .help("\(session.record.provider.label) is working")
             } else if session.hasBackgroundWork {
                 // The reply is done, but a subagent or command is still going.
                 ActivitySpinner(color: .secondary)
@@ -971,6 +977,8 @@ private struct SidebarRow: View {
                     .help("Last active \(session.lastActivity.formatted(.relative(presentation: .named)))" + (stale ? " (stale)" : ""))
             }
         }
+        .padding(.trailing, model.linkedStudio(for: session.record.projectFolder) == nil ? 0 : 28)
+        .overlay(alignment: .bottomTrailing) { LinkedStudioShortcut(folder: session.record.projectFolder) }
     }
 }
 
@@ -1085,7 +1093,7 @@ extension ContentView {
     var sidebarColumn: some View {
         VStack(spacing: 0) {
             DesktopOverviewControls().padding(.horizontal, 12).padding(.vertical, 8)
-            if !isFiltering {
+            if !isFiltering && model.studioSidebarID == nil {
                 #if GOLEM_APP
                 List { Section { dotRow } }
                     .scrollDisabled(true)
@@ -1128,7 +1136,7 @@ extension ContentView {
 
     /// Searching shows every section, so nothing that matches is hidden in the dock.
     private var shownSections: [SidebarSection] {
-        SidebarSection.allCases.filter { isFiltering || $0 == .projects || !isCollapsed($0) }
+        [model.studioSidebarID != nil ? .studios : model.showingChatsSidebar ? .chats : .projects]
     }
 
     private static let headerHeight: CGFloat = 26
@@ -1167,7 +1175,7 @@ extension ContentView {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 9, weight: .bold))
                         .rotationEffect(.degrees(collapsed ? 0 : 90))
-                    Text(section.title).font(.subheadline.weight(.semibold))
+                    Text(section == .studios ? model.sidebarStudio?.name ?? "Studio" : section.title).font(.subheadline.weight(.semibold))
                     if collapsed { Text("\(count(of: section))").font(.caption).foregroundStyle(.tertiary) }
                 }
                 .contentShape(Rectangle())
@@ -1195,8 +1203,10 @@ extension ContentView {
                 .help("New project (hold for Open Project or GitHub)")
                 .accessibilityLabel("New Project")
             case .studios:
-                Button { beginNewStudio() } label: { Image(systemName: "plus") }
-                    .buttonStyle(.borderless).help("New Studio").accessibilityLabel("New Studio")
+                if let studio = model.sidebarStudio {
+                    Button { model.newChat(in: studio) } label: { Image(systemName: "plus") }
+                        .buttonStyle(.borderless).help("New chat in \(studio.name)").accessibilityLabel("New Studio Chat")
+                }
             case .chats:
                 Button { model.newChat() } label: { Image(systemName: "square.and.pencil") }
                     .buttonStyle(.borderless).help("New Chat").accessibilityLabel("New Chat")
@@ -1209,7 +1219,7 @@ extension ContentView {
     private func count(of section: SidebarSection) -> Int {
         switch section {
         case .projects: model.sidebarProjects.count
-        case .studios: model.activeStudios.count
+        case .studios: model.sidebarStudio.map { model.chats(in: $0).count } ?? 0
         case .chats: model.sidebarChats.count
         }
     }
@@ -1249,9 +1259,7 @@ extension ContentView {
                     cardGrid(threads)
                     if threads.isEmpty { Text("No matching chats").font(.caption).foregroundStyle(.secondary) }
                 case .studios:
-                    ForEach(model.activeStudios.filter(isShown)) { studio in
-                        studioGroup(studio, numbers: [:])
-                    }
+                    if let studio = model.sidebarStudio { cardGrid(model.chats(in: studio).flatMap(cardFamily)) }
                 }
             }.padding(.horizontal, 10).padding(.vertical, 6)
         }.accessibilityLabel(section.title)
@@ -1285,11 +1293,10 @@ extension ContentView {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             case .studios:
-                let studios = model.activeStudios.filter(isShown)
-                ForEach(studios) { studio in studioGroup(studio, numbers: numbers) }
-                if studios.isEmpty {
-                    Text(isFiltering ? "No matching Studios" : "A Studio groups chats that share one folder, for messy work that isn't a project.")
-                        .font(.caption).foregroundStyle(.secondary)
+                if let studio = model.sidebarStudio {
+                    let chats = model.chats(in: studio).filter(isShown)
+                    ForEach(chats) { session in rowWithSidechats(session, numbers: numbers) }
+                    if chats.isEmpty { Text("No matching sessions").font(.caption).foregroundStyle(.secondary) }
                 }
             case .chats:
                 let chats = model.sidebarChats.filter(isShown)
@@ -1371,7 +1378,7 @@ extension ContentView {
     /// when they fit; icons and counts when the sidebar is narrow.
     private var sidebarDock: some View {
         let archived = model.archivedSessions.filter(isShown)
-        let docked = isFiltering ? [] : [SidebarSection.studios, .chats].filter(isCollapsed)
+        let docked: [SidebarSection] = []
         return ViewThatFits(in: .horizontal) {
             dockRow(docked: docked, archived: archived, labels: true)
             dockRow(docked: docked, archived: archived, labels: false)
@@ -1508,5 +1515,55 @@ private struct WorktreeAlerts: ViewModifier {
             } message: {
                 Text(error ?? "")
             }
+    }
+}
+
+/// Selecting here links navigation only; it never converts or moves a project.
+struct ProjectStudioLinkMenu: View {
+    @Environment(AppModel.self) private var model
+    let folder: String
+    var body: some View {
+        Menu("Linked Studio") {
+            Button {
+                ProjectStudioLinks.shared.set(nil, for: folder)
+            } label: {
+                if ProjectStudioLinks.shared.studioID(for: folder) == nil { Label("None", systemImage: "checkmark") }
+                else { Text("None") }
+            }
+            Divider()
+            ForEach(model.activeStudios) { studio in
+                Button { ProjectStudioLinks.shared.set(studio.id, for: folder) } label: {
+                    if ProjectStudioLinks.shared.studioID(for: folder) == studio.id { Label(studio.name, systemImage: "checkmark") }
+                    else { Text(studio.name) }
+                }
+            }
+            if model.activeStudios.isEmpty { Text("Create a Studio first").foregroundStyle(.secondary) }
+        }
+    }
+}
+
+/// A project shortcut to chats in its one linked Studio.
+struct LinkedStudioShortcut: View {
+    @Environment(AppModel.self) private var model
+    let folder: String?
+    var body: some View {
+        if let folder, let studio = model.linkedStudio(for: folder) {
+            Menu {
+                Text(studio.name)
+                Divider()
+                let chats = model.chats(in: studio).sorted { $0.lastActivity > $1.lastActivity }
+                ForEach(chats) { chat in
+                    Button(chat.title) { model.openLinkedStudioChat(chat.id, for: folder) }
+                }
+                if chats.isEmpty { Text("No open chats in this Studio") }
+            } label: {
+                Image(systemName: "paintpalette").font(.system(size: 14))
+                    .frame(width: 24, height: 24).contentShape(Rectangle())
+            }
+            .menuStyle(.borderlessButton).menuIndicator(.hidden)
+            .foregroundStyle(.secondary)
+            .help("Open a chat in \(studio.name)")
+            .accessibilityLabel("Open linked Studio: \(studio.name)")
+        }
     }
 }

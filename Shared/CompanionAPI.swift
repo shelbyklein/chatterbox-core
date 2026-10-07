@@ -46,6 +46,16 @@ enum Companion {
         var groups: [ChatGroup]
         /// Pins that show everywhere.
         var pins: [Pin]? = nil
+        /// Actual turn-end events, newest first. Missing on older Macs.
+        var activity: [TurnCompletion]? = nil
+    }
+
+    struct TurnCompletion: Codable, Identifiable, Hashable {
+        var id: UUID
+        var chatID: UUID
+        var title: String
+        var backend: String
+        var endedAt: Date
     }
 
     /// Something pinned on the Mac: a website (opens on the phone), or an app, file, or

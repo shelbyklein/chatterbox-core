@@ -80,6 +80,16 @@ struct ChatView: View {
                 TerminalPanel(session: session, onClose: { showingTerminal = false }, pending: $terminalCommand)
             }
         }
+        .overlay(alignment: .topLeading) {
+            if !compact && tileContext == nil && !session.isDot {
+                GeometryReader { geometry in
+                    ChatNotes(scope: PinnedNotesStore.scope(for: session.record), project: session.record.projectFolder != nil,
+                              panelWidth: min(280, max(220, (geometry.size.width - appearance.style.contentWidth) / 2 - 32)))
+                        .id(PinnedNotesStore.scope(for: session.record))
+                        .padding(16)
+                }
+            }
+        }
     }
 
     @State private var stopStatus: String?
@@ -159,6 +169,7 @@ struct ChatView: View {
         .onAppear {
             if standaloneWindow && session.isDot { golemPanelOpen = true }
             attachToolbar()
+            if Attention.shared.isWatching(session) { Attention.shared.markSeen(session.id) }
         }
         .onChange(of: model.showingDot) { _, miniVisible in
             if standaloneWindow && session.isDot && !miniVisible { golemPanelOpen = true }
@@ -288,6 +299,27 @@ struct ChatView: View {
                   let pasted = Attachments.fromPasteboard() else { return event }
             add(pasted)
             return nil
+        }
+    }
+
+    /// Apple's own dictation, into the message box: focuses it, then runs Edit → Start
+    /// Dictation (the same thing pressing Fn twice does).
+    private func startDictation() {
+        composerFocused = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            let start = Selector(("startDictation:"))
+            func find(_ menu: NSMenu?) -> NSMenuItem? {
+                for item in menu?.items ?? [] {
+                    if item.action == start { return item }
+                    if let found = find(item.submenu) { return found }
+                }
+                return nil
+            }
+            if let item = find(NSApp.mainMenu), let action = item.action {
+                NSApp.sendAction(action, to: item.target, from: item)
+            } else {
+                NSApp.sendAction(start, to: nil, from: nil)
+            }
         }
     }
 
@@ -680,6 +712,7 @@ struct ChatView: View {
             // Tall cards (a long plan) scroll inside the tray instead of pushing the chat away.
             .frame(maxHeight: 360)
             .fixedSize(horizontal: false, vertical: true)
+            Image(systemName: "mic").font(.system(size: 16)).hidden()
             if session.canStop {
                 Image(systemName: "stop.circle.fill").font(.system(size: 26)).hidden()
             }
@@ -852,6 +885,15 @@ struct ChatView: View {
                                   : appearance.style.color(for: session.record.backend).opacity(composerFocused ? 0.8 : 0.45),
                                   lineWidth: session.isDot ? 1 : (composerFocused ? 1.5 : 1)))
                 .animation(.easeOut(duration: 0.15), value: session.record.backend)
+
+            Button(action: startDictation) {
+                Image(systemName: "mic").font(.system(size: 16))
+                    .frame(height: 36)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Dictate with Apple Dictation (or press Fn twice)")
+            .accessibilityLabel("Dictate")
 
             if session.isDot {
                 // Only what a conversation needs: how full the context is, and the cog.
@@ -1042,92 +1084,40 @@ struct ChatView: View {
 
     // MARK: - Model
 
-    /// The model and effort this chat uses, under the message box, with preset buttons.
+    /// The current model or preset this chat uses, under the message box.
     @ViewBuilder
     private var modelStatus: some View {
         // Golem's chat keeps these behind its cog.
         if session.isDot { EmptyView() } else if compact { compactModelStatus } else { fullModelStatus }
     }
 
-    private var hasSelectedPreset: Bool { ModelPresets.shared.presets.contains { ModelPresets.shared.matches($0, session: session) } }
-
-    /// The small floating chat: the model, context, and one menu for the mode and presets.
-    private var compactModelStatus: some View {
-        HStack(spacing: 8) {
-            if !hasSelectedPreset {
-                ModelPicker(session: session, summary: modelSummary.short,
-                            color: appearance.style.color(for: session.record.backend),
-                            openRequest: commands.modelPopoverRequests,
-                            handlesKeyboardRequest: { handlesKeyboard })
-            }
-            Spacer(minLength: 0)
-            UsageMeter(compact: true, session: session, color: appearance.style.color(for: session.record.backend))
-                .fixedSize()
-            Spacer(minLength: 0)
-            // The preset pills too (Command Center tiles), when the tile is wide enough for them;
-            // narrower, they're still in the menu beside them.
-            ViewThatFits(in: .horizontal) {
-                PresetPills(session: session, style: appearance.style).fixedSize()
-                Color.clear.frame(width: 0, height: 0)
-            }
-            .layoutPriority(-1)
-            Menu {
-                Section("Mode") {
-                    ForEach(PermissionModes.modes(for: session.record.backend)) { mode in
-                        Button { session.setMode(mode.id) } label: {
-                            if mode.id == session.mode.id { Label(mode.title, systemImage: "checkmark") } else { Text(mode.title) }
-                        }
-                    }
-                }
-                Section("Presets") {
-                    ForEach(ModelPresets.shared.presets) { preset in
-                        Button(preset.displayName) { ModelPresets.shared.apply(preset, to: session) }
-                    }
-                }
-            } label: {
-                Image(systemName: session.mode.systemImage)
-                    .foregroundStyle(session.mode.isUnrestricted ? Color.orange : Color.secondary)
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help("Mode: \(session.mode.title). Presets are here too.")
-        }
-        .font(.caption)
-        .foregroundStyle(.secondary)
-        .padding(.leading, 34)
+    private var selectedPreset: ModelPreset? {
+        ModelPresets.shared.presets.first { ModelPresets.shared.matches($0, session: session) }
     }
 
-    private var fullModelStatus: some View {
-        CenteredModelStatus {
-            HStack(spacing: 10) {
+    private var currentModelPicker: some View {
+        ModelPicker(session: session, selectionPill: true,
+                    summary: selectedPreset?.displayName ?? modelSummary.full,
+                    color: appearance.style.color(for: session.record.provider),
+                    details: modelSummary.full + (session.record.provider != session.record.backend ? " · Claude model via Codex" : ""),
+                    openRequest: commands.modelPopoverRequests,
+                    handlesKeyboardRequest: { handlesKeyboard })
+    }
+
+    private var compactModelStatus: some View { modelStatusRow(compact: true) }
+    private var fullModelStatus: some View { modelStatusRow(compact: false) }
+
+    private func modelStatusRow(compact: Bool) -> some View {
+        ComposerStatusLayout {
+            HStack(spacing: 14) {
                 modeMenu.fixedSize()
-                if !hasSelectedPreset {
-                    ModelPicker(session: session, summary: modelSummary.full,
-                                color: appearance.style.color(for: session.record.backend),
-                                openRequest: commands.modelPopoverRequests,
-                                handlesKeyboardRequest: { handlesKeyboard })
-                }
+                UsageMeter(compact: compact, session: session,
+                           color: appearance.style.color(for: session.record.backend)).fixedSize()
             }
-            HStack(spacing: 0) {
-                UsageMeter(session: session, color: appearance.style.color(for: session.record.backend))
-            }
-            .fixedSize()
-            PresetPills(session: session, style: appearance.style).fixedSize()
-        }
-        // Keep Choose Model available from the menu/shortcut even while its label is hidden.
-        .background(alignment: .leading) {
-            if hasSelectedPreset {
-                ModelPicker(session: session, summary: modelSummary.full,
-                            color: appearance.style.color(for: session.record.backend),
-                            openRequest: commands.modelPopoverRequests,
-                            handlesKeyboardRequest: { handlesKeyboard })
-                    .frame(width: 0, height: 0).clipped().accessibilityHidden(true)
-            }
+            currentModelPicker
         }
         .font(.caption)
         .foregroundStyle(.secondary)
-        .padding(.leading, 34)
     }
 
     /// How much the active agent may do without asking. Changes apply right away.
@@ -1149,7 +1139,7 @@ struct ChatView: View {
             let current = models.first { $0.model == codex.model }
             // With no pick, show what Codex will actually use.
             let resolved = current ?? models.first(where: \.isDefault)
-            let name = resolved.map { CodexModelCatalog.name($0.model, models: models) } ?? "Codex default"
+            let name = resolved.map { CodexModelCatalog.name($0.model, models: models) } ?? codex.model.map { CodexModelCatalog.name($0, models: models) } ?? "Codex default"
             let modelName = current == nil && resolved != nil ? "\(name) (default)" : name
             let effort = codex.effort ?? resolved?.defaultEffort
             let effortFull = codex.effort.map { Self.effortLabel($0) } ?? effort.map { "\(Self.effortLabel($0)) (default)" }
@@ -1681,32 +1671,28 @@ private struct GolemVoiceDraftSync: ViewModifier {
 }
 #endif
 
-/// Center Context independently of the unequal permission and preset labels. If the
-/// presets cannot fit beside it, they get their own row instead of clipping the column.
-private struct CenteredModelStatus: Layout {
+/// Permissions and context share the left edge; the model control stays right.
+/// Wrap the model onto a second row if the two sides cannot fit together.
+private struct ComposerStatusLayout: Layout {
     private let gap: CGFloat = 10
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        guard subviews.count == 3 else { return .zero }
-        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
-        let width = proposal.width ?? (sizes[0].width + sizes[1].width + sizes[2].width + gap * 2)
-        let side = max(0, (width - sizes[1].width) / 2 - gap)
-        let wrapped = sizes[2].width > side
-        let left = subviews[0].sizeThatFits(.init(width: side, height: nil))
-        let height = max(left.height, sizes[1].height, wrapped ? 0 : sizes[2].height)
-        return CGSize(width: width, height: height + (wrapped ? gap + sizes[2].height : 0))
+        guard subviews.count == 2 else { return .zero }
+        let left = subviews[0].sizeThatFits(.unspecified)
+        let naturalRight = subviews[1].sizeThatFits(.unspecified)
+        let width = proposal.width ?? (left.width + gap + naturalRight.width)
+        let right = subviews[1].sizeThatFits(.init(width: min(width, naturalRight.width), height: nil))
+        let wrapped = left.width + gap + right.width > width
+        return CGSize(width: width, height: wrapped ? left.height + gap + right.height : max(left.height, right.height))
     }
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        guard subviews.count == 3 else { return }
-        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
-        let side = max(0, (bounds.width - sizes[1].width) / 2 - gap)
-        let wrapped = sizes[2].width > side
-        let left = subviews[0].sizeThatFits(.init(width: side, height: nil))
-        let rowHeight = max(left.height, sizes[1].height, wrapped ? 0 : sizes[2].height)
-        subviews[0].place(at: CGPoint(x: bounds.minX, y: bounds.minY + rowHeight / 2), anchor: .leading,
-                          proposal: .init(width: side, height: nil))
-        subviews[1].place(at: CGPoint(x: bounds.midX, y: bounds.minY + rowHeight / 2), anchor: .center,
-                          proposal: .init(sizes[1]))
-        subviews[2].place(at: CGPoint(x: bounds.maxX, y: bounds.minY + (wrapped ? rowHeight + gap : rowHeight / 2)),
-                          anchor: wrapped ? .topTrailing : .trailing, proposal: .init(sizes[2]))
+        guard subviews.count == 2 else { return }
+        let left = subviews[0].sizeThatFits(.unspecified)
+        let naturalRight = subviews[1].sizeThatFits(.unspecified)
+        let right = subviews[1].sizeThatFits(.init(width: min(bounds.width, naturalRight.width), height: nil))
+        let wrapped = left.width + gap + right.width > bounds.width
+        let rowHeight = wrapped ? left.height : max(left.height, right.height)
+        subviews[0].place(at: CGPoint(x: bounds.minX, y: bounds.minY + rowHeight / 2), anchor: .leading, proposal: .init(left))
+        subviews[1].place(at: CGPoint(x: bounds.maxX, y: bounds.minY + (wrapped ? rowHeight + gap : rowHeight / 2)),
+                          anchor: wrapped ? .topTrailing : .trailing, proposal: .init(right))
     }
 }

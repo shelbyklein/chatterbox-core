@@ -16,6 +16,11 @@ final class AppModel {
             showingHome = false
             showingAutomations = false
             showingCommandCenter = false
+            if let session = sessions.first(where: { $0.id == selectedID }) {
+                studioSidebarID = session.record.studioID
+                showingChatsSidebar = studioSidebarID == nil && session.record.projectFolder == nil
+                if studioSidebarID != nil { AppPreferences.defaults.set(false, forKey: "sidebarStudiosCollapsed") }
+            }
             guard selectedID != oldValue, let session = sessions.first(where: { $0.id == selectedID }) else { return }
             Diagnostics.note("Opened \u{201C}\(session.title)\u{201D} (\(session.items.count) rows\(session.isRunning ? ", working" : ""))")
             if RuntimeClient.usesDaemon {Task { [weak self] in
@@ -26,6 +31,10 @@ final class AppModel {
     }
     var showingCloneFromGitHub = false
     var showingNewProject = false
+    /// Projects and standalone chats have separate sidebar pages in the Mac UI.
+    var showingChatsSidebar = false
+    var studioSidebarID: UUID?
+    var sidebarStudio: Studio? { studio(studioSidebarID) }
     /// Settings, shown in the main window in place of the chat.
     var showingHome = false { didSet { if showingHome { showingCommandCenter = false; showingAutomations = false } } }
     var showingCommandCenter = false { didSet { if showingCommandCenter { showingHome = false; showingSettings = false; showingAutomations = false } } }
@@ -179,6 +188,7 @@ final class AppModel {
     @ObservationIgnored private var legacyOwnership: RuntimeOwnership?
     @ObservationIgnored private var projecting = false
     @ObservationIgnored private var refreshTasks: [UUID:Task<Void,Never>] = [:]
+    @ObservationIgnored private var refreshAgain: Set<UUID> = []
 
     var selected: ChatSession? { sessions.first { $0.id == selectedID } }
 
@@ -349,6 +359,10 @@ final class AppModel {
     func delete(_ session: ChatSession) {
         if RuntimeClient.usesDaemon {
             RuntimeClient.shared.command("delete",body:["chatID":.string(session.id.uuidString)])
+            // Gone from the lists now, not after the service's next full chat list (seconds
+            // when it's busy). If the delete fails, that list brings the chat back.
+            sessions.removeAll { $0.id == session.id }
+            if selectedID == session.id { selectedID = activeSessions.first?.id }
             return
         }
         session.shutdown()
@@ -799,12 +813,15 @@ final class AppModel {
         if event.kind=="runtime.resync" || event.kind=="runtime.configuration" || event.kind=="chat.created" || event.kind=="chat.deleted" {
             requestResync()
         }else if let id=event.chatID {
-            guard refreshTasks[id]==nil else{return}
+            // One refresh per chat at a time; a change that lands mid-refresh gets one more after
+            // it, since the refresh in flight may have read the chat before that change.
+            guard refreshTasks[id]==nil else{refreshAgain.insert(id);return}
             refreshTasks[id]=Task {
                 try? await Task.sleep(for:.milliseconds(100))
-                defer{refreshTasks[id]=nil}
                 do{let state=try await RuntimeClient.shared.request("get",body:["chatID":.string(id.uuidString),"limit":40]).decode(RuntimeChatState.self);applyProjection(state)}
                 catch{Diagnostics.note(error.localizedDescription)}
+                refreshTasks[id]=nil
+                if refreshAgain.remove(id) != nil { runtimeEvent(event) }
             }
         }
     }

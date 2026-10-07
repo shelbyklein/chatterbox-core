@@ -9,7 +9,9 @@ final class Attention: NSObject, UNUserNotificationCenterDelegate {
     static let shared = Attention()
 
     /// Chats with a finished reply you haven't looked at yet.
-    private(set) var unread: Set<UUID> = []
+    private(set) var unread: Set<UUID> = Set((AppPreferences.defaults.stringArray(forKey: "macUnreadFinishedChats") ?? []).compactMap(UUID.init(uuidString:))) {
+        didSet { AppPreferences.defaults.set(unread.map(\.uuidString).sorted(), forKey: "macUnreadFinishedChats") }
+    }
 
     @ObservationIgnored private weak var model: AppModel?
     @ObservationIgnored private var wasRunning: [UUID: Bool] = [:]
@@ -71,12 +73,61 @@ final class Attention: NSObject, UNUserNotificationCenterDelegate {
         }
         #endif
         return NSApp.isActive && model?.selectedID == session.id
+            && model?.showingHome != true && model?.showingSettings != true
+            && model?.showingAutomations != true && model?.showingCommandCenter != true
     }
 
     func markSeen(_ id: UUID?) {
         if let id, let dot = model?.dot, dot.id == id { markDotSeen(dot) }
         guard let id, unread.remove(id) != nil else { return }
         refreshBadge()
+    }
+
+    func finishedChats(in model: AppModel) -> [ChatSession] {
+        model.sessions.filter { unread.contains($0.id) && !$0.isRunning && !$0.isDot && $0.record.archivedAt == nil }
+            .sorted { $0.record.updatedAt == $1.record.updatedAt ? $0.id.uuidString < $1.id.uuidString : $0.record.updatedAt > $1.record.updatedAt }
+    }
+
+    func workingChats(in model: AppModel) -> [ChatSession] {
+        model.sessions.filter { $0.isRunning && !$0.isDot && $0.record.archivedAt == nil }
+            .sorted { $0.record.updatedAt == $1.record.updatedAt ? $0.id.uuidString < $1.id.uuidString : $0.record.updatedAt > $1.record.updatedAt }
+    }
+
+    struct ViewCounts: Equatable {
+        var projects = 0
+        var studios = 0
+        var chats = 0
+    }
+
+    /// A session counts once even if it has both an unread reply and a pending question.
+    func viewCounts(in model: AppModel) -> ViewCounts {
+        var counts = ViewCounts()
+        for session in model.sessions where !session.isDot && session.record.archivedAt == nil {
+            guard !pendingItems(session).isEmpty || (unread.contains(session.id) && !session.isRunning) else { continue }
+            if session.record.studioID != nil { counts.studios += 1 }
+            else if session.record.projectFolder != nil { counts.projects += 1 }
+            else { counts.chats += 1 }
+        }
+        return counts
+    }
+
+    @discardableResult func openWorkingChat(_ id: UUID, in model: AppModel) -> Bool {
+        guard let session = workingChats(in: model).first(where: { $0.id == id }) else { return false }
+        openActivityChat(session, in: model)
+        return true
+    }
+
+    @discardableResult func openFinishedChat(_ id: UUID, in model: AppModel) -> Bool {
+        guard let session = finishedChats(in: model).first(where: { $0.id == id }) else { return false }
+        openActivityChat(session, in: model)
+        return true
+    }
+
+    private func openActivityChat(_ session: ChatSession, in model: AppModel) {
+        model.showingSettings = false
+        model.showingChatsSidebar = session.record.projectFolder == nil && session.record.studioID == nil
+        model.selectedID = session.id
+        markSeen(session.id)
     }
 
     // MARK: - Dot's unread messages
