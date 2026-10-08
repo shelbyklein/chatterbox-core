@@ -533,7 +533,7 @@ final class ThreadThumbnails {
 
     /// Changes when the chat gains a row, not while a reply streams into the last one.
     static func key(_ session: ChatSession) -> String {
-        "\(session.id)|\(session.items.count)|\(session.items.last?.id.uuidString ?? "")"
+        "\(session.id)|\(session.items.count)|\(session.items.last?.id.uuidString ?? "")|\(session.items.last?.phase.rawValue ?? "")"
     }
 
     func refresh(_ session: ChatSession) {
@@ -541,7 +541,7 @@ final class ThreadThumbnails {
         guard keys[session.id] != key else { return }
         keys[session.id] = key
         let id = session.id
-        guard let url = Self.latestImage(in: session) else {
+        guard let url = session.latestThumbnailURL() else {
             sources[id] = nil
             if images[id] != nil { images[id] = nil }
             return
@@ -555,25 +555,6 @@ final class ThreadThumbnails {
                 self.images[id] = image
             }
         }
-    }
-
-    /// The newest image in the last 300 rows that still exists on disk.
-    private static func latestImage(in session: ChatSession) -> URL? {
-        let fm = FileManager.default
-        func usable(_ url: URL) -> Bool {
-            (MediaKind.isStillImage(url.path) || url.pathExtension.lowercased() == "gif") && fm.fileExists(atPath: url.path)
-        }
-        for item in session.items.suffix(300).reversed() {
-            switch item.kind {
-            case .image, .user:
-                if let url = item.attachments?.map(\.url).last(where: usable) { return url }
-            case .assistant where item.phase == .final:
-                if let url = ChatSession.referencedImages(in: item.text, folder: session.workingFolder).last(where: usable) { return url }
-            default:
-                break
-            }
-        }
-        return nil
     }
 
     nonisolated private static func thumbnail(_ url: URL, side: Int) -> NSImage? {

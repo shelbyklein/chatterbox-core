@@ -118,6 +118,8 @@ enum Companion {
         var turnsToday: Int? = nil
         var turnsThisWeek: Int? = nil
         var turnsPerDay: Double? = nil
+        /// Latest image preview, fetched separately as a bounded thumbnail.
+        var thumbnail: File? = nil
     }
 
     /// The assistant's animations and head image, to play on the phone too.

@@ -1,3 +1,5 @@
+import ImageIO
+import UniformTypeIdentifiers
 import CryptoKit
 import Foundation
 import Network
@@ -287,7 +289,24 @@ final class CompanionServer {
             catch{return .error(409,error.localizedDescription)}
         }
         #endif
-        return respond(to:request,local:local)
+        let response = respond(to:request,local:local)
+        guard let source = response.thumbnailSource else { return response }
+        let data = await Task.detached(priority: .utility) {
+            guard let source = CGImageSourceCreateWithURL(source as CFURL, nil),
+                  let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceCreateThumbnailWithTransform: true,
+                    kCGImageSourceThumbnailMaxPixelSize: 320,
+                  ] as CFDictionary) else { return Data?.none }
+            let data = NSMutableData()
+            guard let destination = CGImageDestinationCreateWithData(data, UTType.jpeg.identifier as CFString, 1, nil) else { return Data?.none }
+            CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.8] as CFDictionary)
+            guard CGImageDestinationFinalize(destination) else { return Data?.none }
+            return data as Data?
+        }.value
+        guard let data else { return .error(404, "That image preview is unavailable.") }
+        return HTTPResponse(status: 200, contentType: "image/jpeg", body: data)
+
     }
 
     func respond(to request: HTTPRequest, local: Bool) -> HTTPResponse {
@@ -540,6 +559,12 @@ final class CompanionServer {
             }
             let type = file.name.hasSuffix(".png") ? "image/png" : file.name.hasSuffix(".json") ? "application/json" : "video/quicktime"
             return HTTPResponse(status: 200, contentType: type, body: data)
+        case ("GET", 5) where parts[1] == "chats" && parts[3] == "thumbnail":
+            guard let session = session(parts[2]), let id = UUID(uuidString: parts[4]),
+                  let url = session.latestThumbnailURL(), ChatSession.mediaID(url.path) == id else {
+                return .error(404, "That image preview is gone.")
+            }
+            return HTTPResponse(status: 200, contentType: "image/jpeg", body: Data(), thumbnailSource: url)
         case ("GET", 5) where parts[1] == "chats" && parts[3] == "files":
             guard let session = session(parts[2]), let fileID = UUID(uuidString: parts[4]) else { return .error(404, "That file is gone.") }
             if let file = session.allAttachments.first(where: { $0.id == fileID }) {
@@ -723,7 +748,16 @@ enum CompanionMapper {
                      worktreeBranch: session.record.worktreeOf != nil ? (session.record.worktreeBranch ?? session.projectName) : nil,
                      sidechatOf: session.record.sidechatOf,
                      tags: session.tags.isEmpty ? nil : session.tags,
-                     turnsToday: activity.day, turnsThisWeek: activity.week, turnsPerDay: activity.perDay)
+                     turnsToday: activity.day, turnsThisWeek: activity.week, turnsPerDay: activity.perDay,
+                     thumbnail: thumbnail(session))
+    }
+
+    private static func thumbnail(_ session: ChatSession) -> Companion.File? {
+        guard let url = session.latestThumbnailURL(),
+              let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]) else { return nil }
+        return .init(id: ChatSession.mediaID(url.path), name: url.lastPathComponent,
+                     mediaType: "image/jpeg", isImage: true,
+                     revision: "\(values.contentModificationDate?.timeIntervalSince1970 ?? 0)|\(values.fileSize ?? 0)")
     }
 
     /// Turns in the last day and week (from recorded turn times), and the lifetime average a day.
@@ -951,6 +985,7 @@ struct HTTPResponse {
     var contentType: String
     var body: Data
     var fileURL: URL? = nil
+    var thumbnailSource: URL? = nil
     var headers: [String: String] = [:]
 
     static func json<T: Encodable>(_ value: T) -> HTTPResponse {

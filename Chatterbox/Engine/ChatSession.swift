@@ -178,6 +178,8 @@ final class ChatSession: Identifiable {
     }
 
     nonisolated let id: UUID
+    @ObservationIgnored var thumbnailLookupKey: String?
+    @ObservationIgnored var thumbnailLookupURL: URL?
     var items: [DisplayItem] { record.items }
     var title: String { record.title }
     /// The project's nickname, or else its folder's name.

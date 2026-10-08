@@ -31,6 +31,30 @@ extension ChatSession {
         return Array(images.filter { seen.insert($0.path).inserted }.prefix(8))
     }
 
+    /// Same bounded latest-image lookup for Mac tiles and mobile previews. Cache by
+    /// transcript structure so list polling does not repeatedly scan long conversations.
+    func latestThumbnailURL() -> URL? {
+        let key = "\(workingFolder ?? "")|\(items.count)|\(items.last?.id.uuidString ?? "")|\(items.last?.phase.rawValue ?? "")"
+        if thumbnailLookupKey == key { return thumbnailLookupURL }
+        thumbnailLookupKey = key
+        let fm = FileManager.default
+        func usable(_ url: URL) -> Bool {
+            (MediaKind.isStillImage(url.path) || url.pathExtension.lowercased() == "gif") && fm.fileExists(atPath: url.path)
+        }
+        thumbnailLookupURL = nil
+        for item in items.suffix(300).reversed() {
+            switch item.kind {
+            case .image, .user:
+                thumbnailLookupURL = item.attachments?.map(\.url).last(where: usable)
+            case .assistant where item.phase == .final:
+                thumbnailLookupURL = Self.referencedImages(in: item.text, folder: workingFolder).last(where: usable)
+            default: break
+            }
+            if thumbnailLookupURL != nil { break }
+        }
+        return thumbnailLookupURL
+    }
+
     /// A stable id for a file a reply points to, so the phone can fetch it.
     static func mediaID(_ path: String) -> UUID {
         var bytes = Array(SHA256.hash(data: Data(path.utf8)).prefix(16))

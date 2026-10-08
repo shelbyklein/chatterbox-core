@@ -255,6 +255,17 @@ final class MobileStore {
         try await raw("/v1/avatar/" + (name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? name))
     }
 
+    @ObservationIgnored private let thumbnailCache = NSCache<NSString, UIImage>()
+    func thumbnail(_ file: Companion.File, in chat: UUID) async throws -> UIImage? {
+        let key = "\(chat)|\(file.id)|\(file.revision ?? "")" as NSString
+        if let image = thumbnailCache.object(forKey: key) { return image }
+        let data = try await raw("/v1/chats/\(chat.uuidString)/thumbnail/\(file.id.uuidString)")
+        guard let image = UIImage(data: data) else { return nil }
+        thumbnailCache.countLimit = 100
+        thumbnailCache.setObject(image, forKey: key)
+        return image
+    }
+
     func file(_ file: Companion.File, in chat: UUID) async throws -> Data {
         try await raw("/v1/chats/\(chat.uuidString)/files/\(file.id.uuidString)")
     }

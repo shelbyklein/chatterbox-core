@@ -507,6 +507,8 @@ private struct ChatRow: View {
 
 /// A chat as a card: its agent, name, latest line and state, sized to sit two to a row.
 private struct ChatCard: View {
+    @Environment(MobileStore.self) private var store
+    @State private var thumbnail: UIImage?
     let chat: Companion.ChatSummary
     var selected = false
     var activity: String? = nil
@@ -541,6 +543,13 @@ private struct ChatCard: View {
                         .lineLimit(3)
                         .multilineTextAlignment(.leading)
                 }
+                if let thumbnail {
+                    Image(uiImage: thumbnail).resizable().scaledToFit()
+                        .frame(height: 80)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityLabel("Latest image in " + chat.title)
+                }
                 Spacer(minLength: 0)
                 if let activity { Label(activity, systemImage: "flame").font(.caption2).foregroundStyle(.orange) }
             }
@@ -554,5 +563,9 @@ private struct ChatCard: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("chat-\(chat.id.uuidString)")
+        .task(id: "\(chat.thumbnail?.id.uuidString ?? "")|\(chat.thumbnail?.revision ?? "")") {
+            thumbnail = nil
+            if let file = chat.thumbnail { thumbnail = try? await store.thumbnail(file, in: chat.id) }
+        }
     }
 }
