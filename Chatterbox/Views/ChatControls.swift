@@ -462,51 +462,85 @@ struct FinishedChatsList: View {
     }
 }
 
-/// A compact list above Archived, shared across Projects, Chats and Studio sidebars.
-struct WorkingSessionsStrip: View {
+/// Unseen replies and currently running sessions share one compact sidebar footer.
+struct SidebarActivityStrip: View {
+    var showsEmptyState = false
     @Environment(AppModel.self) private var model
-    @AppStorage("sidebarWorkingExpanded") private var expanded = true
+    @AppStorage("sidebarActivityExpanded") private var expanded = true
     private let appearance = ReaderStyleSettings()
-    private var chats: [ChatSession] { Attention.shared.workingChats(in: model) }
+    private var finished: [ChatSession] { Attention.shared.finishedChats(in: model) }
+    private var working: [ChatSession] { Attention.shared.workingChats(in: model) }
 
     var body: some View {
-        if !chats.isEmpty {
+        let replies = finished
+        let running = working
+        let count = replies.count + running.count
+        if showsEmptyState || count > 0 {
             VStack(alignment: .leading, spacing: 3) {
                 Divider().padding(.bottom, 4)
                 Button { withAnimation(.smooth(duration: 0.2)) { expanded.toggle() } } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "chevron.right").font(.caption2)
                             .rotationEffect(.degrees(expanded ? 90 : 0))
-                        Text("Working").font(.caption.weight(.semibold))
-                        Text("\(chats.count)").font(.caption2.monospacedDigit())
+                        Text("Activity").font(.caption.weight(.semibold))
                         Spacer()
-                    }.foregroundStyle(.secondary).contentShape(Rectangle())
+                        if !replies.isEmpty {
+                            Text("\(replies.count) new").foregroundStyle(.blue)
+                        }
+                        if !running.isEmpty { Text("\(running.count) working") }
+                    }.font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Working sessions, \(chats.count)")
+                .accessibilityLabel("Activity, \(replies.count) new replies, \(running.count) working")
                 if expanded {
-                    ScrollView {
-                        VStack(spacing: 0) {
-                            ForEach(chats) { session in
-                                Button { Attention.shared.openWorkingChat(session.id, in: model) } label: {
-                                    HStack(spacing: 7) {
-                                        ActivitySpinner(color: appearance.style.color(for: session.record.provider))
-                                            .frame(width: 11, height: 11)
-                                        Text(session.record.projectFolder != nil ? session.projectName : session.title)
-                                            .font(.caption).lineLimit(1)
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                    }.padding(.vertical, 4).padding(.horizontal, 2)
-                                        .contentShape(Rectangle())
+                    if count == 0 {
+                        Text("All caught up").font(.caption).foregroundStyle(.secondary)
+                            .padding(.leading, 18).padding(.vertical, 4)
+                    } else {
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 0) {
+                                if !replies.isEmpty {
+                                    heading("New replies")
+                                    ForEach(replies) { row($0, running: false) }
                                 }
-                                .buttonStyle(.plain)
-                                .accessibilityLabel("Open working session \(session.title)")
-                                .help("\(session.title) · \(session.record.provider.label) is working")
+                                if !running.isEmpty {
+                                    heading("Working")
+                                    ForEach(running) { row($0, running: true) }
+                                }
                             }
-                        }
-                    }.frame(height: min(140, CGFloat(chats.count) * 24))
+                        }.frame(height: min(160, CGFloat(count) * 24 + CGFloat((replies.isEmpty ? 0 : 1) + (running.isEmpty ? 0 : 1)) * 20))
+                    }
                 }
             }
         }
+    }
+
+    private func heading(_ title: String) -> some View {
+        Text(title).font(.caption2.weight(.medium)).foregroundStyle(.secondary)
+            .padding(.top, 4).padding(.bottom, 2)
+    }
+
+    private func row(_ session: ChatSession, running: Bool) -> some View {
+        Button {
+            if running { Attention.shared.openWorkingChat(session.id, in: model) }
+            else { Attention.shared.openFinishedChat(session.id, in: model) }
+        } label: {
+            HStack(spacing: 7) {
+                if running {
+                    ActivitySpinner(color: appearance.style.color(for: session.record.provider))
+                        .frame(width: 11, height: 11)
+                } else {
+                    Circle().fill(.blue).frame(width: 6, height: 6).frame(width: 11, height: 11)
+                }
+                Text(session.record.projectFolder != nil ? session.projectName : session.title)
+                    .font(.caption).lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }.padding(.vertical, 4).padding(.horizontal, 2).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Open \(running ? "working session" : "new reply") \(session.title)")
+        .help("\(session.title) · \(running ? session.record.provider.label + " is working" : "New reply")")
     }
 }
 
