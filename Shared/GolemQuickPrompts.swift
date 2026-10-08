@@ -11,6 +11,9 @@ struct GolemQuickPrompt: Codable, Identifiable, Equatable {
 /// ago and `{now}` the time now, written the way Golem's activity file writes times.
 enum GolemQuickPrompts {
     static let key = "golemQuickPrompts"
+    /// Shared with the Home Screen widget: the app copies its list here, the widget reads it.
+    static let sharedSuite = "group.com.shelbyklein.Golem"
+    static var shared: UserDefaults? { UserDefaults(suiteName: sharedSuite) }
     static let defaults: [GolemQuickPrompt] = [
         GolemQuickPrompt(id: UUID(uuidString: "6A0F5C1E-3C1B-4C55-9D51-0F7D9B6C0001")!, label: "Catch me up",
                          text: "Catch me up on the last hour, since {since}: what changed in my chats (finished, waiting on me, still working) and any important email that arrived. Keep it short and lead with anything that needs me."),
