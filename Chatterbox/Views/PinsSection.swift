@@ -10,167 +10,9 @@ struct PinSheetRequest: Identifiable {
     var current: PinPlace?
 }
 
-/// The global pins at the top of the sidebar. A project's or Studio's own pins show as
-/// pills under its name instead (see PinPills). Click a pin to open it; drop an app, file,
-/// or link here to pin it; right-click to rename, move, or remove; drag to reorder.
-struct PinsSection: View {
-    /// The project or Studio of the chat that's open.
-    let place: PinPlace?
-    let onAdd: (PinSheetRequest) -> Void
-    @State private var renaming: Pin?
-    @State private var newTitle = ""
-    @State private var dropTargeted = false
-    /// Settings live in the header: the cards' size, and folding the section to its heading.
-    @AppStorage("sidebarPinSize") private var size = PinSize.small.rawValue
-    @AppStorage("sidebarPinsCollapsed") private var collapsed = false
-    private var store: PinStore { .shared }
-
-    enum PinSize: Double, CaseIterable {
-        case small = 24, medium = 32, large = 44
-        var name: String { switch self { case .small: "Small"; case .medium: "Medium"; case .large: "Large" } }
-        /// The icon's inset in its card.
-        var inset: CGFloat { switch self { case .small: 4; case .medium: 5; case .large: 7 } }
-    }
-    private var pinSize: PinSize { PinSize(rawValue: size) ?? .small }
-
-    var body: some View {
-        let global = store.globalPins
-        VStack(alignment: .leading, spacing: 6) {
-            header(global.count)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-            if collapsed {
-                EmptyView()
-            } else if global.isEmpty {
-                Text("Pin websites, apps, folders, or Shortcuts you open often. Drop them here, or click +.")
-                    .font(.caption).foregroundStyle(.secondary)
-            } else {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: size, maximum: size), spacing: 5)], alignment: .leading, spacing: 5) {
-                    ForEach(Array(global.enumerated()), id: \.element.id) { index, pin in
-                        card(pin, number: index < 9 ? index + 1 : nil)
-                    }
-                }
-            }
-        }
-        .padding(8)
-        .background(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.highlight.opacity(dropTargeted ? 0.6 : 0), lineWidth: 1.5))
-        .onDrop(of: [.fileURL, .url], isTargeted: $dropTargeted) { dropped($0, place: nil) }
-        .alert("Rename Pin", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
-            TextField("Name", text: $newTitle)
-            Button("Rename") { if let pin = renaming { store.rename(pin, to: newTitle.trimmingCharacters(in: .whitespaces)) } }
-            Button("Cancel", role: .cancel) {}
-        }
-
-    }
-
-    private func header(_ count: Int) -> some View {
-        HStack(spacing: 6) {
-            Button { withAnimation(.smooth(duration: 0.2)) { collapsed.toggle() } } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .bold))
-                        .rotationEffect(.degrees(collapsed ? 0 : 90))
-                    Text("Pins").lineLimit(1)
-                    if collapsed && count > 0 { Text("\(count)").font(.caption).foregroundStyle(.tertiary) }
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help(collapsed ? "Show pins" : "Collapse pins")
-            .accessibilityValue(collapsed ? "Collapsed" : "Expanded")
-            Spacer()
-            if !collapsed {
-                Menu {
-                    Picker("Size", selection: $size) {
-                        ForEach(PinSize.allCases, id: \.rawValue) { Text($0.name).tag($0.rawValue) }
-                    }
-                    .pickerStyle(.inline)
-                } label: { Image(systemName: "square.grid.3x3") }
-                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                    .help("Pin size")
-                    .accessibilityLabel("Pin size")
-            }
-            Button { onAdd(PinSheetRequest(place: nil, current: place)) } label: { Image(systemName: "plus") }
-                .buttonStyle(.borderless)
-                .help("Add a pin that shows everywhere")
-        }
-    }
-
-    /// A pin as a square card: its icon, the name on hover and for VoiceOver.
-    private func card(_ pin: Pin, number: Int?) -> some View {
-        Button { store.open(pin) } label: {
-            let corner: CGFloat = pinSize == .small ? 6 : 8
-            PinIcon(pin: pin)
-                .padding(pinSize.inset)
-                .frame(width: size, height: size)
-                .background(RoundedRectangle(cornerRadius: corner).fill(Color.primary.opacity(0.07)))
-                .overlay(RoundedRectangle(cornerRadius: corner).strokeBorder(Color.primary.opacity(0.08)))
-                .contentShape(RoundedRectangle(cornerRadius: corner))
-        }
-        .buttonStyle(.plain)
-        .help(pin.title)
-        .accessibilityLabel(pin.title)
-        .accessibilityHint("Opens the pin")
-        .modifier(PinMenu(pin: pin, place: place, store: store, rename: { newTitle = pin.title; renaming = pin }))
-    }
-
-    private func row(_ pin: Pin, number: Int?) -> some View {
-        PinRow(pin: pin, number: number)
-            .contextMenu {
-                Button("Open") { store.open(pin) }
-                Button("Rename\u{2026}") { newTitle = pin.title; renaming = pin }
-                if pin.kind == .app || pin.kind == .file {
-                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: pin.target)]) }
-                }
-                if pin.kind == .website {
-                    Button("Open in Browser") { if let url = PinStore.normalizedURL(pin.target) { NSWorkspace.shared.open(url) } }
-                    Button("Copy Link") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(pin.target, forType: .string)
-                    }
-                }
-                Divider()
-                if pin.place != nil {
-                    Button("Show Everywhere") { store.setPlace(pin, to: nil) }
-                } else if let place {
-                    Button("Move to \(place.name)") { store.setPlace(pin, to: place) }
-                }
-                Divider()
-                Button("Remove Pin", role: .destructive) { store.remove(pin) }
-            }
-            .draggable(pin.id.uuidString)
-            .dropDestination(for: String.self) { ids, _ in
-                guard let id = ids.first.flatMap(UUID.init(uuidString:)),
-                      let dragged = store.pins.first(where: { $0.id == id }), dragged.place == pin.place else { return false }
-                store.move(id, to: pin.id)
-                return true
-            }
-    }
-
-    /// Apps and files pin as themselves; links (say, dragged from a browser) pin as websites.
-    private func dropped(_ providers: [NSItemProvider], place: PinPlace?) -> Bool {
-        let key = place?.key
-        for provider in providers {
-            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-                _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                    guard let url, url.isFileURL else { return }
-                    Task { @MainActor in
-                        let isApp = url.pathExtension == "app"
-                        PinStore.shared.add(Pin(title: isApp ? url.deletingPathExtension().lastPathComponent : url.lastPathComponent,
-                                                kind: isApp ? .app : .file, target: url.path, place: key))
-                    }
-                }
-            } else {
-                _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                    guard let url, !url.isFileURL else { return }
-                    Task { @MainActor in
-                        PinStore.shared.add(Pin(title: url.host ?? url.absoluteString, kind: .website, target: url.absoluteString, place: key))
-                    }
-                }
-            }
-        }
-        return true
-    }
+enum PinSize: Double, CaseIterable {
+    case small = 24, medium = 32, large = 44
+    var name: String { switch self { case .small: "Small"; case .medium: "Medium"; case .large: "Large" } }
 }
 
 /// A project's or Studio's pins as small pills under its name in the sidebar. Click one to
@@ -310,14 +152,8 @@ struct AddPinSheet: View {
             HStack {
                 Text("Add a Pin").font(.title3.weight(.semibold))
                 Spacer()
-                if let current = request.current {
-                    Picker("Show", selection: $placeKey) {
-                        Text("Everywhere").tag(String?.none)
-                        Text("In \(current.name)").tag(String?.some(current.key))
-                    }
-                    .fixedSize()
-                    .help("Where this pin shows: in every chat, or only in \(current.name)'s chats")
-                }
+                Text(request.place.map { "In " + $0.name } ?? "Global")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Picker("Kind", selection: $kind) {
                 ForEach(Pin.Kind.allCases, id: \.self) { Text($0.label).tag($0) }
@@ -446,43 +282,117 @@ struct AddPinSheet: View {
     }
 }
 
-/// A pin's right-click menu and drag-to-reorder, for cards.
-private struct PinMenu: ViewModifier {
-    let pin: Pin
-    let place: PinPlace?
-    let store: PinStore
-    let rename: () -> Void
+/// Global shortcuts stay in the window toolbar; editing belongs in Settings > Pins.
+struct GlobalPinsToolbar: View {
+    @Environment(AppModel.self) private var model
+    @AppStorage("sidebarPinSize") private var size = PinSize.small.rawValue
+    private var store: PinStore { .shared }
 
-    func body(content: Content) -> some View {
-        content
-            .contextMenu {
-                Button("Open") { store.open(pin) }
-                Button("Rename\u{2026}", action: rename)
-                if pin.kind == .app || pin.kind == .file {
-                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: pin.target)]) }
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(Array(store.globalPins.prefix(8))) { pin in
+                Button { store.open(pin) } label: {
+                    PinIcon(pin: pin)
+                        .padding(4)
+                        .frame(width: size, height: size)
+                        .contentShape(Rectangle())
                 }
-                if pin.kind == .website {
-                    Button("Open in Browser") { if let url = PinStore.normalizedURL(pin.target) { NSWorkspace.shared.open(url) } }
-                    Button("Copy Link") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(pin.target, forType: .string)
+                .buttonStyle(.plain)
+                .help(pin.title)
+                .accessibilityLabel(pin.title)
+            }
+            if store.globalPins.count > 8 {
+                Menu {
+                    ForEach(Array(store.globalPins.dropFirst(8))) { pin in
+                        Button(pin.title) { store.open(pin) }
                     }
-                }
-                Divider()
-                if pin.place != nil {
-                    Button("Show Everywhere") { store.setPlace(pin, to: nil) }
-                } else if let place {
-                    Button("Move to \(place.name)") { store.setPlace(pin, to: place) }
-                }
-                Divider()
-                Button("Remove Pin", role: .destructive) { store.remove(pin) }
+                } label: { Image(systemName: "ellipsis") }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden)
+                .help("More global pins")
             }
-            .draggable(pin.id.uuidString)
-            .dropDestination(for: String.self) { ids, _ in
-                guard let id = ids.first.flatMap(UUID.init(uuidString:)),
-                      let dragged = store.pins.first(where: { $0.id == id }), dragged.place == pin.place else { return false }
-                store.move(id, to: pin.id)
-                return true
+            if store.globalPins.isEmpty {
+                Button {
+                    AppPreferences.defaults.set("pins", forKey: "settingsPage")
+                    model.showingSettings = true
+                } label: {
+                    Image(systemName: "pin").padding(5).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).help("Set up global pins in Settings")
+                .accessibilityLabel("Global Pins settings")
             }
+        }
+        .padding(.horizontal, 5)
+        .contextMenu {
+            Button("Manage Global Pins…") {
+                AppPreferences.defaults.set("pins", forKey: "settingsPage")
+                model.showingSettings = true
+            }
+        }
+    }
+}
+
+struct PinsSettingsView: View {
+    @State private var adding: PinSheetRequest?
+    @State private var renaming: Pin?
+    @State private var title = ""
+    @AppStorage("sidebarPinSize") private var size = PinSize.small.rawValue
+    @AppStorage(PinStore.openInAppKey) private var openInApp = true
+    private var store: PinStore { .shared }
+
+    var body: some View {
+        Form {
+            Section {
+                Picker("Toolbar icon size", selection: $size) {
+                    ForEach(PinSize.allCases, id: \.rawValue) { Text($0.name).tag($0.rawValue) }
+                }
+                Toggle("Open website pins inside Chatterbox", isOn: $openInApp)
+                    .help("The page opens inside Chatterbox with the chat floating beside it. Off: website pins open in your browser.")
+            }
+            Section {
+                if store.globalPins.isEmpty {
+                    Text("Add websites, apps, files, folders or Shortcuts you use everywhere.")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(Array(store.globalPins.enumerated()), id: \.element.id) { index, pin in
+                    HStack(spacing: 10) {
+                        Button { store.open(pin) } label: { PinIcon(pin: pin).frame(width: 24, height: 24) }
+                            .buttonStyle(.plain).help("Open " + pin.title)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(pin.title)
+                            Text(pin.target).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                        Spacer()
+                        Button {
+                            let pins = store.globalPins
+                            store.move(pin.id, to: pins[index - 1].id)
+                        } label: { Image(systemName: "arrow.up") }
+                        .disabled(index == 0).help("Move up")
+                        Button {
+                            let pins = store.globalPins
+                            store.move(pin.id, to: pins[index + 1].id)
+                        } label: { Image(systemName: "arrow.down") }
+                        .disabled(index == store.globalPins.count - 1).help("Move down")
+                        Button("Rename") { title = pin.title; renaming = pin }
+                        Button { store.remove(pin) } label: { Image(systemName: "trash") }
+                            .help("Remove " + pin.title)
+                    }
+                    .padding(.vertical, 3)
+                }
+                Button("Add Global Pin…") { adding = PinSheetRequest(place: nil, current: nil) }
+            } header: {
+                Text("Global pins")
+            } footer: {
+                Text("Global pins appear in the middle of the top bar. To add a project pin, right-click the project and choose Add Pin.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(WideFormStyle())
+        .frame(maxWidth: .infinity)
+        .sheet(item: $adding) { AddPinSheet(request: $0) }
+        .alert("Rename Pin", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+            TextField("Name", text: $title)
+            Button("Rename") { if let pin = renaming { store.rename(pin, to: title.trimmingCharacters(in: .whitespacesAndNewlines)) } }
+            Button("Cancel", role: .cancel) {}
+        }
     }
 }

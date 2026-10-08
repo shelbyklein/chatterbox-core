@@ -26,15 +26,15 @@ struct SettingsView: View {
     @AppStorage("codexDefaultMode") private var codexDefaultMode = PermissionModes.defaultCodex
     @AppStorage(AppModel.keepRepliesRunningKey) private var keepRepliesRunning = true
     @AppStorage(KeepAwake.key) private var keepAwake = true
-    @AppStorage(PinStore.openInAppKey) private var openPinsInApp = true
     @AppStorage(ChatSession.remoteControlKey) private var remoteControl = false
 
     /// Settings' pages, listed down the left of the window.
     enum Page: String, CaseIterable, Identifiable {
-        case notifications, models, newChats, behavior, golem, appearance, instructions, secrets, plugins, iPhone, proxy, diagnostics, agents
+        case notifications, pins, models, newChats, behavior, golem, appearance, instructions, secrets, plugins, iPhone, proxy, diagnostics, agents
         var id: String { rawValue }
         var title: String {
             switch self {
+            case .pins: "Pins"
             case .notifications: "Notifications"
             case .models: "Models"
             case .newChats: "New Chats"
@@ -52,6 +52,7 @@ struct SettingsView: View {
         }
         var icon: String {
             switch self {
+            case .pins: "pin"
             case .notifications: "bell.badge"
             case .models: "cpu"
             case .newChats: "square.and.pencil"
@@ -70,9 +71,9 @@ struct SettingsView: View {
         /// Grouped in the list: everyday settings, then integrations, then the technical ones.
         static var groups: [(String?, [Page])] {
             #if GOLEM_APP
-            let everyday: [Page] = [.notifications, .models, .newChats, .behavior, .golem, .appearance, .instructions]
+            let everyday: [Page] = [.notifications, .pins, .models, .newChats, .behavior, .golem, .appearance, .instructions]
             #else
-            let everyday: [Page] = [.notifications, .models, .newChats, .behavior, .appearance, .instructions]
+            let everyday: [Page] = [.notifications, .pins, .models, .newChats, .behavior, .appearance, .instructions]
             #endif
             return [(nil, everyday), ("Connections", [.secrets, .plugins, .iPhone]), ("Advanced", [.proxy, .agents, .diagnostics])]
         }
@@ -123,6 +124,7 @@ struct SettingsView: View {
 
     @ViewBuilder private var pageView: some View {
         switch page {
+        case .pins: PinsSettingsView()
         case .notifications: notificationsPane
         case .models: modelsPane
         case .newChats: newChatsPane
@@ -259,8 +261,6 @@ struct SettingsView: View {
             Section {
                 Toggle("Remote Control for Claude chats", isOn: $remoteControl)
                     .help("Claude chats you use can be read and continued on claude.ai and in the Claude app, while Chatterbox is open. Turn it on or off for one chat from its toolbar.")
-                Toggle("Open website pins inside Chatterbox", isOn: $openPinsInApp)
-                    .help("The page takes the chat's place, and the chat floats in the corner. Off: pins open in your browser.")
                 Toggle("Keep replies running after Chatterbox quits", isOn: $keepRepliesRunning)
                 Toggle("Keep this Mac awake while Chatterbox is open", isOn: $keepAwake)
                     .onChange(of: keepAwake) { KeepAwake.shared.apply() }

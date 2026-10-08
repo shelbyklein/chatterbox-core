@@ -25,6 +25,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         /// The window's title, drawn as the first item: macOS leaves a stretchy gap after its own
         /// title, which pushed the view buttons toward the middle.
         static let title = NSToolbarItem.Identifier("chatterbox.title")
+        static let pins = NSToolbarItem.Identifier("chatterbox.pins")
         static let tone = NSToolbarItem.Identifier("chatterbox.tone")
         static let place = NSToolbarItem.Identifier("chatterbox.place")
         static let repo = NSToolbarItem.Identifier("chatterbox.repo")
@@ -38,7 +39,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         /// middle, its image library included (in the place item, so it shares their pill); usage and the terminal; Settings last.
         /// New chats start from the sidebar, the Studios page and Cmd-N, not the toolbar.
         static let all: [NSToolbarItem.Identifier] = [title, views, .flexibleSpace,
-                                                       tone, place, repo, golem, .flexibleSpace,
+                                                       pins, tone, place, repo, golem, .flexibleSpace,
                                                        usage, terminal, finished, .space, settings, newChat]
         static let chat: [NSToolbarItem.Identifier] = [tone, place, repo, golem, usage, images, terminal]
     }
@@ -73,6 +74,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
         toolbar.allowsUserCustomization = false
+        toolbar.centeredItemIdentifiers = [ID.pins]
         #if DEBUG
         Self.made.append(self)
         #endif
@@ -261,6 +263,8 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
             item = group
         case ID.newChat:
             item = button(id, "plus", "New Chat", "Start a new chat (⌘N)", #selector(startNewChat))
+        case ID.pins:
+            item = hosted(id, "Global Pins", GlobalPinsToolbar())
         case ID.tone:
             item = hosted(id, "Tone", ToneSlot(bridge: bridge))
         case ID.place:
@@ -279,6 +283,9 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
             item = button(id, "photo.on.rectangle.angled", "Images", "Every image made in this chat", #selector(showImages))
         case ID.terminal:
             item = button(id, "terminal", "Terminal", "A terminal in this chat's folder, at the bottom of the window (\u{2303}`)", #selector(toggleTerminal))
+            // apply() owns availability; AppKit's action-based validation would
+            // re-enable this button on overview pages simply because its target exists.
+            item.autovalidates = false
         case ID.finished:
             item = hosted(id, "Finished chats", FinishedChatsBell())
         default:

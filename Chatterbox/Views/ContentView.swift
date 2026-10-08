@@ -1115,9 +1115,6 @@ extension ContentView {
                     .scrollContentBackground(.hidden)
                     .frame(height: 100)
                 #endif
-                PinsSection(place: model.selectedPinPlace) { model.pinSheet = $0 }
-                    .padding(.horizontal, 10)
-                    .padding(.bottom, 4)
             }
             GeometryReader { geometry in
                 sectionStack(height: geometry.size.height)
