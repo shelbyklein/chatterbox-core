@@ -1123,6 +1123,7 @@ extension ContentView {
             GeometryReader { geometry in
                 sectionStack(height: geometry.size.height)
             }
+            WorkingSessionsStrip().padding(.horizontal, 12).padding(.vertical, 6)
             sidebarDock
         }
     }

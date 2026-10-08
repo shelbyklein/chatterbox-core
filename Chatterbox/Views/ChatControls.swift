@@ -175,6 +175,7 @@ struct ChatNotes: View {
                     if expanded { Spacer(); Image(systemName: "chevron.up").font(.caption) }
                 }
                 .padding(expanded ? 0 : 8)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain).help(expanded ? "Collapse notes" : "Open notes")
             .accessibilityLabel(expanded ? "Collapse notes" : "Open notes")
@@ -251,7 +252,7 @@ struct ChatQuickActions: View {
     @Environment(\.colorScheme) private var scheme
     @State private var open = false
     var body: some View {
-        Button { open.toggle() } label: { Image(systemName: "bolt").padding(8) }
+        Button { open.toggle() } label: { Image(systemName: "bolt").padding(8).contentShape(Rectangle()) }
             .buttonStyle(.plain)
             .disabled(session.isRunning)
             .background(scheme == .dark ? Color(white: 0.10) : Color(white: 0.97), in: RoundedRectangle(cornerRadius: 10))
@@ -458,6 +459,54 @@ struct FinishedChatsList: View {
                 Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
             }.padding(10).contentShape(Rectangle())
         }.buttonStyle(.plain)
+    }
+}
+
+/// A compact list above Archived, shared across Projects, Chats and Studio sidebars.
+struct WorkingSessionsStrip: View {
+    @Environment(AppModel.self) private var model
+    @AppStorage("sidebarWorkingExpanded") private var expanded = true
+    private let appearance = ReaderStyleSettings()
+    private var chats: [ChatSession] { Attention.shared.workingChats(in: model) }
+
+    var body: some View {
+        if !chats.isEmpty {
+            VStack(alignment: .leading, spacing: 3) {
+                Divider().padding(.bottom, 4)
+                Button { withAnimation(.smooth(duration: 0.2)) { expanded.toggle() } } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "chevron.right").font(.caption2)
+                            .rotationEffect(.degrees(expanded ? 90 : 0))
+                        Text("Working").font(.caption.weight(.semibold))
+                        Text("\(chats.count)").font(.caption2.monospacedDigit())
+                        Spacer()
+                    }.foregroundStyle(.secondary).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Working sessions, \(chats.count)")
+                if expanded {
+                    ScrollView {
+                        VStack(spacing: 0) {
+                            ForEach(chats) { session in
+                                Button { Attention.shared.openWorkingChat(session.id, in: model) } label: {
+                                    HStack(spacing: 7) {
+                                        ActivitySpinner(color: appearance.style.color(for: session.record.provider))
+                                            .frame(width: 11, height: 11)
+                                        Text(session.record.projectFolder != nil ? session.projectName : session.title)
+                                            .font(.caption).lineLimit(1)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                    }.padding(.vertical, 4).padding(.horizontal, 2)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("Open working session \(session.title)")
+                                .help("\(session.title) · \(session.record.provider.label) is working")
+                            }
+                        }
+                    }.frame(height: min(140, CGFloat(chats.count) * 24))
+                }
+            }
+        }
     }
 }
 

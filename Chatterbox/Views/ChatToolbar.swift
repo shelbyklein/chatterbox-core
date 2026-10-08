@@ -113,7 +113,7 @@ struct SessionTools: View {
             HStack(spacing: 4) {
                 Image(systemName: "slider.horizontal.3")
                 Image(systemName: "chevron.down").font(.caption2)
-            }.padding(8)
+            }.padding(8).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .background(scheme == .dark ? Color(white: 0.10) : Color(white: 0.97), in: RoundedRectangle(cornerRadius: 10))
