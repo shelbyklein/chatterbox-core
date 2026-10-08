@@ -464,12 +464,13 @@ struct FinishedChatsList: View {
 /// At the top of the sidebar: replies that finished while you were elsewhere, newest first,
 /// until you open them. The same list as the bell's; hidden when you're caught up.
 struct UnseenRepliesStrip: View {
+    var showsEmptyState = false
     @Environment(AppModel.self) private var model
     @AppStorage("sidebarUnseenRepliesExpanded") private var expanded = true
     private let appearance = ReaderStyleSettings()
     private var chats: [ChatSession] { Attention.shared.finishedChats(in: model) }
     var body: some View {
-        if !chats.isEmpty {
+        if showsEmptyState || !chats.isEmpty {
             VStack(alignment: .leading, spacing: 4) {
                 Button { withAnimation(.smooth(duration: 0.2)) { expanded.toggle() } } label: {
                     HStack(spacing: 6) {
@@ -486,9 +487,13 @@ struct UnseenRepliesStrip: View {
                 .accessibilityLabel("New replies, \(chats.count)")
                 if expanded {
                     VStack(spacing: 2) {
+                        if chats.isEmpty {
+                            Text("No new replies").font(.caption).foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading).padding(.leading, 18)
+                        }
                         ForEach(chats.prefix(6)) { row($0) }
                         if chats.count > 6 {
-                            Text("\(chats.count - 6) more in the bell").font(.caption).foregroundStyle(.secondary)
+                            Text("\(chats.count - 6) more in Activity").font(.caption).foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading).padding(.leading, 26)
                         }
                     }

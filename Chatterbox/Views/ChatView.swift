@@ -80,26 +80,22 @@ struct ChatView: View {
                 TerminalPanel(session: session, onClose: { showingTerminal = false }, pending: $terminalCommand)
             }
         }
-        .overlay(alignment: .topLeading) {
+        .overlay(alignment: .topTrailing) {
             if !compact && tileContext == nil && !session.isDot {
                 GeometryReader { geometry in
-                    HStack(alignment: .top, spacing: 8) {
-                        ChatNotes(scope: PinnedNotesStore.scope(for: session.record), project: session.record.projectFolder != nil,
-                                  panelWidth: min(280, max(220, (geometry.size.width - appearance.style.contentWidth) / 2 - 32)))
-                            .id(PinnedNotesStore.scope(for: session.record))
-                        ChatQuickActions(session: session)
+                    VStack(alignment: .trailing, spacing: 8) {
+                        HStack(alignment: .top, spacing: 8) {
+                            SessionTools(bridge: windowToolbar ?? ownToolbar)
+                            ChatNotes(scope: PinnedNotesStore.scope(for: session.record), project: session.record.projectFolder != nil,
+                                      panelWidth: min(280, max(220, (geometry.size.width - appearance.style.contentWidth) / 2 - 32)))
+                                .id(PinnedNotesStore.scope(for: session.record))
+                            ChatQuickActions(session: session)
+                        }
+                        ChatPins(chat: session.record.id, agentName: session.record.backend == .codex ? "Codex" : "Claude",
+                                 panelWidth: min(280, max(220, (geometry.size.width - appearance.style.contentWidth) / 2 - 32))) { pinJump = $0 }
                     }
+                    .frame(maxWidth: .infinity, alignment: .trailing)
                     .padding(16)
-                }
-            }
-        }
-        .overlay(alignment: .topTrailing) {
-            if showsPins {
-                GeometryReader { geometry in
-                    ChatPins(chat: session.record.id, agentName: session.record.backend == .codex ? "Codex" : "Claude",
-                             panelWidth: min(280, max(220, (geometry.size.width - appearance.style.contentWidth) / 2 - 32))) { pinJump = $0 }
-                        .frame(maxWidth: .infinity, alignment: .trailing)
-                        .padding(16)
                 }
             }
         }

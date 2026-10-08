@@ -1108,7 +1108,7 @@ extension ContentView {
     var sidebarColumn: some View {
         VStack(spacing: 0) {
             DesktopOverviewControls().padding(.horizontal, 12).padding(.vertical, 8)
-            UnseenRepliesStrip().padding(.horizontal, 12).padding(.bottom, 6)
+            UnseenRepliesStrip(showsEmptyState: model.showingChatsSidebar).padding(.horizontal, 12).padding(.bottom, 6)
             if !isFiltering && model.studioSidebarID == nil {
                 #if GOLEM_APP
                 List { Section { dotRow } }

@@ -202,7 +202,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         // A chat's own items show only with a chat, and only those that apply to it.
         let repo = session.flatMap { s in GitStatusStore.shared.status(for: s.record.projectFolder)?.remote(preferring: s.record.gitRemote)?.repo }
         let shown: [NSToolbarItem.Identifier: Bool] = [
-            ID.tone: session != nil, ID.place: session != nil, ID.repo: repo != nil,
+            ID.tone: session?.isDot == true, ID.place: session?.isDot == true, ID.repo: session?.isDot == true && repo != nil,
             ID.golem: session?.isDot == true,
         ]
         for (id, visible) in shown { setVisible(id, visible) }
