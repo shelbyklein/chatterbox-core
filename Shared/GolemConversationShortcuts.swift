@@ -5,7 +5,8 @@ import SwiftUI
 /// Ephemeral command mailbox: cold launches can wait for the connected chat to appear.
 @MainActor @Observable final class GolemConversationRequest {
     static let shared = GolemConversationRequest()
-    struct Request { let id = UUID(); let start: Bool }
+    /// `once`: listen for one message, send it, then stop (the Home Screen widget).
+    struct Request { let id = UUID(); let start: Bool; var once = false }
     var pending: Request?
     var cancelPending: (() -> Void)?
     private var results: [UUID: String] = [:]
@@ -15,9 +16,9 @@ import SwiftUI
         results[request.id] = error ?? ""
         pending = nil
     }
-    func run(start: Bool) async throws {
+    func run(start: Bool, once: Bool = false) async throws {
         if let previous = pending { cancelPending?(); finish(previous, error: "Another conversation action replaced this request.") }
-        let request = Request(start: start)
+        let request = Request(start: start, once: once)
         pending = request
         defer {
             results.removeValue(forKey: request.id)

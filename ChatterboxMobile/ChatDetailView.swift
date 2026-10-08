@@ -95,6 +95,10 @@ struct ChatDetailView: View {
     /// his reply reads from its start instead of jumping to its end. Scrolling yourself, jumping
     /// to the newest, or reopening the chat clears it.
     @State private var anchoredMessage: UUID?
+    /// One dictated message (the widget): after it sends, the microphone stops, and his reply
+    /// doesn't reopen it.
+    @State private var voiceOnce = false
+    @State private var quietAfterReply = false
     @State private var voiceConversation = false
     @State private var voiceGeneration = UUID()
     @State private var voiceEnded = false
@@ -149,10 +153,14 @@ struct ChatDetailView: View {
                     if !request.start { endVoiceConversation(); GolemConversationRequest.shared.finish(request) }
                     else if voiceConversation { GolemConversationRequest.shared.finish(request) }
                     else if summary.isRunning || sending || !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingImages.isEmpty {
-                        GolemConversationRequest.shared.finish(request, error: "Wait for Golem to finish and send or clear your draft before starting Conversation.")
+                        let problem = request.once
+                            ? "Golem is busy or your draft isn't empty. Wait for his reply, or send or clear your draft, then try again."
+                            : "Wait for Golem to finish and send or clear your draft before starting Conversation."
+                        if request.once { error = problem }
+                        GolemConversationRequest.shared.finish(request, error: problem)
                     } else {
                         GolemConversationRequest.shared.cancelPending = { endVoiceConversation() }
-                        startVoiceConversation()
+                        startVoiceConversation(once: request.once)
                         await listeningTask?.value
                         GolemConversationRequest.shared.finish(request, error: dictation.isListening ? nil : dictation.problem ?? "Listening did not start.")
                     }
@@ -832,10 +840,11 @@ struct ChatDetailView: View {
     }
 
     #if GOLEM_APP
-    private func startVoiceConversation() {
+    private func startVoiceConversation(once: Bool = false) {
         guard !summary.isRunning, !sending, draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               pendingImages.isEmpty else { return }
         voiceGeneration = UUID()
+        voiceOnce = once
         voiceEnded = false
         voiceConversation = true
         composing = false
@@ -845,6 +854,7 @@ struct ChatDetailView: View {
 
     private func endVoiceConversation() {
         voiceGeneration = UUID()
+        voiceOnce = false
         voiceConversation = false
         voiceEnded = true
         voiceReply = nil
@@ -865,12 +875,14 @@ struct ChatDetailView: View {
         if reply.id != seenReply {
             seenReply = reply.id
             voiceReply = nil
+            let quiet = quietAfterReply
+            quietAfterReply = false
             // Ending a conversation (or dismissing his notice) silences the reply it was on, not
             // the ones after it.
             voiceEnded = false
             guard voiceConversation || GolemVoice.shared.autoRead else { return }
             voiceReply = reply.id
-            if voiceConversation || GolemVoice.shared.listensAfter { listenForReply() }
+            if !quiet, voiceConversation || GolemVoice.shared.listensAfter { listenForReply() }
         }
         guard !voiceEnded, voiceReply == reply.id else { return }
         let session = voiceGeneration
@@ -904,6 +916,8 @@ struct ChatDetailView: View {
             await send()
             guard session == voiceGeneration, voiceConversation else { return }
             if error != nil { endVoiceConversation(); return }
+            // One message from the widget: sent, so the microphone stops; his reply stays quiet-eared.
+            if voiceOnce { quietAfterReply = true; endVoiceConversation(); return }
             voiceInput = composerState.inputGeneration
             dictation.nextUtterance()
         }
