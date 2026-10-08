@@ -121,7 +121,8 @@ struct ChatPins: View {
                         else { Text("\(entries.count)").font(.caption.monospacedDigit()) }
                         if store.expanded { Spacer(); Image(systemName: "chevron.up").font(.caption) }
                     }
-                    .padding(store.expanded ? 0 : 8)
+                    .padding(.horizontal, store.expanded ? 0 : 8)
+                    .frame(height: store.expanded ? nil : 32)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain).help(store.expanded ? "Collapse pinned messages" : "Show pinned messages")

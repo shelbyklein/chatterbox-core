@@ -174,7 +174,8 @@ struct ChatNotes: View {
                     else if !entries.isEmpty { Text("\(entries.count)").font(.caption.monospacedDigit()) }
                     if expanded { Spacer(); Image(systemName: "chevron.up").font(.caption) }
                 }
-                .padding(expanded ? 0 : 8)
+                .padding(.horizontal, expanded ? 0 : 8)
+                .frame(height: expanded ? nil : 32)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain).help(expanded ? "Collapse notes" : "Open notes")
@@ -252,7 +253,7 @@ struct ChatQuickActions: View {
     @Environment(\.colorScheme) private var scheme
     @State private var open = false
     var body: some View {
-        Button { open.toggle() } label: { Image(systemName: "bolt").padding(8).contentShape(Rectangle()) }
+        Button { open.toggle() } label: { Image(systemName: "bolt").padding(.horizontal, 8).frame(height: 32).contentShape(Rectangle()) }
             .buttonStyle(.plain)
             .disabled(session.isRunning)
             .background(scheme == .dark ? Color(white: 0.10) : Color(white: 0.97), in: RoundedRectangle(cornerRadius: 10))
