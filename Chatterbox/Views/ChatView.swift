@@ -83,10 +83,13 @@ struct ChatView: View {
         .overlay(alignment: .topLeading) {
             if !compact && tileContext == nil && !session.isDot {
                 GeometryReader { geometry in
-                    ChatNotes(scope: PinnedNotesStore.scope(for: session.record), project: session.record.projectFolder != nil,
-                              panelWidth: min(280, max(220, (geometry.size.width - appearance.style.contentWidth) / 2 - 32)))
-                        .id(PinnedNotesStore.scope(for: session.record))
-                        .padding(16)
+                    HStack(alignment: .top, spacing: 8) {
+                        ChatNotes(scope: PinnedNotesStore.scope(for: session.record), project: session.record.projectFolder != nil,
+                                  panelWidth: min(280, max(220, (geometry.size.width - appearance.style.contentWidth) / 2 - 32)))
+                            .id(PinnedNotesStore.scope(for: session.record))
+                        ChatQuickActions(session: session)
+                    }
+                    .padding(16)
                 }
             }
         }

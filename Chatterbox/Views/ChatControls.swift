@@ -218,6 +218,34 @@ struct ChatNotes: View {
     }
 }
 
+/// Beside the notes: one-click commands for the chat. A click sends /dev-sync, which shows its
+/// plan and waits for your OK before changing anything; the menu lists the actions.
+struct ChatQuickActions: View {
+    let session: ChatSession
+    @Environment(\.colorScheme) private var scheme
+    /// Each is sent as a message, exactly as if typed.
+    static let actions: [(title: String, message: String)] = [
+        ("Sync branches to main (/dev-sync)", "/dev-sync"),
+    ]
+    var body: some View {
+        Menu {
+            ForEach(Self.actions, id: \.message) { action in
+                Button(action.title) { session.send(action.message) }
+            }
+        } label: {
+            Image(systemName: "bolt").padding(8)
+        } primaryAction: {
+            session.send(Self.actions[0].message)
+        }
+        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+        .disabled(session.isRunning)
+        .background(scheme == .dark ? Color(white: 0.10) : Color(white: 0.97), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12)))
+        .help(session.isRunning ? "Quick actions are available once the reply finishes" : "Run /dev-sync (hold for more quick actions)")
+        .accessibilityLabel("Quick actions")
+    }
+}
+
 struct FinishedChatsBell: View {
     @Environment(AppModel.self) private var model
     @State private var open = false

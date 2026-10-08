@@ -24,6 +24,10 @@ struct ModelPicker: View {
         Group {
             if selectionPill {
                 HStack(spacing: 6) {
+                    // Out of the way while you're choosing a different model.
+                    if !showingPresets && !isOpen {
+                        ComposerEffortSlider(session: session, color: color).transition(.opacity)
+                    }
                     Button {
                         if showingPresets { isOpen.toggle() } else { showingPresets = true }
                     } label: {
@@ -382,5 +386,55 @@ struct ModelPopover: View {
         }
         ModelPresets.shared.saveCurrent(session, title: title)
         close()
+    }
+}
+
+/// Under the message box, beside the model: the current model's effort, one step per level.
+/// Hidden when the model has no effort setting.
+struct ComposerEffortSlider: View {
+    let session: ChatSession
+    let color: Color
+
+    /// "" (the model's default), then each level the model supports, lowest first.
+    private var stops: [String] {
+        switch session.record.backend {
+        case .claude:
+            return [""] + ClaudeModels.shared.info(session.record.model).efforts
+        case .codex:
+            guard let codex = session.record.codex else { return [] }
+            let models = CodexAppServer.shared.models
+            let current = models.first { $0.model == codex.model } ?? models.first(where: \.isDefault)
+            return [""] + (current?.efforts ?? ["low", "medium", "high"])
+        }
+    }
+    private var effort: String {
+        session.record.backend == .claude ? session.record.effort : session.record.codex?.effort ?? ""
+    }
+    private func set(_ value: String) {
+        switch session.record.backend {
+        case .claude: session.setEffort(value)
+        case .codex: session.setCodexEffort(value.isEmpty ? nil : value)
+        }
+    }
+    private func name(_ stop: String) -> String { stop.isEmpty ? "Default" : ChatView.effortLabel(stop) }
+
+    var body: some View {
+        let stops = self.stops
+        if stops.count > 1 {
+            let index = Double(stops.firstIndex(of: effort) ?? 0)
+            HStack(spacing: 6) {
+                Slider(value: Binding(get: { index }, set: { set(stops[Int($0.rounded())]) }),
+                       in: 0...Double(stops.count - 1), step: 1)
+                    .controlSize(.mini)
+                    .tint(color)
+                    .frame(width: CGFloat(18 * stops.count + 24))
+                Text(name(stops[Int(index)]))
+                    .font(.caption).foregroundStyle(.secondary)
+                    .frame(minWidth: 58, alignment: .leading)
+            }
+            .help("Effort: \(name(stops[Int(index)]))")
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Effort, \(name(stops[Int(index)]))")
+        }
     }
 }
