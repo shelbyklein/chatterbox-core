@@ -362,6 +362,8 @@ struct ChatHomeView: View {
                     HStack(spacing: 16) { searchField; filterPicker.frame(width: 300) }
                     VStack(alignment: .leading, spacing: 12) { searchField; filterPicker }
                 }
+                // The same New replies as the sidebar's, since this page has no sidebar.
+                UnseenRepliesStrip().frame(maxWidth: 560, alignment: .leading)
             }.padding(28)
             Divider()
             ScrollView {

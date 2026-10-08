@@ -218,31 +218,132 @@ struct ChatNotes: View {
     }
 }
 
-/// Beside the notes: one-click commands for the chat. A click sends /dev-sync, which shows its
-/// plan and waits for your OK before changing anything; the menu lists the actions.
+/// A saved prompt the ⚡️ list sends to a chat in one click.
+struct QuickPrompt: Codable, Identifiable, Equatable {
+    var id = UUID()
+    var title: String
+    var prompt: String
+}
+
+/// The prompt presets, kept in this Mac's preferences; /dev-sync to start with.
+@MainActor
+@Observable
+final class QuickPrompts {
+    static let shared = QuickPrompts()
+    private let key = "macQuickPrompts"
+    var prompts: [QuickPrompt] { didSet { save() } }
+    private init() {
+        if let data = AppPreferences.defaults.data(forKey: key), let saved = try? JSONDecoder().decode([QuickPrompt].self, from: data) {
+            prompts = saved
+        } else {
+            prompts = [QuickPrompt(title: "Sync branches to main", prompt: "/dev-sync")]
+        }
+    }
+    private func save() {
+        if let data = try? JSONEncoder().encode(prompts) { AppPreferences.defaults.set(data, forKey: key) }
+    }
+}
+
+/// Beside the notes: a list of prompt presets. Pick one to send it to this chat, exactly as
+/// if typed; edit the list in place. Disabled while a reply runs.
 struct ChatQuickActions: View {
     let session: ChatSession
     @Environment(\.colorScheme) private var scheme
-    /// Each is sent as a message, exactly as if typed.
-    static let actions: [(title: String, message: String)] = [
-        ("Sync branches to main (/dev-sync)", "/dev-sync"),
-    ]
+    @State private var open = false
     var body: some View {
-        Menu {
-            ForEach(Self.actions, id: \.message) { action in
-                Button(action.title) { session.send(action.message) }
+        Button { open.toggle() } label: { Image(systemName: "bolt").padding(8) }
+            .buttonStyle(.plain)
+            .disabled(session.isRunning)
+            .background(scheme == .dark ? Color(white: 0.10) : Color(white: 0.97), in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12)))
+            .help(session.isRunning ? "Prompt presets are available once the reply finishes" : "Prompt presets")
+            .accessibilityLabel("Prompt presets")
+            .popover(isPresented: $open, arrowEdge: .bottom) {
+                QuickPromptList { prompt in open = false; session.send(prompt.prompt) }
             }
-        } label: {
-            Image(systemName: "bolt").padding(8)
-        } primaryAction: {
-            session.send(Self.actions[0].message)
+    }
+}
+
+struct QuickPromptList: View {
+    let send: (QuickPrompt) -> Void
+    @State private var store = QuickPrompts.shared
+    @State var editing = false
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Prompt presets").font(.headline)
+                Spacer()
+                Button(editing ? "Done" : "Edit") { editing.toggle(); if !editing { store.prompts.removeAll { $0.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } } }
+            }
+            if store.prompts.isEmpty && !editing {
+                Text("No presets yet. Click Edit to add one.").font(.callout).foregroundStyle(.secondary)
+            }
+            ForEach($store.prompts) { $prompt in
+                if editing {
+                    HStack(alignment: .top, spacing: 8) {
+                        VStack(spacing: 4) {
+                            TextField("Name", text: $prompt.title).textFieldStyle(.roundedBorder)
+                            TextField("Prompt, e.g. /dev-sync", text: $prompt.prompt, axis: .vertical)
+                                .textFieldStyle(.roundedBorder).lineLimit(1...4)
+                        }
+                        Button { store.prompts.removeAll { $0.id == prompt.id } } label: { Image(systemName: "trash") }
+                            .buttonStyle(.borderless).help("Delete preset")
+                    }
+                } else {
+                    Button { send(prompt) } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(prompt.title.isEmpty ? prompt.prompt : prompt.title).font(.body.weight(.medium))
+                            if !prompt.title.isEmpty {
+                                Text(prompt.prompt).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10).padding(.vertical, 7)
+                        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Send \u{201C}\(prompt.prompt)\u{201D} to this chat")
+                }
+            }
+            if editing {
+                Button("Add Preset", systemImage: "plus") { store.prompts.append(QuickPrompt(title: "", prompt: "")) }
+            }
         }
-        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
-        .disabled(session.isRunning)
-        .background(scheme == .dark ? Color(white: 0.10) : Color(white: 0.97), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12)))
-        .help(session.isRunning ? "Quick actions are available once the reply finishes" : "Run /dev-sync (hold for more quick actions)")
-        .accessibilityLabel("Quick actions")
+        .padding(16)
+        .frame(width: 320)
+    }
+}
+
+/// The activity menu's icon: a twelve-pointed star with an exclamation point, drawn as a
+/// line icon like the toolbar's SF Symbols (there's no twelve-point star among them).
+struct AttentionStar: View {
+    var body: some View {
+        ZStack {
+            StarShape(points: 12, innerRatio: 0.8)
+                .stroke(.primary, style: StrokeStyle(lineWidth: 1.4, lineJoin: .round))
+            Text("!").font(.system(size: 10, weight: .bold, design: .rounded)).offset(y: -0.5)
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+struct StarShape: Shape {
+    var points: Int
+    /// The inner corners' distance from the center, as a share of the outer ones'.
+    var innerRatio: CGFloat
+    func path(in rect: CGRect) -> Path {
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        let outer = min(rect.width, rect.height) / 2, inner = outer * innerRatio
+        var path = Path()
+        for i in 0..<(points * 2) {
+            let angle = CGFloat(i) * .pi / CGFloat(points) - .pi / 2
+            let radius = i.isMultiple(of: 2) ? outer : inner
+            let point = CGPoint(x: center.x + cos(angle) * radius, y: center.y + sin(angle) * radius)
+            if i == 0 { path.move(to: point) } else { path.addLine(to: point) }
+        }
+        path.closeSubpath()
+        return path
     }
 }
 
@@ -253,7 +354,7 @@ struct FinishedChatsBell: View {
     var body: some View {
         Button { open.toggle() } label: {
             HStack(spacing: 4) {
-                Image(systemName: "watch.analog")
+                AttentionStar().frame(width: 17, height: 17)
                 if !chats.isEmpty { Text("\(chats.count)").font(.caption.weight(.semibold).monospacedDigit()) }
             }
             // It's the last item in its toolbar pill: give it room before the pill's edge.
