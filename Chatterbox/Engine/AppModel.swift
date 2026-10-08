@@ -92,6 +92,24 @@ final class AppModel {
 
     var activeSessions: [ChatSession] { sessions.filter { $0.record.archivedAt == nil } }
 
+    /// Threads pinned to the top of the sidebar, in pin order; kept in this Mac's preferences.
+    var pinnedThreadIDs: [UUID] = (AppPreferences.defaults.stringArray(forKey: "macPinnedThreads") ?? []).compactMap(UUID.init) {
+        didSet { AppPreferences.defaults.set(pinnedThreadIDs.map(\.uuidString), forKey: "macPinnedThreads") }
+    }
+    /// The pinned threads still open (archived ones drop out until they're unarchived).
+    var pinnedThreads: [ChatSession] {
+        pinnedThreadIDs.compactMap { id in activeSessions.first { $0.id == id } }
+    }
+    func isPinnedThread(_ session: ChatSession) -> Bool { pinnedThreadIDs.contains(session.id) }
+    /// Top-level threads only: a worktree or Sidechat stays under its parent.
+    func canPinThread(_ session: ChatSession) -> Bool {
+        session.record.worktreeOf == nil && session.record.sidechatOf == nil && !session.isDot
+    }
+    func togglePinnedThread(_ session: ChatSession) {
+        if isPinnedThread(session) { pinnedThreadIDs.removeAll { $0 == session.id } }
+        else if canPinThread(session) { pinnedThreadIDs.append(session.id) }
+    }
+
     /// Projects (by recent activity, staleness, or name), then each open Studio's chats, then other chats by most recent: the
     /// sidebar's order, which Next and Previous Chat follow.
     var sidebarProjects: [ChatSession] {
@@ -133,14 +151,20 @@ final class AppModel {
     }
     var sidebarOrder: [ChatSession] {
         var ordered: [ChatSession] = []
-        for project in sidebarProjects {
+        // Pinned threads lead, as they do in the sidebar.
+        let pinned = pinnedThreads
+        for thread in pinned {
+            ordered += [thread] + sidechats(of: thread)
+            for worktree in worktrees(of: thread) { ordered += [worktree] + sidechats(of: worktree) }
+        }
+        for project in sidebarProjects where !pinned.contains(where: { $0 === project }) {
             ordered += [project] + sidechats(of: project)
             for worktree in worktrees(of: project) { ordered += [worktree] + sidechats(of: worktree) }
         }
         for studio in activeStudios where studio.collapsed != true {
-            for chat in chats(in: studio) { ordered += studioFamily(of: chat) }
+            for chat in chats(in: studio) where !pinned.contains(where: { $0 === chat }) { ordered += studioFamily(of: chat) }
         }
-        for chat in sidebarChats { ordered += [chat] + sidechats(of: chat) }
+        for chat in sidebarChats where !pinned.contains(where: { $0 === chat }) { ordered += [chat] + sidechats(of: chat) }
         return ordered
     }
 

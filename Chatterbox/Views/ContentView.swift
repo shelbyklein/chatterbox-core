@@ -605,6 +605,10 @@ extension ContentView {
                     .padding(.horizontal, 10)
             )
             .contextMenu {
+                if model.canPinThread(session), session.record.archivedAt == nil {
+                    Button(model.isPinnedThread(session) ? "Unpin" : "Pin to Top") { model.togglePinnedThread(session) }
+                    Divider()
+                }
                 Button("Rename Chat\u{2026}") {
                     // Start from the name the row shows.
                     chatTitle = session.record.projectFolder != nil ? session.projectName : session.title
@@ -1260,18 +1264,23 @@ extension ContentView {
     private func cardSection(_ section: SidebarSection) -> some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 10) {
+                let pinned = model.pinnedThreads.filter(isShown)
+                if !pinned.isEmpty {
+                    pinnedHeader
+                    cardGrid(pinned.flatMap(cardFamily))
+                }
                 switch section {
                 case .projects:
-                    let threads = model.sidebarProjects.filter(projectActivity.includes).flatMap(cardFamily)
+                    let threads = model.sidebarProjects.filter { !model.isPinnedThread($0) }.filter(projectActivity.includes).flatMap(cardFamily)
                     if showsTagPills, !model.allTags.isEmpty { tagPills }
                     cardGrid(threads)
                     if threads.isEmpty { Text("No matching projects").font(.caption).foregroundStyle(.secondary) }
                 case .chats:
-                    let threads = model.sidebarChats.flatMap(cardFamily)
+                    let threads = model.sidebarChats.filter { !model.isPinnedThread($0) }.flatMap(cardFamily)
                     cardGrid(threads)
                     if threads.isEmpty { Text("No matching chats").font(.caption).foregroundStyle(.secondary) }
                 case .studios:
-                    if let studio = model.sidebarStudio { cardGrid(model.chats(in: studio).flatMap(cardFamily)) }
+                    if let studio = model.sidebarStudio { cardGrid(model.chats(in: studio).filter { !model.isPinnedThread($0) }.flatMap(cardFamily)) }
                 }
             }.padding(.horizontal, 10).padding(.vertical, 6)
         }.accessibilityLabel(section.title)
@@ -1280,38 +1289,37 @@ extension ContentView {
     private func listSection(_ section: SidebarSection) -> some View {
         // ⌘-numbers follow the full sidebar, so they don't shift while filtering.
         let numbers = Dictionary(uniqueKeysWithValues: model.sidebarOrder.prefix(9).enumerated().map { ($1.id, $0 + 1) })
+        let pinned = model.pinnedThreads.filter(isShown)
         return List {
+            if !pinned.isEmpty {
+                pinnedHeader.listRowSeparator(.hidden)
+                ForEach(pinned) { session in
+                    if session.record.projectFolder != nil {
+                        projectRows(session, numbers: numbers)
+                    } else {
+                        rowWithSidechats(session, numbers: numbers)
+                    }
+                }
+            }
             switch section {
             case .projects:
-                let projects = model.sidebarProjects.filter(isShown).filter(projectActivity.includes)
+                let projects = model.sidebarProjects.filter { !model.isPinnedThread($0) }.filter(isShown).filter(projectActivity.includes)
                 if showsTagPills, !model.allTags.isEmpty {
                     tagPills.listRowSeparator(.hidden)
                 }
-                ForEach(projects) { session in
-                    rowWithSidechats(session, numbers: numbers)
-                    // Its worktrees, indented beneath it.
-                    ForEach(model.worktrees(of: session)) { worktree in
-                        rowWithSidechats(worktree, numbers: numbers)
-                            .padding(.leading, 18)
-                            .overlay(alignment: .leading) {
-                                Image(systemName: "arrow.triangle.branch")
-                                    .font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
-                                    .padding(.leading, 2)
-                            }
-                    }
-                }
+                ForEach(projects) { session in projectRows(session, numbers: numbers) }
                 if projects.isEmpty {
                     Text(isFiltering || activeTag != nil || projectActivity != .all ? "No matching projects" : "Open or create a project from the + menu.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             case .studios:
                 if let studio = model.sidebarStudio {
-                    let chats = model.chats(in: studio).filter(isShown)
+                    let chats = model.chats(in: studio).filter { !model.isPinnedThread($0) }.filter(isShown)
                     ForEach(chats) { session in rowWithSidechats(session, numbers: numbers) }
                     if chats.isEmpty { Text("No matching sessions").font(.caption).foregroundStyle(.secondary) }
                 }
             case .chats:
-                let chats = model.sidebarChats.filter(isShown)
+                let chats = model.sidebarChats.filter { !model.isPinnedThread($0) }.filter(isShown)
                 ForEach(chats) { session in rowWithSidechats(session, numbers: numbers) }
                 if chats.isEmpty {
                     Text(isFiltering ? "No matching chats" : "Chats that aren't in a project or a Studio.")
@@ -1321,6 +1329,29 @@ extension ContentView {
         }
         .scrollContentBackground(.hidden)
         .accessibilityLabel(section.title)
+    }
+
+    /// A project and its worktrees, indented beneath it.
+    @ViewBuilder
+    private func projectRows(_ session: ChatSession, numbers: [UUID: Int]) -> some View {
+        rowWithSidechats(session, numbers: numbers)
+        ForEach(model.worktrees(of: session)) { worktree in
+            rowWithSidechats(worktree, numbers: numbers)
+                .padding(.leading, 18)
+                .overlay(alignment: .leading) {
+                    Image(systemName: "arrow.triangle.branch")
+                        .font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
+                        .padding(.leading, 2)
+                }
+        }
+    }
+
+    /// Above the section's own threads: the ones pinned to the top.
+    private var pinnedHeader: some View {
+        Label("Pinned", systemImage: "pin.fill")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .accessibilityAddTraits(.isHeader)
     }
 
     // MARK: Dividers

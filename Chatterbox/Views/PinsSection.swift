@@ -20,22 +20,32 @@ struct PinsSection: View {
     @State private var renaming: Pin?
     @State private var newTitle = ""
     @State private var dropTargeted = false
+    /// Settings live in the header: the cards' size, and folding the section to its heading.
+    @AppStorage("sidebarPinSize") private var size = PinSize.small.rawValue
+    @AppStorage("sidebarPinsCollapsed") private var collapsed = false
     private var store: PinStore { .shared }
 
-    /// Six square cards to a row: icons, with the name on hover.
-    static let columns = 6
+    enum PinSize: Double, CaseIterable {
+        case small = 24, medium = 32, large = 44
+        var name: String { switch self { case .small: "Small"; case .medium: "Medium"; case .large: "Large" } }
+        /// The icon's inset in its card.
+        var inset: CGFloat { switch self { case .small: 4; case .medium: 5; case .large: 7 } }
+    }
+    private var pinSize: PinSize { PinSize(rawValue: size) ?? .small }
 
     var body: some View {
         let global = store.globalPins
         VStack(alignment: .leading, spacing: 6) {
-            header("Pins", help: "Add a pin that shows everywhere") { onAdd(PinSheetRequest(place: nil, current: place)) }
+            header(global.count)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
-            if global.isEmpty {
+            if collapsed {
+                EmptyView()
+            } else if global.isEmpty {
                 Text("Pin websites, apps, folders, or Shortcuts you open often. Drop them here, or click +.")
                     .font(.caption).foregroundStyle(.secondary)
             } else {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 26), spacing: 5), count: Self.columns), spacing: 5) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: size, maximum: size), spacing: 5)], alignment: .leading, spacing: 5) {
                     ForEach(Array(global.enumerated()), id: \.element.id) { index, pin in
                         card(pin, number: index < 9 ? index + 1 : nil)
                     }
@@ -53,26 +63,49 @@ struct PinsSection: View {
 
     }
 
-    private func header(_ title: String, help: String, add: @escaping () -> Void) -> some View {
-        HStack {
-            Text(title).lineLimit(1)
+    private func header(_ count: Int) -> some View {
+        HStack(spacing: 6) {
+            Button { withAnimation(.smooth(duration: 0.2)) { collapsed.toggle() } } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .bold))
+                        .rotationEffect(.degrees(collapsed ? 0 : 90))
+                    Text("Pins").lineLimit(1)
+                    if collapsed && count > 0 { Text("\(count)").font(.caption).foregroundStyle(.tertiary) }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(collapsed ? "Show pins" : "Collapse pins")
+            .accessibilityValue(collapsed ? "Collapsed" : "Expanded")
             Spacer()
-            Button(action: add) { Image(systemName: "plus") }
+            if !collapsed {
+                Menu {
+                    Picker("Size", selection: $size) {
+                        ForEach(PinSize.allCases, id: \.rawValue) { Text($0.name).tag($0.rawValue) }
+                    }
+                    .pickerStyle(.inline)
+                } label: { Image(systemName: "square.grid.3x3") }
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                    .help("Pin size")
+                    .accessibilityLabel("Pin size")
+            }
+            Button { onAdd(PinSheetRequest(place: nil, current: place)) } label: { Image(systemName: "plus") }
                 .buttonStyle(.borderless)
-                .help(help)
+                .help("Add a pin that shows everywhere")
         }
     }
 
     /// A pin as a square card: its icon, the name on hover and for VoiceOver.
     private func card(_ pin: Pin, number: Int?) -> some View {
         Button { store.open(pin) } label: {
+            let corner: CGFloat = pinSize == .small ? 6 : 8
             PinIcon(pin: pin)
-                .padding(7)
-                .frame(maxWidth: .infinity)
-                .aspectRatio(1, contentMode: .fit)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.07)))
-                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.08)))
-                .contentShape(RoundedRectangle(cornerRadius: 8))
+                .padding(pinSize.inset)
+                .frame(width: size, height: size)
+                .background(RoundedRectangle(cornerRadius: corner).fill(Color.primary.opacity(0.07)))
+                .overlay(RoundedRectangle(cornerRadius: corner).strokeBorder(Color.primary.opacity(0.08)))
+                .contentShape(RoundedRectangle(cornerRadius: corner))
         }
         .buttonStyle(.plain)
         .help(pin.title)
