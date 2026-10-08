@@ -91,6 +91,15 @@ struct ChatDetailView: View {
     @State private var dictation = Dictation()
     #if GOLEM_APP
     @AppStorage("golemDismissedInAppNotice") private var dismissedNotice = ""
+    /// Your newest sent message. While set, following the conversation keeps it at the top, so
+    /// his reply reads from its start instead of jumping to its end. Scrolling yourself, jumping
+    /// to the newest, or reopening the chat clears it.
+    @State private var anchoredMessage: UUID?
+    /// One dictated message (the widget): after it sends, the microphone stops, and his reply
+    /// doesn't reopen it.
+    @State private var voiceOnce = false
+    @State private var showingCapabilities = false
+    @State private var quietAfterReply = false
     @State private var voiceConversation = false
     @State private var voiceGeneration = UUID()
     @State private var voiceEnded = false
@@ -138,6 +147,12 @@ struct ChatDetailView: View {
         }
         #if GOLEM_APP
         .toolbarBackground(isConversation ? .hidden : .automatic, for: .navigationBar)
+        .sheet(isPresented: $showingCapabilities) {
+            NavigationStack {
+                GolemCapabilitiesView()
+                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showingCapabilities = false } } }
+            }
+        }
         .task {
             guard isConversation else { return }
             while !Task.isCancelled {
@@ -145,10 +160,14 @@ struct ChatDetailView: View {
                     if !request.start { endVoiceConversation(); GolemConversationRequest.shared.finish(request) }
                     else if voiceConversation { GolemConversationRequest.shared.finish(request) }
                     else if summary.isRunning || sending || !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingImages.isEmpty {
-                        GolemConversationRequest.shared.finish(request, error: "Wait for Golem to finish and send or clear your draft before starting Conversation.")
+                        let problem = request.once
+                            ? "Golem is busy or your draft isn't empty. Wait for his reply, or send or clear your draft, then try again."
+                            : "Wait for Golem to finish and send or clear your draft before starting Conversation."
+                        if request.once { error = problem }
+                        GolemConversationRequest.shared.finish(request, error: problem)
                     } else {
                         GolemConversationRequest.shared.cancelPending = { endVoiceConversation() }
-                        startVoiceConversation()
+                        startVoiceConversation(once: request.once)
                         await listeningTask?.value
                         GolemConversationRequest.shared.finish(request, error: dictation.isListening ? nil : dictation.problem ?? "Listening did not start.")
                     }
@@ -304,6 +323,9 @@ struct ChatDetailView: View {
             .simultaneousGesture(DragGesture(minimumDistance: 10).onChanged { _ in
                 scrollWork.generation += 1
                 if pinUntil > .distantPast { pinUntil = .distantPast }
+                #if GOLEM_APP
+                if anchoredMessage != nil { anchoredMessage = nil }
+                #endif
             })
             .defaultScrollAnchor(.bottom)
             .scrollDismissesKeyboard(.interactively)
@@ -320,12 +342,18 @@ struct ChatDetailView: View {
             }
             .onAppear {
                 pinnedLoaded = detail == nil ? false : pinnedLoaded
+                #if GOLEM_APP
+                anchoredMessage = nil
+                #endif
                 pin(proxy, for: 1.5)
             }
             // Above the newest messages: a button back down, above the message box.
             .overlay(alignment: .bottomTrailing) {
                 if !atBottom, detail != nil {
                     Button {
+                        #if GOLEM_APP
+                        anchoredMessage = nil
+                        #endif
                         pin(proxy, for: 0.8)
                     } label: {
                         Image(systemName: "arrow.down")
@@ -414,6 +442,7 @@ struct ChatDetailView: View {
                     }
                 }
                 Button { pinRequests += 1 } label: { Label("Jump to Newest", systemImage: "arrow.down.to.line") }
+                Button { showingCapabilities = true } label: { Label("What Golem Can Do", systemImage: "sparkles") }
             } label: {
                 Color.clear.frame(width: 44, height: 44).contentShape(Rectangle())
             }
@@ -457,7 +486,10 @@ struct ChatDetailView: View {
         pinRequests += 1
         Task {
             do {
-                history.apply(try await store.send(GolemQuickPrompts.expand(prompt.text), to: chat.id))
+                let result = try await store.send(GolemQuickPrompts.expand(prompt.text), to: chat.id)
+                history.apply(result)
+                anchoredMessage = result.items.last { $0.kind == .user }?.id
+                pinRequests += 1
                 error = nil
             } catch {
                 self.error = error.localizedDescription
@@ -539,7 +571,13 @@ struct ChatDetailView: View {
                 guard work.generation == generation else { return }
                 var instant = Transaction()
                 instant.disablesAnimations = true
-                withTransaction(instant) { proxy.scrollTo("bottom", anchor: .bottom) }
+                withTransaction(instant) {
+                    #if GOLEM_APP
+                    // After you send: your message at the top (or the end, if everything fits).
+                    if let anchoredMessage { proxy.scrollTo(anchoredMessage, anchor: .top); return }
+                    #endif
+                    proxy.scrollTo("bottom", anchor: .bottom)
+                }
             }
         }
     }
@@ -687,6 +725,10 @@ struct ChatDetailView: View {
                                               images: submission.images.map(\.upload), now: now, to: chat.id)
             state.finish(submission)
             history.apply(result)
+            #if GOLEM_APP
+            anchoredMessage = result.items.last { $0.kind == .user }?.id
+            pinRequests += 1
+            #endif
             error = nil
         } catch {
             state.finish(submission, failed: true)
@@ -806,10 +848,11 @@ struct ChatDetailView: View {
     }
 
     #if GOLEM_APP
-    private func startVoiceConversation() {
+    private func startVoiceConversation(once: Bool = false) {
         guard !summary.isRunning, !sending, draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               pendingImages.isEmpty else { return }
         voiceGeneration = UUID()
+        voiceOnce = once
         voiceEnded = false
         voiceConversation = true
         composing = false
@@ -819,6 +862,7 @@ struct ChatDetailView: View {
 
     private func endVoiceConversation() {
         voiceGeneration = UUID()
+        voiceOnce = false
         voiceConversation = false
         voiceEnded = true
         voiceReply = nil
@@ -839,12 +883,14 @@ struct ChatDetailView: View {
         if reply.id != seenReply {
             seenReply = reply.id
             voiceReply = nil
+            let quiet = quietAfterReply
+            quietAfterReply = false
             // Ending a conversation (or dismissing his notice) silences the reply it was on, not
             // the ones after it.
             voiceEnded = false
             guard voiceConversation || GolemVoice.shared.autoRead else { return }
             voiceReply = reply.id
-            if voiceConversation || GolemVoice.shared.listensAfter { listenForReply() }
+            if !quiet, voiceConversation || GolemVoice.shared.listensAfter { listenForReply() }
         }
         guard !voiceEnded, voiceReply == reply.id else { return }
         let session = voiceGeneration
@@ -878,6 +924,8 @@ struct ChatDetailView: View {
             await send()
             guard session == voiceGeneration, voiceConversation else { return }
             if error != nil { endVoiceConversation(); return }
+            // One message from the widget: sent, so the microphone stops; his reply stays quiet-eared.
+            if voiceOnce { quietAfterReply = true; endVoiceConversation(); return }
             voiceInput = composerState.inputGeneration
             dictation.nextUtterance()
         }
