@@ -1264,13 +1264,23 @@ extension ContentView {
         }
     }
 
+    private func pinnedStudioTiles(_ threads: [ChatSession]) -> some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 80, maximum: 80), spacing: 8)], alignment: .leading, spacing: 8) {
+            ForEach(threads) { row($0, number: nil, card: true, iconOnly: true) }
+        }
+    }
+
     private func cardSection(_ section: SidebarSection) -> some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 10) {
                 let pinned = model.pinnedThreads.filter(isShown)
                 if !pinned.isEmpty {
                     pinnedHeader
-                    cardGrid(pinned.flatMap(cardFamily))
+                    if section == .studios {
+                        pinnedStudioTiles(pinned.flatMap(cardFamily))
+                    } else {
+                        cardGrid(pinned.flatMap(cardFamily))
+                    }
                 }
                 switch section {
                 case .projects:
@@ -1296,11 +1306,15 @@ extension ContentView {
         return List {
             if !pinned.isEmpty {
                 pinnedHeader.listRowSeparator(.hidden)
-                ForEach(pinned) { session in
-                    if session.record.projectFolder != nil {
-                        projectRows(session, numbers: numbers)
-                    } else {
-                        rowWithSidechats(session, numbers: numbers)
+                if section == .studios {
+                    pinnedStudioTiles(pinned.flatMap(cardFamily)).listRowSeparator(.hidden)
+                } else {
+                    ForEach(pinned) { session in
+                        if session.record.projectFolder != nil {
+                            projectRows(session, numbers: numbers)
+                        } else {
+                            rowWithSidechats(session, numbers: numbers)
+                        }
                     }
                 }
             }
