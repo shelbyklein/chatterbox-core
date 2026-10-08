@@ -389,8 +389,9 @@ enum ImageClipboard {
 }
 
 /// "Copy" on an image, which says "Copied" for a moment.
-private struct CopyImageButton: View {
+struct CopyImageButton: View {
     let url: URL
+    var overlayPill = true
     @State private var copied = false
 
     var body: some View {
@@ -399,7 +400,13 @@ private struct CopyImageButton: View {
             copied = true
             Task { try? await Task.sleep(for: .seconds(1.5)); copied = false }
         } label: {
-            Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc").imageOverlayPill()
+            Group {
+                if overlayPill {
+                    Label(copied ? "Copied" : "Copy image", systemImage: copied ? "checkmark" : "photo.on.rectangle").imageOverlayPill()
+                } else {
+                    Label(copied ? "Copied" : "Copy image", systemImage: copied ? "checkmark" : "photo.on.rectangle")
+                }
+            }
         }
         .buttonStyle(.plain)
         .help("Copy the image to the clipboard")

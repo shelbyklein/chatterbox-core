@@ -17,6 +17,7 @@ struct ThreadCard: View {
     var expanded = false
     var iconOnly = false
     var selected = false
+    var showsThumbnail = false
     let open: () -> Void
     @State private var hovered = false
     @Environment(\.threadCardScale) private var scale
@@ -163,7 +164,7 @@ struct ThreadCard: View {
                 }
                 Text(preview).font(.system(size: (expanded ? 13 : 10.5) * scale)).foregroundStyle(.secondary)
                     .lineLimit(expanded ? 4 : 2).frame(maxWidth: .infinity, alignment: .leading)
-                if let thumbnail = ThreadThumbnails.shared.images[session.id] {
+                if showsThumbnail, let thumbnail = ThreadThumbnails.shared.images[session.id] {
                     Image(nsImage: thumbnail).resizable().scaledToFit()
                         .frame(height: (expanded ? 100 : 56) * scale)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -192,7 +193,9 @@ struct ThreadCard: View {
             }
         }
         .buttonStyle(.plain)
-        .task(id: ThreadThumbnails.key(session)) { ThreadThumbnails.shared.refresh(session) }
+        .task(id: (iconOnly || showsThumbnail) ? ThreadThumbnails.key(session) : "") {
+            if iconOnly || showsThumbnail { ThreadThumbnails.shared.refresh(session) }
+        }
         .overlay(alignment: .bottomTrailing) {
             if !iconOnly {
                 LinkedStudioShortcut(folder: session.record.projectFolder).padding(10 * scale)

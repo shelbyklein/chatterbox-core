@@ -572,7 +572,7 @@ extension ContentView {
         let place = session.record.projectFolder != nil ? model.pinPlace(for: session) : nil
         return Group {
             if card || sidebarCards {
-                ThreadCard(session: session, expanded: expanded, iconOnly: iconOnly, selected: model.selectedID == session.id) {
+                ThreadCard(session: session, expanded: expanded, iconOnly: iconOnly, selected: model.selectedID == session.id, showsThumbnail: model.studioSidebarID != nil || model.showingHome) {
                     model.selectedID = session.id
                 }
             } else {

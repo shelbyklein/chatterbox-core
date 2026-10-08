@@ -152,18 +152,22 @@ struct ReplyImages: View {
     }
 
     private func thumbnail(_ url: URL, maxHeight: CGFloat) -> some View {
-        Button { review.open(Attachment(name: url.lastPathComponent, path: url.path, mediaType: "image/" + url.pathExtension.lowercased(), kind: .image)) } label: {
-            VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 4) {
+            Button { review.open(Attachment(name: url.lastPathComponent, path: url.path, mediaType: "image/" + url.pathExtension.lowercased(), kind: .image)) } label: {
                 AsyncLocalImage(url: url)
                     .frame(maxHeight: maxHeight)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                     .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
-                Text(url.deletingPathExtension().lastPathComponent).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
+            .buttonStyle(.plain)
+            .help("View \(url.lastPathComponent)")
+            HStack(spacing: 12) {
+                Text(url.deletingPathExtension().lastPathComponent).foregroundStyle(.secondary).lineLimit(1)
+                CopyImageButton(url: url, overlayPill: false).foregroundStyle(.secondary)
+            }.font(.caption)
         }
-        .buttonStyle(.plain)
-        .help("View \(url.lastPathComponent)")
         .contextMenu {
+            Button("Copy Image") { ImageClipboard.copy(url) }
             Button("Open") { NSWorkspace.shared.open(url) }
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
         }

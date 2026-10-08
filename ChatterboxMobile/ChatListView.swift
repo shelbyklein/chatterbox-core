@@ -267,7 +267,7 @@ struct ChatListView: View {
                             if showsHeader(group) { header(group).font(.footnote.weight(.semibold)).foregroundStyle(.secondary).textCase(.uppercase) }
                             LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
                                 ForEach(group.chats) { chat in
-                                    ChatCard(chat: chat, selected: sizeClass == .regular && selection == chat.id, activity: sort == .active ? Self.activityLine(chat) : nil) { open(chat) }
+                                    ChatCard(chat: chat, showsThumbnail: page == .studios, selected: sizeClass == .regular && selection == chat.id, activity: sort == .active ? Self.activityLine(chat) : nil) { open(chat) }
                                         .contextMenu {
                                             Button(role: .destructive) { archive(chat) } label: { Label("Archive", systemImage: "archivebox") }
                                         }
@@ -510,6 +510,7 @@ private struct ChatCard: View {
     @Environment(MobileStore.self) private var store
     @State private var thumbnail: UIImage?
     let chat: Companion.ChatSummary
+    var showsThumbnail = false
     var selected = false
     var activity: String? = nil
     var open: () -> Void
@@ -543,7 +544,7 @@ private struct ChatCard: View {
                         .lineLimit(3)
                         .multilineTextAlignment(.leading)
                 }
-                if let thumbnail {
+                if showsThumbnail, let thumbnail {
                     Image(uiImage: thumbnail).resizable().scaledToFit()
                         .frame(height: 80)
                         .clipShape(RoundedRectangle(cornerRadius: 6))
@@ -563,9 +564,9 @@ private struct ChatCard: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("chat-\(chat.id.uuidString)")
-        .task(id: "\(chat.thumbnail?.id.uuidString ?? "")|\(chat.thumbnail?.revision ?? "")") {
+        .task(id: "\(showsThumbnail)|\(chat.thumbnail?.id.uuidString ?? "")|\(chat.thumbnail?.revision ?? "")") {
             thumbnail = nil
-            if let file = chat.thumbnail { thumbnail = try? await store.thumbnail(file, in: chat.id) }
+            if showsThumbnail, let file = chat.thumbnail { thumbnail = try? await store.thumbnail(file, in: chat.id) }
         }
     }
 }
