@@ -121,7 +121,6 @@ struct ThreadCard: View {
                     Text(title).font(.system(size: 8.5 * scale, weight: .medium)).lineLimit(2)
                         .multilineTextAlignment(.center).frame(height: 24 * scale, alignment: .top)
                 }.frame(width: 80 * scale, height: 94 * scale)
-                    .task(id: ThreadThumbnails.key(session)) { ThreadThumbnails.shared.refresh(session) }
                     .task(id: session.record.projectFolder) { ProjectIcons.shared.load(session.record.projectFolder) }
                     .background(selected && !session.isWaitingOnYou ? Color.white : Color.clear, in: RoundedRectangle(cornerRadius: 14))
                     .contentShape(Rectangle())
@@ -164,6 +163,13 @@ struct ThreadCard: View {
                 }
                 Text(preview).font(.system(size: (expanded ? 13 : 10.5) * scale)).foregroundStyle(.secondary)
                     .lineLimit(expanded ? 4 : 2).frame(maxWidth: .infinity, alignment: .leading)
+                if let thumbnail = ThreadThumbnails.shared.images[session.id] {
+                    Image(nsImage: thumbnail).resizable().scaledToFit()
+                        .frame(height: (expanded ? 100 : 56) * scale)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .clipShape(RoundedRectangle(cornerRadius: 5))
+                        .accessibilityLabel("Latest image in " + title)
+                }
                 Spacer(minLength: 0)
                 HStack {
                     if expanded {
@@ -186,6 +192,7 @@ struct ThreadCard: View {
             }
         }
         .buttonStyle(.plain)
+        .task(id: ThreadThumbnails.key(session)) { ThreadThumbnails.shared.refresh(session) }
         .overlay(alignment: .bottomTrailing) {
             if !iconOnly {
                 LinkedStudioShortcut(folder: session.record.projectFolder).padding(10 * scale)
