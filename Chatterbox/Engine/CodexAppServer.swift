@@ -77,7 +77,10 @@ final class CodexAppServer {
             throw CodexError(message: "Couldn't find the `codex` command. Install the Codex CLI, or set its path in Settings.")
         }
         let id = "codex-\(UUID().uuidString.prefix(8))"
-        try HostClient.shared.spawn(id: id, executable: binary, arguments: ["app-server"], cwd: nil,
+        // Codex offers its question tool (request_user_input) only in Plan mode unless this is
+        // on; chats run in its default mode, so without it Codex asks questions as plain text
+        // instead of the question card. Scoped to this process, not ~/.codex/config.toml.
+        try HostClient.shared.spawn(id: id, executable: binary, arguments: ["app-server", "--enable", "default_mode_request_user_input"], cwd: nil,
                                     environment: BinaryLocator.environment, kind: "codex")
         try follow(id, from: 0)
         loadedThreads = []
