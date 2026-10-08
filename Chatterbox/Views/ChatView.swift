@@ -93,7 +93,24 @@ struct ChatView: View {
                 }
             }
         }
+        .overlay(alignment: .topTrailing) {
+            if showsPins {
+                GeometryReader { geometry in
+                    ChatPins(chat: session.record.id, agentName: session.record.backend == .codex ? "Codex" : "Claude",
+                             panelWidth: min(280, max(220, (geometry.size.width - appearance.style.contentWidth) / 2 - 32))) { pinJump = $0 }
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                        .padding(16)
+                }
+            }
+        }
     }
+
+    /// Pinned messages show only in the full chat view, not tiles, compact windows or Dot.
+    private var showsPins: Bool { !compact && tileContext == nil && !session.isDot }
+    /// A pin that was clicked: the transcript goes to its message.
+    @State private var pinJump: UUID?
+    /// The message a pin just went to, highlighted for a moment.
+    @State private var flashedID: UUID?
 
     @State private var stopStatus: String?
     @State private var requestingStop = false
@@ -502,6 +519,7 @@ struct ChatView: View {
                     .frame(maxWidth: appearance.style.contentWidth)
                     .environment(\.readerStyle, appearance.style)
                     .environment(\.reviewImage, ImageReviewAction { reviewing = $0 })
+                    .environment(\.pinMessage, PinMessageAction(chat: showsPins ? session.record.id : nil))
                     .frame(maxWidth: .infinity)
                     }
                 }
@@ -538,6 +556,13 @@ struct ChatView: View {
             .onChange(of: session.isRunning) { _, running in if !running { stopStatus = nil; requestingStop = false } }
             .onChange(of: session.items.count) { if !find.isOpen { scrollToBottom(proxy) } else { find.recompute() } }
             .onChange(of: find.jumpRequest) { jumpToMatch(proxy) }
+            .onChange(of: pinJump) { _, id in
+                guard let id else { return }
+                pinJump = nil
+                jump(to: id, proxy)
+                flashedID = id
+                Task { try? await Task.sleep(for: .seconds(1.6)); if flashedID == id { withAnimation { flashedID = nil } } }
+            }
             // Closing find goes back to the latest messages if a match was far back.
             .onChange(of: find.isOpen) { _, open in
                 if !open, findWindow != nil { findWindow = nil; keepBottom(proxy) }
@@ -551,7 +576,7 @@ struct ChatView: View {
 
     /// Matching messages get a soft highlight; the current one, a stronger one.
     private func findHighlight(_ ids: [UUID]) -> some View {
-        let current = find.currentID.map(ids.contains) ?? false
+        let current = (find.currentID.map(ids.contains) ?? false) || (flashedID.map(ids.contains) ?? false)
         let matched = current || (find.isOpen && ids.contains { find.matches.contains($0) })
         return RoundedRectangle(cornerRadius: 8)
             .fill(Color.yellow.opacity(current ? 0.22 : matched ? 0.08 : 0))
@@ -562,7 +587,12 @@ struct ChatView: View {
     /// Brings the current match into view: older rows are drawn first if it's among them, and
     /// a folded group of steps holding it opens.
     private func jumpToMatch(_ proxy: ScrollViewProxy) {
-        guard let id = find.currentID, let index = session.items.firstIndex(where: { $0.id == id }) else { return }
+        if let id = find.currentID { jump(to: id, proxy) }
+    }
+
+    /// Brings message `id` into view, drawing older rows or opening its step group as needed.
+    private func jump(to id: UUID, _ proxy: ScrollViewProxy) {
+        guard let index = session.items.firstIndex(where: { $0.id == id }) else { return }
         var page = paging.page(session.items, limit: shownRowCount)
         if page.start > index {
             // Within a few pages: draw them. Further back: show the messages around it instead.

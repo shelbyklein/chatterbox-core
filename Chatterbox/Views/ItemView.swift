@@ -76,7 +76,7 @@ struct ItemView: View {
                     .padding(.horizontal, 13)
                     .padding(.vertical, 9)
                     .background(RoundedRectangle(cornerRadius: 14).fill(style.color(for: agent).opacity(style.bubbleStrength)))
-                    .contextMenu { Button("Copy Message") { MessageClipboard.copy(item.text) } }
+                    .contextMenu { Button("Copy Message") { MessageClipboard.copy(item.text) }; PinMenuItem(item: item) }
             }
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
@@ -112,6 +112,7 @@ struct ItemView: View {
                             Label("Worked for \(ChatSession.durationText(seconds))", systemImage: "clock")
                         }
                         CopyMessageButton(text: item.text)
+                        PinMessageButton(item: item)
                     }
                     .font(.caption)
                     .foregroundStyle(.tertiary)
@@ -121,6 +122,7 @@ struct ItemView: View {
             .contextMenu {
                 Button("Copy Message") { MessageClipboard.copy(item.text) }
                 Button("Copy as Plain Text") { MessageClipboard.copy(MessageClipboard.plain(item.text)) }
+                if item.phase == .final { PinMenuItem(item: item) }
             }
         }
     }
