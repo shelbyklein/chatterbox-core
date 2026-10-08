@@ -58,6 +58,8 @@ final class GolemVoice: NSObject {
     @ObservationIgnored private var segments: [String] = []
     @ObservationIgnored private var thenBlock: (() -> Void)?
     @ObservationIgnored private var apiKey: String?
+    /// Replies read whole, in order, never twice: one arriving mid-reply waits its turn.
+    @ObservationIgnored private var queue = ReplyQueue()
 
     // ElevenLabs pipeline: fetch up to two ahead, play strictly in order.
     @ObservationIgnored private var playIndex = 0             // the segment playing, or next to play
@@ -86,17 +88,26 @@ final class GolemVoice: NSObject {
 
     /// Reads a whole reply. `then` runs only if it was read to the end, not when it's stopped.
     func speak(_ id: UUID, text: String, then: (() -> Void)? = nil) {
-        begin(id)   // an explicit request restarts, even after stop() or a finished read
+        // An explicit request restarts, even after stop() or a finished read, and replaces what's waiting.
+        queue.restart(id)
+        begin(id)
         update(reply: id, text: text, final: true, then: then)
     }
 
     /// Reads a reply while it is still being written: `text` is the reply's full text so far and
-    /// `final` is true once its turn ended. A new `id` replaces whatever was being read; the same
-    /// `id` continues, and sentences already queued are never read again. `then` (the latest one
-    /// given) runs only if the reply was read to the end after `final`, never after `stop()`.
-    /// After `stop()`, updates for that reply are ignored until a different `id` arrives.
+    /// `final` is true once it's complete. The same `id` continues, and sentences already queued are
+    /// never read again. A different `id` waits until the reply being read is finished, so each
+    /// message is read whole and in order; a reply read to the end, or stopped, is never read again.
+    /// `then` (the latest one given) runs once the last waiting reply was read to the end, never after `stop()`.
     func update(reply id: UUID, text: String, final isFinal: Bool, then: (() -> Void)? = nil) {
-        if id != current { begin(id) }
+        if id != current {
+            let reading = done || halted ? nil : current
+            switch queue.offer(id, text: text, final: isFinal, then: then, reading: reading) {
+            case .skip: return
+            case .wait: Self.log.notice("Reply waiting its turn (\(self.queue.waiting.count) waiting)"); return
+            case .read: begin(id)
+            }
+        }
         guard !halted, !done else { return }
         if let then { thenBlock = then }
         if isFinal { turnEnded = true }
@@ -109,9 +120,10 @@ final class GolemVoice: NSObject {
         advance()
     }
 
-    /// Cancels fetches, playback and the queue. `then` isn't called.
+    /// Cancels fetches, playback, the queue and the replies waiting. `then` isn't called.
     func stop() {
         halted = true
+        queue.stopped(current)
         teardown()
     }
 
@@ -170,9 +182,16 @@ final class GolemVoice: NSObject {
 
     private func finish() {
         done = true
+        let next = current.flatMap { queue.finished($0) }
         let completion = segments.isEmpty ? nil : thenBlock   // nothing was said: nothing to follow up on
         thenBlock = nil
         Self.log.notice("Reply finished (\(self.segments.count) segments)")
+        // His next message, read whole; the follow-up waits for the last one.
+        if let next {
+            begin(next.id)
+            update(reply: next.id, text: next.text, final: next.final, then: next.then ?? completion)
+            return
+        }
         speakingID = nil
         deactivate()
         completion?()
@@ -376,9 +395,12 @@ struct GolemVoiceSettings: View {
     private var voice: GolemVoice { .shared }
     @State private var keyEntry = ""
 
+    /// A soft chime when it's your turn, a tick when your words are sent, a falling chime when he starts thinking.
+    @AppStorage(GolemCues.key) private var soundCues = true
     var body: some View {
         Section {
             Toggle("Read new replies aloud", isOn: Binding(get: { voice.autoRead }, set: { voice.autoRead = $0 }))
+            Toggle("Sound cues", isOn: $soundCues)
             if voice.autoRead {
                 Toggle("Then listen for my reply", isOn: Binding(get: { voice.listensAfter }, set: { voice.listensAfter = $0 }))
             }
