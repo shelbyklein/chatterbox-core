@@ -877,7 +877,8 @@ struct ChatDetailView: View {
     /// moment he's done. He always finishes unless you press stop or mute. Replies already here
     /// when the chat opened stay quiet.
     private func followReplyAloud() {
-        guard let reply = latestReply, scenePhase == .active else { return }
+        // A saved copy from the last visit isn't what's new: wait for the Mac's.
+        guard let reply = latestReply, scenePhase == .active, !history.isCached else { return }
         // The first reply observed was already here.
         guard seenReply != nil else { seenReply = reply.id; return }
         if reply.id != seenReply {
