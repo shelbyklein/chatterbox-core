@@ -98,6 +98,7 @@ struct ChatDetailView: View {
     /// One dictated message (the widget): after it sends, the microphone stops, and his reply
     /// doesn't reopen it.
     @State private var voiceOnce = false
+    @State private var showingCapabilities = false
     @State private var quietAfterReply = false
     @State private var voiceConversation = false
     @State private var voiceGeneration = UUID()
@@ -146,6 +147,12 @@ struct ChatDetailView: View {
         }
         #if GOLEM_APP
         .toolbarBackground(isConversation ? .hidden : .automatic, for: .navigationBar)
+        .sheet(isPresented: $showingCapabilities) {
+            NavigationStack {
+                GolemCapabilitiesView()
+                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showingCapabilities = false } } }
+            }
+        }
         .task {
             guard isConversation else { return }
             while !Task.isCancelled {
@@ -435,6 +442,7 @@ struct ChatDetailView: View {
                     }
                 }
                 Button { pinRequests += 1 } label: { Label("Jump to Newest", systemImage: "arrow.down.to.line") }
+                Button { showingCapabilities = true } label: { Label("What Golem Can Do", systemImage: "sparkles") }
             } label: {
                 Color.clear.frame(width: 44, height: 44).contentShape(Rectangle())
             }
