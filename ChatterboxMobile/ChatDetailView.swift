@@ -91,6 +91,10 @@ struct ChatDetailView: View {
     @State private var dictation = Dictation()
     #if GOLEM_APP
     @AppStorage("golemDismissedInAppNotice") private var dismissedNotice = ""
+    /// Your newest sent message. While set, following the conversation keeps it at the top, so
+    /// his reply reads from its start instead of jumping to its end. Scrolling yourself, jumping
+    /// to the newest, or reopening the chat clears it.
+    @State private var anchoredMessage: UUID?
     @State private var voiceConversation = false
     @State private var voiceGeneration = UUID()
     @State private var voiceEnded = false
@@ -304,6 +308,9 @@ struct ChatDetailView: View {
             .simultaneousGesture(DragGesture(minimumDistance: 10).onChanged { _ in
                 scrollWork.generation += 1
                 if pinUntil > .distantPast { pinUntil = .distantPast }
+                #if GOLEM_APP
+                if anchoredMessage != nil { anchoredMessage = nil }
+                #endif
             })
             .defaultScrollAnchor(.bottom)
             .scrollDismissesKeyboard(.interactively)
@@ -320,12 +327,18 @@ struct ChatDetailView: View {
             }
             .onAppear {
                 pinnedLoaded = detail == nil ? false : pinnedLoaded
+                #if GOLEM_APP
+                anchoredMessage = nil
+                #endif
                 pin(proxy, for: 1.5)
             }
             // Above the newest messages: a button back down, above the message box.
             .overlay(alignment: .bottomTrailing) {
                 if !atBottom, detail != nil {
                     Button {
+                        #if GOLEM_APP
+                        anchoredMessage = nil
+                        #endif
                         pin(proxy, for: 0.8)
                     } label: {
                         Image(systemName: "arrow.down")
@@ -457,7 +470,10 @@ struct ChatDetailView: View {
         pinRequests += 1
         Task {
             do {
-                history.apply(try await store.send(GolemQuickPrompts.expand(prompt.text), to: chat.id))
+                let result = try await store.send(GolemQuickPrompts.expand(prompt.text), to: chat.id)
+                history.apply(result)
+                anchoredMessage = result.items.last { $0.kind == .user }?.id
+                pinRequests += 1
                 error = nil
             } catch {
                 self.error = error.localizedDescription
@@ -539,7 +555,13 @@ struct ChatDetailView: View {
                 guard work.generation == generation else { return }
                 var instant = Transaction()
                 instant.disablesAnimations = true
-                withTransaction(instant) { proxy.scrollTo("bottom", anchor: .bottom) }
+                withTransaction(instant) {
+                    #if GOLEM_APP
+                    // After you send: your message at the top (or the end, if everything fits).
+                    if let anchoredMessage { proxy.scrollTo(anchoredMessage, anchor: .top); return }
+                    #endif
+                    proxy.scrollTo("bottom", anchor: .bottom)
+                }
             }
         }
     }
@@ -687,6 +709,10 @@ struct ChatDetailView: View {
                                               images: submission.images.map(\.upload), now: now, to: chat.id)
             state.finish(submission)
             history.apply(result)
+            #if GOLEM_APP
+            anchoredMessage = result.items.last { $0.kind == .user }?.id
+            pinRequests += 1
+            #endif
             error = nil
         } catch {
             state.finish(submission, failed: true)
