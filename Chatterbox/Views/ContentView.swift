@@ -16,7 +16,6 @@ struct ContentView: View {
     private var sidebarCards: Bool { model.studioSidebarID != nil ? studioCards : model.showingChatsSidebar ? chatsCards : projectsCards }
     @AppStorage("showArchived") private var showArchived = false
     @AppStorage("sidebarSectionWeights") private var sectionWeights = "1,1,1"
-    @AppStorage("sidebarProjectsCollapsed") private var projectsCollapsed = false
     @AppStorage("sidebarStudiosCollapsed") private var studiosCollapsed = false
     @AppStorage("sidebarChatsCollapsed") private var chatsCollapsed = false
     /// While a divider is dragged: the weights it started from.
@@ -1104,7 +1103,7 @@ extension ContentView {
     /// Golem fixed at the top, the pins, then Projects, Studios, and Chats sharing the rest:
     /// a third each to start, each scrolling on its own, resized by dragging the dividers
     /// between them. A collapsed Studios or Chats moves to the dock at the bottom, beside
-    /// Archived; a collapsed Projects keeps its heading in place.
+    /// Archived. Projects always stays expanded.
     var sidebarColumn: some View {
         VStack(spacing: 0) {
             DesktopOverviewControls().padding(.horizontal, 12).padding(.vertical, 8)
@@ -1131,7 +1130,7 @@ extension ContentView {
 
     private func isCollapsed(_ section: SidebarSection) -> Bool {
         switch section {
-        case .projects: projectsCollapsed
+        case .projects: false
         case .studios: studiosCollapsed
         case .chats: chatsCollapsed
         }
@@ -1140,7 +1139,7 @@ extension ContentView {
     private func setCollapsed(_ section: SidebarSection, _ value: Bool) {
         withAnimation(.smooth(duration: 0.25)) {
             switch section {
-            case .projects: projectsCollapsed = value
+            case .projects: break
             case .studios: studiosCollapsed = value
             case .chats: chatsCollapsed = value
             }
@@ -1183,22 +1182,29 @@ extension ContentView {
     private func sectionHeader(_ section: SidebarSection) -> some View {
         let collapsed = !isFiltering && isCollapsed(section)
         return HStack(spacing: 6) {
-            Button { setCollapsed(section, !collapsed) } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .bold))
-                        .rotationEffect(.degrees(collapsed ? 0 : 90))
-                    Text(section == .studios ? model.sidebarStudio?.name ?? "Studio" : section.title).font(.subheadline.weight(.semibold))
-                    if collapsed { Text("\(count(of: section))").font(.caption).foregroundStyle(.tertiary) }
+            if section == .projects {
+                Text("Projects")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .accessibilityAddTraits(.isHeader)
+            } else {
+                Button { setCollapsed(section, !collapsed) } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .bold))
+                            .rotationEffect(.degrees(collapsed ? 0 : 90))
+                        Text(section == .studios ? model.sidebarStudio?.name ?? "Studio" : section.title).font(.subheadline.weight(.semibold))
+                        if collapsed { Text("\(count(of: section))").font(.caption).foregroundStyle(.tertiary) }
+                    }
+                    .contentShape(Rectangle())
                 }
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help(collapsed ? "Show \(section.title)" : "Collapse \(section.title)\(section == .projects ? "" : " to the bottom")")
+                .accessibilityLabel(section.title)
+                .accessibilityValue(collapsed ? "Collapsed" : "Expanded")
+                .accessibilityHint(collapsed ? "Shows the section" : "Collapses the section")
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .help(collapsed ? "Show \(section.title)" : "Collapse \(section.title)\(section == .projects ? "" : " to the bottom")")
-            .accessibilityLabel(section.title)
-            .accessibilityValue(collapsed ? "Collapsed" : "Expanded")
-            .accessibilityHint(collapsed ? "Shows the section" : "Collapses the section")
             Spacer()
             switch section {
             case .projects:
@@ -1354,7 +1360,7 @@ extension ContentView {
     // MARK: Dividers
 
     /// Dragging the line between two sections moves space from one to the other. Only open
-    /// sections take part; a collapsed Projects heading just sits between them.
+    /// sections take part; Projects always stays open.
     private func divider(above: SidebarSection, below: SidebarSection, space: CGFloat, open: [SidebarSection]) -> some View {
         let upper = open.last { $0.rawValue <= above.rawValue }
         let lower = open.first { $0.rawValue >= below.rawValue }
