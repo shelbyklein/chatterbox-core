@@ -254,6 +254,14 @@ extension ChatSession {
             if let event = message["event"] { handleClaudeEvent(event) }
 
         case "assistant":
+            if let messageID = message["message"]?["id"]?.string, let usage = message["message"]?["usage"] {
+                TokenLedgerReporter.record(eventID: messageID, app: record.isDot == true ? "golem" : "chatterbox",
+                    session: id.uuidString, task: record.currentIssue.map { String($0.number) }, provider: "anthropic",
+                    model: message["message"]?["model"]?.string,
+                    input: usage["input_tokens"]?.int, output: usage["output_tokens"]?.int,
+                    cached: usage["cache_read_input_tokens"]?.int ?? 0, written: usage["cache_creation_input_tokens"]?.int ?? 0,
+                    includesCache: false)
+            }
             // Output that never streamed (e.g. from a slash command like /context): show it whole.
             let messageID = message["message"]?["id"]?.string
             if messageID.map({ !claudeStreamedMessages.contains($0) }) ?? true {

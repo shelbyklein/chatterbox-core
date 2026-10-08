@@ -104,6 +104,16 @@ extension ChatSession {
     /// the window it counts against.
     func codexUpdateContext(_ params: JSON) {
         let usage = params["tokenUsage"]
+        if let total = usage?["total"], let input = total["inputTokens"]?.int, let output = total["outputTokens"]?.int {
+            let cached = total["cachedInputTokens"]?.int
+            let reasoning = total["reasoningOutputTokens"]?.int
+            let thread = params["threadId"]?.string ?? id.uuidString
+            let eventID = "\(thread):\(input):\(output):\(cached ?? -1):\(reasoning ?? -1)"
+            TokenLedgerReporter.record(eventID: eventID, app: record.isDot == true ? "golem" : "chatterbox",
+                session: thread, task: params["turnId"]?.string ?? codexTurnID, provider: record.provider == .claude ? "anthropic" : "openai",
+                model: record.codex?.model, input: input, output: output, cached: cached, written: nil,
+                reasoning: reasoning, includesCache: true, cumulative: true)
+        }
         guard let used = usage?["last"]?["totalTokens"]?.int, used > 0 else { return }
         contextUsage[.codex] = ContextUsage(used: used, window: usage?["modelContextWindow"]?.int ?? contextUsage[.codex]?.window)
     }
