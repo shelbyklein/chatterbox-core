@@ -79,10 +79,12 @@ struct ChatToolbarContent: ToolbarContent {
 
     var body: some ToolbarContent {
         if bridge.hasChat {
-            ToolbarItem { ToneSlot(bridge: bridge) }
+            if bridge.isDot { ToolbarItem { ToneSlot(bridge: bridge) } }
             #if !GOLEM_APP
-            ToolbarItem { PlaceSlot(bridge: bridge) }
-            ToolbarItem { RepoSlot(bridge: bridge) }
+            if bridge.isDot {
+                ToolbarItem { PlaceSlot(bridge: bridge) }
+                ToolbarItem { RepoSlot(bridge: bridge) }
+            }
             #endif
             if bridge.isDot {
                 ToolbarItem { GolemSlot(bridge: bridge) }
@@ -92,10 +94,47 @@ struct ChatToolbarContent: ToolbarContent {
                 ToolbarItem { RemoteSlot(bridge: bridge) }
             }
             #endif
-            ToolbarItem { ImagesSlot(bridge: bridge) }
+            if bridge.isDot { ToolbarItem { ImagesSlot(bridge: bridge) } }
             #if !GOLEM_APP
             ToolbarItem { TerminalSlot(bridge: bridge) }
             #endif
+        }
+    }
+}
+
+/// Controls for the open session live inside its chat, beside Notes and prompt presets.
+struct SessionTools: View {
+    let bridge: ChatToolbarBridge
+    @State private var open = false
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        Button { open.toggle() } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "slider.horizontal.3")
+                Image(systemName: "chevron.down").font(.caption2)
+            }.padding(8).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(scheme == .dark ? Color(white: 0.10) : Color(white: 0.97), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12)))
+        .help("Session tools: tone, folder, images and repository")
+        .accessibilityLabel("Session tools")
+        .popover(isPresented: $open, arrowEdge: .top) {
+            SessionToolsPanel(bridge: bridge).padding(16).frame(minWidth: 260, maxWidth: 420)
+        }
+    }
+}
+
+struct SessionToolsPanel: View {
+    let bridge: ChatToolbarBridge
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Session tools").font(.headline)
+            ToneSlot(bridge: bridge)
+            PlaceSlot(bridge: bridge)
+            Button("Image Library", systemImage: "photo.on.rectangle.angled") { bridge.showImages() }
+            RepoSlot(bridge: bridge)
         }
     }
 }
