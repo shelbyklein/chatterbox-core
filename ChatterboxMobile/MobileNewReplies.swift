@@ -29,6 +29,7 @@ final class MobileSeenReplies {
         let cutoff = Date().addingTimeInterval(-30 * 86400)
         seen = seen.filter { $0.value > cutoff }
         UserDefaults.standard.set(seen, forKey: key)
+        MobileWidgetSync.refresh()
     }
 
     /// The newest unseen reply of each chat, newest first.

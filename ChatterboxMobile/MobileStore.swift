@@ -22,7 +22,9 @@ final class MobileStore {
     }
 
     private(set) var connection: Connection?
-    private(set) var chatList: Companion.ChatList?
+    private(set) var chatList: Companion.ChatList? {
+        didSet { MobileWidgetSync.update(chatList, macName: connection?.macName ?? "") }
+    }
     /// Why the last call failed, shown until one works again.
     private(set) var problem: String?
     @ObservationIgnored private var token: String?
