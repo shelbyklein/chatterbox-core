@@ -426,6 +426,32 @@ struct ChatDetailView: View {
         .animation(.easeOut(duration: reduceMotion ? 0.15 : 0.3), value: noticeDismissed)
     }
 
+    /// "Claude · Haiku" or "Codex · GPT-6 Luna": which model Golem is running on.
+    private var golemModelLabel: String? {
+        guard let options = detail?.options else { return nil }
+        let codex = options.backend == "codex"
+        let name = (codex ? options.codexModels : options.claudeModels).first { $0.id == options.model }?.name
+            ?? (options.model.isEmpty ? "default model" : options.model)
+        return "\(codex ? "Codex" : "Claude") \u{00B7} \(name)"
+    }
+
+    /// Golem's model at the top of his conversation; tap to change it.
+    private func golemModelPill(_ label: String) -> some View {
+        Button { showingSettings = true } label: {
+            HStack(spacing: 4) {
+                Text(label).lineLimit(1)
+                Image(systemName: "chevron.down").font(.system(size: 9, weight: .bold))
+            }
+            .font(.footnote.weight(.medium))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 12).padding(.vertical, 6)
+            .background(Capsule().fill(Color(uiColor: .secondarySystemBackground)))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Model: \(label)")
+        .accessibilityHint("Opens Golem's model settings")
+    }
+
     /// Sends a quick prompt as its own message; whatever is in the message box stays there.
     private func sendQuickPrompt(_ prompt: GolemQuickPrompt) {
         pinRequests += 1
@@ -523,6 +549,9 @@ struct ChatDetailView: View {
             if isConversation {
                 #if GOLEM_APP
                 ToolbarItem(placement: .topBarLeading) { toolbarGolem }
+                if let label = golemModelLabel {
+                    ToolbarItem(placement: .principal) { golemModelPill(label) }
+                }
                 #else
                 ToolbarItem(placement: .principal) {
                     Text(summary.title).font(.headline).lineLimit(1)
