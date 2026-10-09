@@ -37,6 +37,23 @@ enum PermissionModes {
         return all.first { $0.id == id } ?? all[1] // Manual / Ask for approval
     }
 
+    /// Only for Studio creation (including New Chat reusing an empty slot).
+    /// Initialize both agents so applying the first-chat preset keeps this default.
+    static func applyNewStudioDefaults(to record: inout ConversationRecord, folder: String) {
+        let backend = record.backend
+        record.claudeMode = "bypassPermissions"
+        if record.codex == nil {
+            let defaults = AppPreferences.defaults
+            record.codex = CodexSettings(folder: folder, canEdit: true, mode: "fullAccess")
+            record.codex?.model = defaults.string(forKey: "codexDefaultModel").flatMap { $0.isEmpty ? nil : $0 }
+            record.codex?.effort = defaults.string(forKey: "codexDefaultEffort").flatMap { $0.isEmpty ? nil : $0 }
+        } else {
+            record.codex?.mode = "fullAccess"
+        }
+        // Adding Codex settings must not implicitly switch a Claude chat to Codex.
+        record.activeBackend = backend
+    }
+
     /// Defaults for new chats, from Settings.
     static var defaultClaude: String {
         AppPreferences.defaults.string(forKey: "claudeDefaultMode")

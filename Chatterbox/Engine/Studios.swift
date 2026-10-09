@@ -134,12 +134,16 @@ extension AppModel {
     @discardableResult
     func newChat(in studio: Studio, backend: Backend? = nil) -> ChatSession {
         if let empty = chats(in: studio).first(where: { $0.items.isEmpty && !$0.isRunning }) {
+            PermissionModes.applyNewStudioDefaults(to: &empty.record, folder: empty.workingFolder)
+            empty.onChange?(empty)
             if let backend { empty.setBackend(backend) }
             selectedID = empty.id
             return empty
         }
         let session = newChat(backend: backend)
         session.setStudio(studio)
+        PermissionModes.applyNewStudioDefaults(to: &session.record, folder: session.workingFolder)
+        session.onChange?(session)
         setStudio(studio.id, collapsed: false)
         selectedID = session.id
         return session
