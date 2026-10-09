@@ -20,6 +20,13 @@ extension ChatSession {
             record.codex?.model = defaults.string(forKey: "codexDefaultModel").flatMap { $0.isEmpty ? nil : $0 }
             record.codex?.effort = defaults.string(forKey: "codexDefaultEffort").flatMap { $0.isEmpty ? nil : $0 }
         }
+        // A sidequest may write in its folder; its instructions say when to leave files alone.
+        // Settings that already allow more stay as they are.
+        if backend == .codex, ["readOnly", nil].contains(record.codex?.mode ?? (record.codex?.canEdit == true ? "ask" : "readOnly")) {
+            record.codex?.mode = "ask"
+        }
+        record.codex?.canEdit = true
+        if backend == .claude, ["default", "plan"].contains(record.claudeModeID) { record.claudeMode = "acceptEdits" }
         record.pendingHandoff = Prompts.sidequestStart(from: parent.record.backend.label, to: backend, chat: parent.title,
                                                        transcript: transcript(parent.record.items[...]))
         return record

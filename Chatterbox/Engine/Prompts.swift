@@ -135,6 +135,8 @@ enum Prompts {
         <sidequest>
         The user sent you on a sidequest from another chat, \u{201C}\(title)\u{201D}, where \(other) is working. Here is that conversation so far, so you have its context. Do the task in the user's next message. When you finish, your final reply goes back to that chat automatically and \(other) carries on from it, so end with what it needs: what you did or found, the files you changed or made, and anything left undone.
 
+        You can change files in your working folder, and the task decides whether you should. Making something (images, files, fixes) means saving it there. Reviewing, checking, or answering a question means reading only: change nothing unless the task asks you to.
+
         \(job)
 
         \(transcript.isEmpty ? "(That chat hasn't started yet.)" : transcript)
