@@ -26,6 +26,7 @@ struct SettingsView: View {
     @AppStorage("codexDefaultMode") private var codexDefaultMode = PermissionModes.defaultCodex
     @AppStorage(AppModel.keepRepliesRunningKey) private var keepRepliesRunning = true
     @AppStorage(KeepAwake.key) private var keepAwake = true
+    @AppStorage("showMenuBarIcon") private var showsMenuBarIcon = true
     @AppStorage(ChatSession.remoteControlKey) private var remoteControl = false
 
     /// Settings' pages, listed down the left of the window.
@@ -262,6 +263,8 @@ struct SettingsView: View {
                 Toggle("Remote Control for Claude chats", isOn: $remoteControl)
                     .help("Claude chats you use can be read and continued on claude.ai and in the Claude app, while Chatterbox is open. Turn it on or off for one chat from its toolbar.")
                 Toggle("Keep replies running after Chatterbox quits", isOn: $keepRepliesRunning)
+                Toggle("Show Chatterbox in the menu bar", isOn: $showsMenuBarIcon)
+                    .help("An icon at the top right of the screen that shows when a chat waits on you or has a new reply, and lists your chats.")
                 Toggle("Keep this Mac awake while Chatterbox is open", isOn: $keepAwake)
                     .onChange(of: keepAwake) { KeepAwake.shared.apply() }
                     .help("So your phone can reach it, and agents, check-ins, and the email watch keep running. The display still sleeps; closing a laptop's lid still puts it to sleep.")
