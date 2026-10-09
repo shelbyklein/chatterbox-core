@@ -55,10 +55,6 @@ struct ChatDetailView: View {
     private var latestFinishedReply: Companion.Item? {
         detail?.items.last { $0.kind == .assistant && !$0.isCommentary && !$0.isStreaming && !$0.text.isEmpty }
     }
-    /// The newest reply, streaming or finished: what Golem reads aloud as it arrives.
-    private var latestReply: Companion.Item? {
-        detail?.items.last { $0.kind == .assistant && !$0.isCommentary && !$0.text.isEmpty }
-    }
     private var composerState: MobileComposerDraft<PendingImage> { store.composer(for: chat.id) }
     private var draft: String {
         get { composerState.text }
@@ -104,10 +100,11 @@ struct ChatDetailView: View {
     @State private var voiceGeneration = UUID()
     @State private var voiceEnded = false
     @State private var listeningTask: Task<Void, Never>?
-    /// The newest reply seen here (replies already on screen stay quiet), the one being read aloud,
-    /// and the draft generation spoken words belong to.
-    @State private var seenReply: UUID?
-    @State private var voiceReply: UUID?
+    /// His messages already accounted for (here when the chat opened, or taken up to be read), so
+    /// none is read twice; the ones being read aloud, oldest first; and the draft generation spoken
+    /// words belong to.
+    @State private var knownReplies: Set<UUID>?
+    @State private var voiceReplies: [UUID] = []
     @State private var voiceInput: UUID?
     #endif
     @State private var reviewingPDF: Companion.File?
@@ -378,8 +375,12 @@ struct ChatDetailView: View {
             #if GOLEM_APP
             // "Read new replies aloud": each reply that arrives while this chat is open, read
             // sentence by sentence as it streams in (the chat refreshes about every second meanwhile).
-            .onChange(of: "\(latestReply?.id.uuidString ?? "")|\(latestReply?.text.count ?? 0)|\(latestReply?.isStreaming == true)|\(summary.isRunning)") {
+            .onChange(of: voiceFollowKey) {
                 followReplyAloud()
+            }
+            // He starts working on what you said: a falling chime, in a voice conversation.
+            .onChange(of: summary.isRunning) { _, running in
+                if running, voiceConversation { GolemCues.play(.thinking) }
             }
             .onDisappear { endVoiceConversation() }
             #endif
@@ -865,7 +866,7 @@ struct ChatDetailView: View {
         voiceOnce = false
         voiceConversation = false
         voiceEnded = true
-        voiceReply = nil
+        voiceReplies = []
         voiceInput = nil
         listeningTask?.cancel()
         listeningTask = nil
@@ -876,35 +877,53 @@ struct ChatDetailView: View {
     /// Reads the newest reply as it streams in, with the microphone warm so your turn starts the
     /// moment he's done. He always finishes unless you press stop or mute. Replies already here
     /// when the chat opened stay quiet.
+    /// His messages and whether each is still being written: anything that changes what's read aloud.
+    private var voiceMessages: [Companion.Item] {
+        detail?.items.filter { $0.kind == .assistant && !$0.text.isEmpty } ?? []
+    }
+    private var voiceFollowKey: String {
+        voiceMessages.suffix(6).map { "\($0.id)\($0.text.count)\($0.isStreaming)" }.joined(separator: "|") + "|\(summary.isRunning)"
+    }
+
+    /// Reads each new message aloud, whole and in order: one that arrives while another is being
+    /// read waits its turn, and one already read (or that was here when the chat opened) isn't read
+    /// again, even when its status changes after it's finished (narration, say).
     private func followReplyAloud() {
         // A saved copy from the last visit isn't what's new: wait for the Mac's.
-        guard let reply = latestReply, scenePhase == .active, !history.isCached else { return }
-        // The first reply observed was already here.
-        guard seenReply != nil else { seenReply = reply.id; return }
-        if reply.id != seenReply {
-            seenReply = reply.id
-            voiceReply = nil
+        guard scenePhase == .active, !history.isCached else { return }
+        let messages = voiceMessages
+        guard var known = knownReplies else { knownReplies = Set(messages.map(\.id)); return }
+        for message in messages where !known.contains(message.id) {
+            known.insert(message.id)
             let quiet = quietAfterReply
             quietAfterReply = false
             // Ending a conversation (or dismissing his notice) silences the reply it was on, not
             // the ones after it.
             voiceEnded = false
-            guard voiceConversation || GolemVoice.shared.autoRead else { return }
-            voiceReply = reply.id
+            guard voiceConversation || GolemVoice.shared.autoRead else { continue }
+            voiceReplies.append(message.id)
             if !quiet, voiceConversation || GolemVoice.shared.listensAfter { listenForReply() }
         }
-        guard !voiceEnded, voiceReply == reply.id else { return }
+        knownReplies = known
+        guard !voiceEnded else { return }
         let session = voiceGeneration
-        GolemVoice.shared.update(reply: reply.id, text: reply.text, final: !reply.isStreaming && !summary.isRunning) {
-            guard session == voiceGeneration, !voiceEnded else { return }
-            finishedSpeaking()
+        for id in voiceReplies {
+            guard let message = messages.first(where: { $0.id == id }) else { continue }
+            // Complete once it's no longer being written (narration ends mid-turn), or his turn ended.
+            GolemVoice.shared.update(reply: id, text: message.text, final: !message.isStreaming || !summary.isRunning) {
+                guard session == voiceGeneration, !voiceEnded else { return }
+                finishedSpeaking()
+            }
         }
     }
 
     /// He finished reading: the ears are already open; start the silence clock over for your turn.
     private func finishedSpeaking() {
-        voiceReply = nil
-        if dictation.conversationActive { dictation.cancelUtterance() }
+        voiceReplies = []
+        if dictation.conversationActive {
+            dictation.cancelUtterance()
+            GolemCues.play(.listening)   // your turn
+        }
         else if voiceConversation || GolemVoice.shared.listensAfter { listenForReply() }
     }
 
@@ -925,6 +944,7 @@ struct ChatDetailView: View {
             await send()
             guard session == voiceGeneration, voiceConversation else { return }
             if error != nil { endVoiceConversation(); return }
+            GolemCues.play(.sent)
             // One message from the widget: sent, so the microphone stops; his reply stays quiet-eared.
             if voiceOnce { quietAfterReply = true; endVoiceConversation(); return }
             voiceInput = composerState.inputGeneration
@@ -941,7 +961,7 @@ struct ChatDetailView: View {
         }
         voiceConversation = true
         setGolemComposing(true)
-        if seenReply == nil { seenReply = latestReply?.id }
+        if knownReplies == nil { knownReplies = Set(voiceMessages.map(\.id)) }
         let session = voiceGeneration
         voiceInput = composerState.inputGeneration
         listeningTask = Task {
@@ -955,7 +975,9 @@ struct ChatDetailView: View {
             })
             guard session == voiceGeneration else { return }
             listeningTask = nil
-            if !started { endVoiceConversation() }
+            if !started { endVoiceConversation(); return }
+            // Listening for you now (not while he's still reading): a soft rising chime.
+            if GolemVoice.shared.speakingID == nil { GolemCues.play(.listening) }
         }
     }
     #endif
