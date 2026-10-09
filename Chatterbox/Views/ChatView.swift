@@ -86,6 +86,7 @@ struct ChatView: View {
                     VStack(alignment: .trailing, spacing: 8) {
                         HStack(alignment: .top, spacing: 8) {
                             SessionTools(bridge: windowToolbar ?? ownToolbar)
+                            SessionImages(bridge: windowToolbar ?? ownToolbar)
                             ChatNotes(scope: PinnedNotesStore.scope(for: session.record), project: session.record.projectFolder != nil,
                                       panelWidth: min(280, max(220, (geometry.size.width - appearance.style.contentWidth) / 2 - 32)))
                                 .id(PinnedNotesStore.scope(for: session.record))

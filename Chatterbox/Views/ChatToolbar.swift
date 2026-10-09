@@ -118,11 +118,28 @@ struct SessionTools: View {
         .buttonStyle(.plain)
         .background(scheme == .dark ? Color(white: 0.10) : Color(white: 0.97), in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12)))
-        .help("Session tools: tone, folder, images and repository")
+        .help("Session tools: tone, folder and repository")
         .accessibilityLabel("Session tools")
         .popover(isPresented: $open, arrowEdge: .top) {
             SessionToolsPanel(bridge: bridge).padding(16).frame(minWidth: 260, maxWidth: 420)
         }
+    }
+}
+
+struct SessionImages: View {
+    let bridge: ChatToolbarBridge
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        Button { bridge.showImages() } label: {
+            Image(systemName: "photo.on.rectangle.angled")
+                .padding(.horizontal, 10).frame(height: 32).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(scheme == .dark ? Color(white: 0.10) : Color(white: 0.97), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12)))
+        .help("Image Library")
+        .accessibilityLabel("Image Library")
     }
 }
 
@@ -133,7 +150,6 @@ struct SessionToolsPanel: View {
             Text("Session tools").font(.headline)
             ToneSlot(bridge: bridge)
             PlaceSlot(bridge: bridge)
-            Button("Image Library", systemImage: "photo.on.rectangle.angled") { bridge.showImages() }
             RepoSlot(bridge: bridge)
         }
     }
