@@ -48,6 +48,7 @@ struct ContentView: View {
     /// Show only projects with this tag; empty shows everything.
     /// Active tag pills, comma-separated (a single tag, as before, still works).
     @AppStorage("sidebarTagFilter") private var tagFilter = ""
+    @AppStorage("sidebarChatTagFilter") private var chatTagFilter = ""
     @AppStorage("sidebarTagPills") private var showsTagPills = true
     @AppStorage("sidebarRowSpacing") private var sidebarRowSpacing = 0.0
     @AppStorage(Theme.schemeKey) private var themeScheme = "system"
@@ -254,7 +255,7 @@ struct ContentView: View {
             }
             Button("Cancel", role: .cancel) { newTag = "" }
         } message: {
-            Text("Tags show as pills under the project name.")
+            Text("Tags show as pills under the chat or project name.")
         }
         .confirmationDialog("Delete \u{201C}\(pendingDelete?.title ?? "")\u{201D}?",
                             isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
@@ -281,16 +282,22 @@ struct ContentView: View {
             // A chat you open (like a new one) never hides behind the search or tag filter.
             if let session = model.sessions.first(where: { $0.id == id }), !isShown(session) {
                 searchText = ""
-                tagFilter = ""
+                setSidebarTagFilter("")
             }
         }
     }
 }
 
 extension ContentView {
+    private var sidebarTagFilter: String { model.showingChatsSidebar ? chatTagFilter : tagFilter }
+
+    private func setSidebarTagFilter(_ value: String) {
+        if model.showingChatsSidebar { chatTagFilter = value } else { tagFilter = value }
+    }
+
     /// The active tags, ignoring any no chat has anymore.
     private var activeTags: [String] {
-        let picked = tagFilter.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+        let picked = sidebarTagFilter.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
         return model.allTags.filter { tag in picked.contains { $0.caseInsensitiveCompare(tag) == .orderedSame } }
     }
     private var activeTag: String? { activeTags.isEmpty ? nil : activeTags.joined(separator: ", ") }
@@ -300,7 +307,7 @@ extension ContentView {
     private func toggleTag(_ tag: String) {
         var tags = activeTags
         if let index = tags.firstIndex(of: tag) { tags.remove(at: index) } else { tags.append(tag) }
-        tagFilter = tags.joined(separator: ",")
+        setSidebarTagFilter(tags.joined(separator: ","))
     }
 
     /// Every tag as a pill: tap to show only projects with it (several: any of them).
@@ -321,12 +328,12 @@ extension ContentView {
                         .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
-                .help(on ? "Stop filtering by \(tag)" : "Show projects tagged \(tag)")
+                .help(on ? "Stop filtering by \(tag)" : "Show \(model.showingChatsSidebar ? "chats" : "projects") tagged \(tag)")
                 .accessibilityLabel(tag)
                 .accessibilityAddTraits(on ? [.isButton, .isSelected] : .isButton)
             }
             if !activeTags.isEmpty {
-                Button("Clear") { withAnimation(.easeOut(duration: 0.15)) { tagFilter = "" } }
+                Button("Clear") { withAnimation(.easeOut(duration: 0.15)) { setSidebarTagFilter("") } }
                     .buttonStyle(.plain)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
@@ -341,7 +348,7 @@ extension ContentView {
     }
 
     private var isFiltering: Bool {
-        (!model.showingChatsSidebar && model.studioSidebarID == nil && activeTag != nil) || !searchText.trimmingCharacters(in: .whitespaces).isEmpty
+        (model.studioSidebarID == nil && activeTag != nil) || !searchText.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
     /// Search matches every word against the chat title, project name, and tags.
@@ -349,7 +356,7 @@ extension ContentView {
         if let studioID = model.studioSidebarID, session.record.studioID != studioID { return false }
         if session.record.sidechatOf == nil, model.sidechats(of: session).contains(where: isShown) { return true }
         if session.record.convertedProjectFolder != nil, model.worktrees(of: session).contains(where: isShown) { return true }
-        if !model.showingChatsSidebar, model.studioSidebarID == nil, !activeTags.isEmpty, !session.tags.contains(where: { tag in activeTags.contains { $0.caseInsensitiveCompare(tag) == .orderedSame } }) {
+        if model.studioSidebarID == nil, !activeTags.isEmpty, !session.tags.contains(where: { tag in activeTags.contains { $0.caseInsensitiveCompare(tag) == .orderedSame } }) {
             return false
         }
         let text = ([session.title, session.projectName, model.studio(for: session)?.name ?? ""] + session.tags).joined(separator: " ")
@@ -516,6 +523,7 @@ extension ContentView {
 
     private var tagFilterMenu: some View {
         Menu {
+            if !model.showingChatsSidebar {
             Picker("Sort By", selection: $projectSort) {
                 ForEach(ProjectSort.allCases, id: \.self) { Text($0.label).tag($0) }
             }
@@ -524,8 +532,9 @@ extension ContentView {
                 ForEach(ProjectActivity.allCases, id: \.self) { Text($0.label).tag($0) }
             }
             .pickerStyle(.inline)
+            }
             Section("Tags") {
-                Button("All Tags") { tagFilter = "" }
+                Button("All Tags") { setSidebarTagFilter("") }
                 ForEach(model.allTags, id: \.self) { tag in
                     Toggle(tag, isOn: Binding(get: { isActive(tag) }, set: { _ in toggleTag(tag) }))
                 }
@@ -533,13 +542,13 @@ extension ContentView {
                 Toggle("Show Tag Pills", isOn: $showsTagPills)
             }
         } label: {
-            Image(systemName: activeTag == nil && projectActivity == .all
+            Image(systemName: activeTag == nil && (model.showingChatsSidebar || projectActivity == .all)
                   ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help("Sort and filter projects")
+        .help(model.showingChatsSidebar ? "Filter chats by tag" : "Sort and filter projects")
     }
 
     private func rowWithSidechats(_ session: ChatSession, numbers: [UUID: Int]) -> some View {
@@ -643,17 +652,17 @@ extension ContentView {
                         Button("Convert to Studio\u{2026}") { beginNewStudio(from: session) }
                             .disabled(session.isRunning || session.isRestartingThread)
                     }
-                    Menu("Tags") {
-                        ForEach(model.allTags, id: \.self) { tag in
-                            Toggle(tag, isOn: Binding(get: { session.tags.contains(tag) }, set: { _ in session.toggleTag(tag) }))
-                        }
-                        if !model.allTags.isEmpty { Divider() }
-                        Button("New Tag\u{2026}") { taggingSession = session }
-                    }
                     Divider()
                     Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: folder)]) }
                     Button("Unbind from Folder") { session.unbindProject() }
                     Divider()
+                }
+                Menu("Tags") {
+                    ForEach(model.allTags, id: \.self) { tag in
+                        Toggle(tag, isOn: Binding(get: { session.tags.contains { $0.caseInsensitiveCompare(tag) == .orderedSame } }, set: { _ in session.toggleTag(tag) }))
+                    }
+                    if !model.allTags.isEmpty { Divider() }
+                    Button("New Tag\u{2026}") { newTag = ""; taggingSession = session }
                 }
                 if session.record.archivedAt == nil, session.record.projectFolder == nil, session.record.sidechatOf == nil {
                     Menu("Move to Studio") {
@@ -935,8 +944,10 @@ struct SidebarRow: View {
                 .help(session.record.projectFolder ?? "")
                 .task(id: session.record.projectFolder) { ProjectIcons.shared.load(session.record.projectFolder) }
             } else {
-                Text(session.title)
-                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: lineSpacing) {
+                    Text(session.title).lineLimit(1)
+                    if !session.tags.isEmpty { TagPills(tags: session.tags) }
+                }
             }
             if session.record.automationID != nil {
                 Label("Automation", systemImage: "clock.arrow.circlepath").font(.caption2).foregroundStyle(.secondary)
@@ -1227,6 +1238,7 @@ extension ContentView {
                         .buttonStyle(.borderless).help("New chat in \(studio.name)").accessibilityLabel("New Studio Chat")
                 }
             case .chats:
+                tagFilterMenu
                 Button { model.newChat() } label: { Image(systemName: "square.and.pencil") }
                     .buttonStyle(.borderless).help("New Chat").accessibilityLabel("New Chat")
             }
@@ -1291,6 +1303,7 @@ extension ContentView {
                     if threads.isEmpty { Text("No matching projects").font(.caption).foregroundStyle(.secondary) }
                 case .chats:
                     let threads = model.sidebarChats.filter { !model.isPinnedThread($0) }.flatMap(cardFamily)
+                    if showsTagPills, !model.allTags.isEmpty { tagPills }
                     cardGrid(threads)
                     if threads.isEmpty { Text("No matching chats").font(.caption).foregroundStyle(.secondary) }
                 case .studios:
@@ -1339,6 +1352,7 @@ extension ContentView {
                 }
             case .chats:
                 let chats = model.sidebarChats.filter { !model.isPinnedThread($0) }.filter(isShown)
+                if showsTagPills, !model.allTags.isEmpty { tagPills.listRowSeparator(.hidden) }
                 ForEach(chats) { session in rowWithSidechats(session, numbers: numbers) }
                 if chats.isEmpty {
                     Text(isFiltering ? "No matching chats" : "Chats that aren't in a project or a Studio.")
