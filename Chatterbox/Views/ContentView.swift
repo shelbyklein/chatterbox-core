@@ -871,6 +871,25 @@ private struct StudioRow: View {
     }
 }
 
+/// Pinned threads can come from any sidebar page; identify their source quietly.
+struct SessionOriginLabel: View {
+    let session: ChatSession
+    @Environment(AppModel.self) private var model
+
+    static func text(for session: ChatSession, in model: AppModel) -> String {
+        if session.record.projectFolder != nil { return "Project" }
+        if let studio = model.studio(for: session) { return "Studio · \(studio.name)" }
+        if session.record.studioID != nil { return "Studio" }
+        return "Chat"
+    }
+
+    var body: some View {
+        let text = Self.text(for: session, in: model)
+        Text(text).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+            .help(text)
+    }
+}
+
 struct SidebarRow: View {
     @Environment(AppModel.self) private var model
     /// Centers a shape (spinner, dot) on the first line of text, which it's baseline-aligned
@@ -913,6 +932,7 @@ struct SidebarRow: View {
             if session.record.projectFolder != nil {
                 VStack(alignment: .leading, spacing: lineSpacing) {
                     Text(session.projectName).lineLimit(1)
+                    if model.isPinnedThread(session) { SessionOriginLabel(session: session) }
                     if !session.tags.isEmpty {
                         TagPills(tags: session.tags)
                     }
@@ -946,6 +966,7 @@ struct SidebarRow: View {
             } else {
                 VStack(alignment: .leading, spacing: lineSpacing) {
                     Text(session.title).lineLimit(1)
+                    if model.isPinnedThread(session) { SessionOriginLabel(session: session) }
                     if !session.tags.isEmpty { TagPills(tags: session.tags) }
                 }
             }
