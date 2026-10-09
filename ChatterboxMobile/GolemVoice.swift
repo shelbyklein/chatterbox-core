@@ -397,14 +397,22 @@ struct GolemVoiceSettings: View {
 
     /// A soft chime when it's your turn, a tick when your words are sent, a falling chime when he starts thinking.
     @AppStorage(GolemCues.key) private var soundCues = true
+    /// Hold the waveform button while you talk and let go to send, or talk hands-free and pause to send.
+    @AppStorage("golemHoldToTalk") private var holdToTalk = true
     var body: some View {
         Section {
             Toggle("Read new replies aloud", isOn: Binding(get: { voice.autoRead }, set: { voice.autoRead = $0 }))
             Toggle("Sound cues", isOn: $soundCues)
-            if voice.autoRead {
-                Toggle("Then listen for my reply", isOn: Binding(get: { voice.listensAfter }, set: { voice.listensAfter = $0 }))
+            Picker("Talking to Golem", selection: $holdToTalk) {
+                Text("Hold the button").tag(true)
+                Text("Pause to send").tag(false)
             }
-            DictationPauseControl()
+            if !holdToTalk {
+                if voice.autoRead {
+                    Toggle("Then listen for my reply", isOn: Binding(get: { voice.listensAfter }, set: { voice.listensAfter = $0 }))
+                }
+                DictationPauseControl()
+            }
             ElevenLabsSpeedControl()
             if voice.hasKey {
                 if voice.voices.isEmpty {
@@ -430,7 +438,7 @@ struct GolemVoiceSettings: View {
         } header: {
             Text("Voice")
         } footer: {
-            Text((voice.autoRead && voice.listensAfter ? "Golem reads each reply as it arrives and always finishes unless you tap stop or mute; then he listens, and what you say sends when you pause. With headphones, the iPhone's microphone hears you, so keep it nearby. Stay quiet to end the conversation. " : "") + (voice.hasKey
+            Text((holdToTalk ? "Hold the waveform button by the message box while you talk, and let go to send. Pressing it while Golem is talking stops him. With headphones, the iPhone's microphone hears you, so keep it nearby. " : voice.autoRead && voice.listensAfter ? "Golem reads each reply as it arrives and always finishes unless you tap stop or mute; then he listens, and what you say sends when you pause. With headphones, the iPhone's microphone hears you, so keep it nearby. Stay quiet to end the conversation. " : "") + (voice.hasKey
                  ? "Replies are spoken with ElevenLabs: their text is sent to ElevenLabs and uses your plan's credits. The key stays on this iPhone."
                  : "Without a key, Golem uses this iPhone's own voice. Add an ElevenLabs API key for a natural voice; a key limited to text to speech, with a credit limit, is enough."))
         }

@@ -172,6 +172,14 @@ final class Dictation {
         var awaitingNext = false
         /// Requests in a row that ended at once with nothing heard.
         var quickFailures = 0
+        /// Hold to talk: the button is down, so a pause doesn't end the turn; letting go does.
+        var holding = false
+        /// Let go: the last words are still arriving before the turn is handed over.
+        var releasing = false
+        /// Words from requests that ended while the button was still down.
+        var carry = ""
+        /// Everything said this turn.
+        var spoken: String { [carry, state.text].map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }.joined(separator: " ") }
     }
 
     /// Starts a conversation: permissions, the audio session and one running microphone, then the
@@ -180,7 +188,7 @@ final class Dictation {
     /// heard for `giveUp` seconds, with "". `onSpeechDetected` fires once per utterance, at the first
     /// words that count as talking over. After `onUtterance`, call `nextUtterance()` to listen again.
     /// Returns false, with `problem` set, if it couldn't start.
-    func startConversation(giveUp: TimeInterval,
+    func startConversation(giveUp: TimeInterval, holding: Bool = false,
                            onSpeechDetected: @escaping () -> Void,
                            onUtterance: @escaping (String) -> Void,
                            onText: @escaping (String) -> Void) async -> Bool {
@@ -217,7 +225,7 @@ final class Dictation {
             let now = Date()
             conversation = Conversation(giveUp: giveUp, onSpeechDetected: onSpeechDetected, onUtterance: onUtterance, onText: onText,
                                         state: UtterancePause(pause: pause, giveUp: giveUp, minimumWords: bargeInMinimumWords, opened: now),
-                                        requestOpened: now)
+                                        requestOpened: now, holding: holding)
             conversationActive = true
             sessionObserver = GolemAudioSession.shared.addObserver(
                 interrupted: { [weak self] in self?.fail("Listening was interrupted.") },
@@ -249,6 +257,33 @@ final class Dictation {
     func nextUtterance() {
         guard conversationActive else { return }
         openRequest(newUtterance: true)
+    }
+
+    /// Hold to talk, button down: listen on the running microphone until `endHold()`. Pauses don't end the turn.
+    func beginHold() {
+        guard conversationActive, var conversation else { return }
+        conversation.holding = true
+        conversation.releasing = false
+        conversation.carry = ""
+        self.conversation = conversation
+        openRequest(newUtterance: true)
+    }
+
+    /// Hold to talk, button up: after a moment for the last words to arrive, hand over everything
+    /// said (`onUtterance`, "" if nothing). The microphone stays on for the next press.
+    func endHold(grace: TimeInterval = 0.35) {
+        guard var conversation, conversation.holding, !conversation.releasing else { return }
+        conversation.releasing = true
+        self.conversation = conversation
+        let id = conversation.utterance
+        DispatchQueue.main.asyncAfter(deadline: .now() + grace) { [weak self] in
+            guard let self, var current = self.conversation, current.utterance == id, current.releasing, !current.awaitingNext else { return }
+            current.holding = false
+            current.releasing = false
+            self.conversation = current
+            let words = current.spoken
+            self.deliver(words.isEmpty ? .silent : .send(words))
+        }
     }
 
     /// Drops the words heard so far and listens afresh, keeping the microphone running.
@@ -303,8 +338,15 @@ final class Dictation {
     /// The analyzer for this utterance stopped by itself. If it had words, hand them over; if it
     /// failed with none, carry on with SFSpeechRecognizer for the rest of the conversation.
     private func analyzerEnded(_ id: UUID, failed: Bool) {
-        guard let conversation, conversation.utterance == id, !conversation.awaitingNext, analyzerEngine != nil else { return }
-        let words = conversation.state.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard var conversation, conversation.utterance == id, !conversation.awaitingNext, analyzerEngine != nil else { return }
+        let words = conversation.spoken
+        // Button still down: keep what was said and listen on.
+        if conversation.holding, !conversation.releasing, !conversation.state.text.isEmpty {
+            conversation.carry = words
+            self.conversation = conversation
+            openRequest(newUtterance: true)
+            return
+        }
         if !words.isEmpty { deliver(.send(words)); return }
         guard failed || Date().timeIntervalSince(conversation.requestOpened) < 2 else {
             openRequest(newUtterance: false)
@@ -322,7 +364,7 @@ final class Dictation {
             let bargedIn = conversation.state.heard(text, at: Date())
             self.conversation = conversation
             Self.log.notice("Transcription updated: \(text.count) characters")
-            conversation.onText(text)
+            conversation.onText(conversation.spoken)
             if bargedIn { conversation.onSpeechDetected() }
             // The callbacks may have ended or restarted the conversation.
             guard let current = self.conversation, current.utterance == id, !current.awaitingNext else { return }
@@ -330,7 +372,14 @@ final class Dictation {
         }
         guard final || failed else { return }
         // The request ended by itself: hand over what it heard, or replace it if it heard nothing.
-        let words = conversation.state.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let words = conversation.spoken
+        // Button still down: keep what was said and listen on.
+        if conversation.holding, !conversation.releasing, !conversation.state.text.isEmpty {
+            conversation.carry = words
+            self.conversation = conversation
+            openRequest(newUtterance: true)
+            return
+        }
         if !words.isEmpty { deliver(.send(words)); return }
         if Date().timeIntervalSince(conversation.requestOpened) < 2 { conversation.quickFailures += 1 } else { conversation.quickFailures = 0 }
         if conversation.quickFailures >= 3 {
@@ -347,6 +396,11 @@ final class Dictation {
     private func tick() {
         guard let conversation, !conversation.awaitingNext else { return }
         let now = Date()
+        // Hold to talk: the button decides when the turn ends, not pauses or silence.
+        if conversation.holding {
+            if analyzerEngine == nil, conversation.state.shouldRotate(openedAt: conversation.requestOpened, now: now) { openRequest(newUtterance: false) }
+            return
+        }
         if let outcome = conversation.state.due(at: now) {
             deliver(outcome)
         } else if analyzerEngine == nil, conversation.state.shouldRotate(openedAt: conversation.requestOpened, now: now) {

@@ -94,6 +94,13 @@ struct ChatDetailView: View {
     /// One dictated message (the widget): after it sends, the microphone stops, and his reply
     /// doesn't reopen it.
     @State private var voiceOnce = false
+    /// Hold to talk (Settings → Voice): the waveform button records while it's held and sends when
+    /// it's let go. The microphone stays warm between presses, until a minute goes by unused.
+    @AppStorage("golemHoldToTalk") private var holdToTalk = true
+    @State private var holdingTalk = false
+    @State private var holdSession = false
+    @State private var holdPrefix = ""
+    @State private var holdIdle: Task<Void, Never>?
     @State private var showingCapabilities = false
     @State private var quietAfterReply = false
     @State private var voiceConversation = false
@@ -378,6 +385,8 @@ struct ChatDetailView: View {
             .onChange(of: voiceFollowKey) {
                 followReplyAloud()
             }
+            // Let go: anything he said while you held the button is read now.
+            .onChange(of: holdingTalk) { _, holding in if !holding { followReplyAloud() } }
             // He starts working on what you said: a falling chime, in a voice conversation.
             .onChange(of: summary.isRunning) { _, running in
                 if running, voiceConversation { GolemCues.play(.thinking) }
@@ -810,7 +819,7 @@ struct ChatDetailView: View {
             }
             if !pendingImages.isEmpty { pendingTray }
             if let steps = detail?.nextSteps, !steps.isEmpty, !summary.isRunning, dismissedSteps != steps { nextStepsChips(steps) }
-            if dictation.isListening {
+            if dictation.isListening, !holdSessionIdle {
                 Label(listeningHint, systemImage: "waveform")
                     .font(.caption).foregroundStyle(.red)
                     .symbolEffect(.variableColor.iterative, isActive: true)
@@ -864,6 +873,10 @@ struct ChatDetailView: View {
     private func endVoiceConversation() {
         voiceGeneration = UUID()
         voiceOnce = false
+        holdSession = false
+        holdingTalk = false
+        holdIdle?.cancel()
+        holdIdle = nil
         voiceConversation = false
         voiceEnded = true
         voiceReplies = []
@@ -902,10 +915,12 @@ struct ChatDetailView: View {
             voiceEnded = false
             guard voiceConversation || GolemVoice.shared.autoRead else { continue }
             voiceReplies.append(message.id)
-            if !quiet, voiceConversation || GolemVoice.shared.listensAfter { listenForReply() }
+            // Hold to talk: your turn starts when you press, never by itself.
+            if !quiet, !holdSession, voiceConversation || (GolemVoice.shared.listensAfter && !holdToTalk) { listenForReply() }
         }
         knownReplies = known
-        guard !voiceEnded else { return }
+        // While you're holding the button, he waits; his messages are read once you let go.
+        guard !voiceEnded, !holdingTalk else { return }
         let session = voiceGeneration
         for id in voiceReplies {
             guard let message = messages.first(where: { $0.id == id }) else { continue }
@@ -920,11 +935,107 @@ struct ChatDetailView: View {
     /// He finished reading: the ears are already open; start the silence clock over for your turn.
     private func finishedSpeaking() {
         voiceReplies = []
+        if holdSession { armHoldIdle(); return }   // hold to talk: your turn starts when you press
         if dictation.conversationActive {
             dictation.cancelUtterance()
             GolemCues.play(.listening)   // your turn
         }
-        else if voiceConversation || GolemVoice.shared.listensAfter { listenForReply() }
+        else if voiceConversation || (GolemVoice.shared.listensAfter && !holdToTalk) { listenForReply() }
+    }
+
+    // MARK: Hold to talk
+
+    /// Warm between presses: the microphone is on but nothing is being recorded.
+    private var holdSessionIdle: Bool { holdSession && !holdingTalk }
+
+    private var holdToTalkButton: some View {
+        Image(systemName: holdingTalk ? "mic.fill" : "waveform")
+            .font(.system(size: 19, weight: .semibold))
+            .foregroundStyle(holdingTalk ? Color.white : Color.black)
+            .frame(width: 34, height: 34)
+            .background(holdingTalk ? Color.red : Color.white, in: Circle())
+            .scaleEffect(holdingTalk ? 1.18 : 1)
+            .animation(.easeOut(duration: 0.12), value: holdingTalk)
+            .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
+            .onLongPressGesture(minimumDuration: 0, maximumDistance: 160, perform: {}) { down in
+                if down { pressTalk() } else { releaseTalk() }
+            }
+            .accessibilityElement()
+            .accessibilityAddTraits(.isButton)
+            .accessibilityLabel(holdingTalk ? "Listening. Activate again to send." : "Hold to talk")
+            .accessibilityAction { if holdingTalk { releaseTalk() } else { pressTalk() } }
+            .accessibilityIdentifier("golem-voice-conversation")
+            .opacity(detail == nil || sending || !pendingImages.isEmpty ? 0.4 : 1)
+            .allowsHitTesting(detail != nil && !sending && pendingImages.isEmpty)
+    }
+
+    /// Button down: he stops talking (you're taking your turn) and the microphone records until you let go.
+    private func pressTalk() {
+        guard !holdingTalk, detail != nil else { return }
+        holdingTalk = true
+        holdIdle?.cancel()
+        if GolemVoice.shared.speakingID != nil { GolemVoice.shared.stop() }
+        holdPrefix = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        voiceInput = composerState.inputGeneration
+        if holdSession, dictation.conversationActive {
+            dictation.beginHold()
+            GolemCues.play(.listening)
+            return
+        }
+        // First press: a hands-free conversation gives way, and the microphone warms up.
+        if voiceConversation || dictation.isListening { endVoiceConversation(); holdingTalk = true }
+        voiceGeneration = UUID()
+        voiceEnded = false
+        voiceConversation = true
+        holdSession = true
+        if knownReplies == nil { knownReplies = Set(voiceMessages.map(\.id)) }
+        let session = voiceGeneration
+        listeningTask = Task {
+            let started = await dictation.startConversation(giveUp: 30, holding: true, onSpeechDetected: {}, onUtterance: { spoken in
+                guard session == voiceGeneration else { return }
+                heldUtterance(spoken)
+            }, onText: { spoken in
+                guard session == voiceGeneration, let input = voiceInput else { return }
+                composerState.applyTranscription(spoken, prefix: holdPrefix, generation: input)
+            })
+            guard session == voiceGeneration else { return }
+            listeningTask = nil
+            if !started { endVoiceConversation(); return }
+            // Let go while it was starting: nothing was said.
+            if holdingTalk { GolemCues.play(.listening) } else { dictation.endHold(grace: 0) }
+        }
+    }
+
+    /// Button up: what you said is sent (after a moment for your last words).
+    private func releaseTalk() {
+        guard holdingTalk else { return }
+        holdingTalk = false
+        if listeningTask == nil { dictation.endHold() }
+    }
+
+    private func heldUtterance(_ spoken: String) {
+        armHoldIdle()
+        guard !spoken.isEmpty, let input = voiceInput else { return }
+        // You typed meanwhile: the box is yours, so nothing is sent.
+        guard composerState.inputGeneration == input else { return }
+        composerState.applyTranscription(spoken, prefix: holdPrefix, generation: input)
+        Task {
+            await send()
+            if error == nil { GolemCues.play(.sent) }
+        }
+    }
+
+    /// A minute unused (and he's not talking or working): the microphone switches off.
+    private func armHoldIdle() {
+        holdIdle?.cancel()
+        let session = voiceGeneration
+        holdIdle = Task {
+            try? await Task.sleep(for: .seconds(60))
+            guard !Task.isCancelled, session == voiceGeneration, holdSession, !holdingTalk else { return }
+            if GolemVoice.shared.speakingID != nil || summary.isRunning { armHoldIdle(); return }
+            endVoiceConversation()
+        }
     }
 
     /// One finished utterance: send it and keep listening on the same microphone. Silence while he
@@ -1043,6 +1154,7 @@ struct ChatDetailView: View {
 
     private var listeningHint: String {
         #if GOLEM_APP
+        if isConversation, holdSession { return "Listening… let go to send." }
         if isConversation { return "Listening… pause to send, or tap stop to end." }
         #endif
         return "Listening… tap the mic to stop."
@@ -1084,7 +1196,9 @@ struct ChatDetailView: View {
                     isConversation ? Color.primary.opacity(0.12) : agentAccent.opacity(0.35), lineWidth: 1))
 
             #if GOLEM_APP
-            if isConversation {
+            if isConversation, holdToTalk {
+                holdToTalkButton
+            } else if isConversation {
                 Button {
                     if voiceConversation { endVoiceConversation() } else { startVoiceConversation() }
                 } label: {
