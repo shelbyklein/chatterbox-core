@@ -132,19 +132,19 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
 
     /// Fixed-size icons reserve badge space even when the count is zero.
     private static func viewImage(_ symbol: String, count: Int) -> NSImage {
-        NSImage(size: NSSize(width: 32, height: 22), flipped: false) { rect in
+        NSImage(size: NSSize(width: 44, height: 24), flipped: false) { rect in
             let icon = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
                 .withSymbolConfiguration(.init(paletteColors: [.labelColor]))
             // Center the base icon in its full slot. The badge overlaps its corner;
             // reserving space only on the right made every unbadged icon look off-center.
-            icon?.draw(in: NSRect(x: 7.5, y: 3, width: 17, height: 17))
+            icon?.draw(in: NSRect(x: 13, y: 3, width: 18, height: 18))
             if count > 0 {
                 NSColor.systemOrange.setFill()
-                NSBezierPath(ovalIn: NSRect(x: 16, y: 7, width: 16, height: 15)).fill()
+                NSBezierPath(ovalIn: NSRect(x: 24, y: 9, width: 16, height: 15)).fill()
                 let text = count > 9 ? "9+" : String(count)
                 let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.boldSystemFont(ofSize: 9), .foregroundColor: NSColor.white]
                 let size = (text as NSString).size(withAttributes: attributes)
-                (text as NSString).draw(at: NSPoint(x: 24 - size.width / 2, y: 14.5 - size.height / 2), withAttributes: attributes)
+                (text as NSString).draw(at: NSPoint(x: 32 - size.width / 2, y: 16.5 - size.height / 2), withAttributes: attributes)
             }
             return true
         }
