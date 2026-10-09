@@ -585,10 +585,10 @@ extension ContentView {
         }
     }
 
-    private func row(_ session: ChatSession, number: Int?, card: Bool = false, expanded: Bool = false, iconOnly: Bool = false) -> some View {
+    private func row(_ session: ChatSession, number: Int?, card: Bool = false, expanded: Bool = false, iconOnly: Bool = false, forceList: Bool = false) -> some View {
         let place = session.record.projectFolder != nil ? model.pinPlace(for: session) : nil
         return Group {
-            if card || sidebarCards {
+            if !forceList && (card || sidebarCards) {
                 ThreadCard(session: session, expanded: expanded, iconOnly: iconOnly, selected: model.selectedID == session.id, showsThumbnail: model.studioSidebarID != nil || model.showingHome) {
                     model.selectedID = session.id
                 }
@@ -1326,10 +1326,12 @@ extension ContentView {
                 let pinned = model.pinnedThreads.filter(isShown)
                 if !pinned.isEmpty {
                     pinnedHeader
-                    if section == .studios {
-                        pinnedStudioTiles(pinned.flatMap(cardFamily))
-                    } else {
-                        cardGrid(pinned.flatMap(cardFamily))
+                    ForEach(pinned.flatMap(cardFamily)) { session in
+                        row(session, number: nil, forceList: true)
+                            .padding(.horizontal, 6).padding(.vertical, 4)
+                            .background(RoundedRectangle(cornerRadius: 8).fill(
+                                session.isWaitingOnYou ? Color.yellow.opacity(0.22)
+                                : model.selectedID == session.id ? Color.white : Color.clear))
                     }
                     Divider().padding(.vertical, 4)
                 }

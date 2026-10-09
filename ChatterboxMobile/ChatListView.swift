@@ -19,6 +19,7 @@ struct ChatListView: View {
     @Environment(MobileStore.self) private var store
     /// List rows, or cards two to a row.
     @AppStorage("mobileChatListCards") private var showsCards = false
+    @AppStorage("mobileStudioListMode") private var studioListMode = false
     /// How each page orders its threads. Recent is the Mac's order (latest first).
     enum Sort: String, CaseIterable, Identifiable {
         case recent, name, active, tag
@@ -46,6 +47,7 @@ struct ChatListView: View {
     @State private var search = ""
     /// The Studio whose instructions are open.
     @State private var editingStudio: Companion.ChatGroup?
+    @State private var selectedStudioID: String?
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columns, preferredCompactColumn: $compactColumn) {
@@ -54,13 +56,28 @@ struct ChatListView: View {
                 .navigationTitle(fixedPage?.title ?? store.connection?.macName ?? "Chatterbox")
                 .navigationBarTitleDisplayMode(.inline)
                 .refreshable { await store.loadChats() }
-                .searchable(text: $search, prompt: fixedPage.map { "Search \($0.title)" } ?? "Search chats")
+                .searchable(text: $search, placement: .navigationBarDrawer(displayMode: page == .studios ? .always : .automatic), prompt: fixedPage.map { "Search \($0.title)" } ?? "Search chats")
                 .sheet(item: $editingStudio) { group in
                     if let id = group.studioID {
                         StudioInstructionsEditor(title: group.title, studio: id, initial: group.instructions ?? "")
                     }
                 }
                 .toolbar {
+                    if page == .studios {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Menu {
+                                connectionItems
+                                Button { notificationSettings = true } label: { Label("Notifications", systemImage: "bell") }
+                                Picker("Sort", selection: $sortName) {
+                                    ForEach(Sort.allCases.filter { $0 != .tag }) { Text($0.title).tag($0.rawValue) }
+                                }
+                                Button { withAnimation { studioListMode.toggle() } } label: {
+                                    Label(studioListMode ? "Show as Cards" : "Show as List", systemImage: studioListMode ? "square.grid.2x2" : "list.bullet")
+                                }
+                            } label: { Image(systemName: "ellipsis.circle") }
+                            .accessibilityLabel("Studio options")
+                        }
+                    } else {
                     ToolbarItem(placement: .topBarTrailing) { connectionMenu }
                     ToolbarItem(placement: .topBarTrailing) {
                         Button { notificationSettings = true } label: { Image(systemName: "bell") }.accessibilityLabel("Notifications")
@@ -78,6 +95,7 @@ struct ChatListView: View {
                             Image(systemName: showsCards ? "list.bullet" : "square.grid.2x2")
                         }
                         .accessibilityLabel(showsCards ? "Show as List" : "Show as Cards")
+                    }
                     }
                     ToolbarItem(placement: .topBarTrailing) { newChatMenu }
                 }
@@ -145,7 +163,9 @@ struct ChatListView: View {
     /// iPad's sidebar style beside the chat; the iPhone's grouped list on its own.
     @ViewBuilder
     private var sidebar: some View {
-        if showsCards {
+        if page == .studios {
+            studioWorkspace
+        } else if showsCards {
             chatCards
         } else if sizeClass == .regular {
             chatList.listStyle(.sidebar)
@@ -284,6 +304,94 @@ struct ChatListView: View {
         .background(Color(uiColor: .systemGroupedBackground))
     }
 
+    /// Studios keep their own workspace selected; search can still find any Studio chat.
+    private var studioGroups: [Companion.ChatGroup] {
+        let all = (store.chatList?.groups ?? []).filter { $0.kind == .studio }
+        // Tag sorting belongs to Projects; keep Studio identity and instructions intact.
+        return sort == .tag ? filtered(all) : sorted(filtered(all))
+    }
+
+    private var visibleStudios: [Companion.ChatGroup] {
+        if !search.isEmpty { return studioGroups }
+        let chosen = studioGroups.first { $0.id == selectedStudioID } ?? studioGroups.first
+        return chosen.map { [$0] } ?? []
+    }
+
+    private var studioWorkspace: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 16) {
+                if let problem = store.problem {
+                    Label(problem, systemImage: "wifi.exclamationmark").font(.callout).foregroundStyle(.orange)
+                }
+                if let list = store.chatList {
+                    if search.isEmpty {
+                        MobileNewReplies(activity: list.activity ?? [], chats: allChats, summary: summary(for:), open: open, compact: true)
+                        if !studioGroups.isEmpty {
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 8) {
+                                    ForEach(studioGroups) { group in
+                                        let chosen = group.id == visibleStudios.first?.id
+                                        Button { withAnimation(.easeOut(duration: 0.2)) { selectedStudioID = group.id } } label: {
+                                            Label(group.title, systemImage: "paintpalette")
+                                                .font(.subheadline.weight(.semibold)).lineLimit(1)
+                                                .padding(.horizontal, 14).frame(minHeight: 44)
+                                                .background(chosen ? Color.accentColor.opacity(0.15) : Color(uiColor: .secondarySystemGroupedBackground), in: Capsule())
+                                                .overlay(Capsule().strokeBorder(chosen ? Color.accentColor : Color.primary.opacity(0.08), lineWidth: 1))
+                                        }
+                                        .buttonStyle(.plain)
+                                        .accessibilityIdentifier("studio-select-" + group.id)
+                                        .accessibilityAddTraits(chosen ? .isSelected : [])
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    emptyPage
+                    ForEach(visibleStudios) { group in
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(group.title).font(.title3.weight(.bold))
+                                    Text("\(group.chats.count) chat\(group.chats.count == 1 ? "" : "s")").font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                if group.studioID != nil {
+                                    Button { editingStudio = group } label: { Image(systemName: "text.book.closed").frame(width: 44, height: 44) }
+                                        .accessibilityLabel("\(group.title) instructions")
+                                }
+                            }
+                            if search.isEmpty, let pins = group.pins, !pins.isEmpty { MobilePinPills(pins: pins) }
+                            if studioListMode {
+                                LazyVStack(spacing: 0) {
+                                    ForEach(group.chats) { chat in
+                                        ChatRow(chat: chat) { open(chat) }.padding(12)
+                                            .contextMenu { Button(role: .destructive) { archive(chat) } label: { Label("Archive", systemImage: "archivebox") } }
+                                        if chat.id != group.chats.last?.id { Divider().padding(.leading, 38) }
+                                    }
+                                }
+                                .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+                            } else {
+                                LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                                    ForEach(group.chats) { chat in
+                                        ChatCard(chat: chat, showsThumbnail: true, selected: sizeClass == .regular && selection == chat.id,
+                                                 isNew: isNewReply(chat)) { open(chat) }
+                                            .contextMenu { Button(role: .destructive) { archive(chat) } label: { Label("Archive", systemImage: "archivebox") } }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if store.problem == nil { ProgressView().frame(maxWidth: .infinity) }
+            }
+            .padding(16)
+        }
+        .background(Color(uiColor: .systemGroupedBackground))
+    }
+
+    private func isNewReply(_ chat: Companion.ChatSummary) -> Bool {
+        (store.chatList?.activity ?? []).contains { $0.chatID == chat.id && MobileSeenReplies.shared.isNew($0) }
+    }
+
     private func header(_ group: Companion.ChatGroup) -> some View {
         HStack {
             Label(group.title, systemImage: group.id.contains("-tag-") ? "tag" : group.kind == .studio ? "paintpalette" : group.kind == .projects ? "folder" : "bubble.left.and.bubble.right")
@@ -345,18 +453,20 @@ struct ChatListView: View {
     }
 
     private var connectionMenu: some View {
-        Menu {
-            if let connection = store.connection {
-                Section("Connected to \(connection.macName)") {
-                    ForEach(connection.hosts, id: \.self) { Text($0) }
-                }
+        Menu { connectionItems } label: { Image(systemName: "ellipsis.circle") }
+            .accessibilityLabel("Connection")
+    }
+
+    @ViewBuilder
+    private var connectionItems: some View {
+        if let connection = store.connection {
+            Section("Connected to \(connection.macName)") {
+                ForEach(connection.hosts, id: \.self) { Text($0) }
             }
-            Button { appearance = true } label: { Label("Appearance", systemImage: "paintbrush") }
-            Button { savedPDFs = true } label: { Label("Saved PDFs", systemImage: "doc.richtext") }
-            Button("Unpair This \(UIDevice.current.model)", role: .destructive) { store.forget() }
-        } label: {
-            Image(systemName: "ellipsis.circle")
-        }.accessibilityLabel("Connection")
+        }
+        Button { appearance = true } label: { Label("Appearance", systemImage: "paintbrush") }
+        Button { savedPDFs = true } label: { Label("Saved PDFs", systemImage: "doc.richtext") }
+        Button("Unpair This \(UIDevice.current.model)", role: .destructive) { store.forget() }
     }
 
     @ViewBuilder
@@ -512,11 +622,13 @@ private struct ChatCard: View {
     let chat: Companion.ChatSummary
     var showsThumbnail = false
     var selected = false
+    var isNew = false
     var activity: String? = nil
     var open: () -> Void
 
     var body: some View {
         Button(action: open) {
+            if showsThumbnail { studioCard } else {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
                     if chat.worktreeBranch != nil {
@@ -561,6 +673,7 @@ private struct ChatCard: View {
                 .strokeBorder(chat.isWaitingOnYou ? Color.yellow.opacity(0.6) : selected ? Color.accentColor : Color.primary.opacity(0.06),
                               lineWidth: chat.isWaitingOnYou || selected ? 1.5 : 1))
             .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("chat-\(chat.id.uuidString)")
@@ -569,4 +682,51 @@ private struct ChatCard: View {
             if showsThumbnail, let file = chat.thumbnail { thumbnail = try? await store.thumbnail(file, in: chat.id) }
         }
     }
+    private var studioCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Group {
+                if let thumbnail {
+                    Image(uiImage: thumbnail).resizable().scaledToFit()
+                        .accessibilityLabel("Latest image in " + chat.title)
+                } else {
+                    Image((Backend(rawValue: chat.backend) ?? .claude).iconName)
+                        .resizable().scaledToFit().frame(width: 32, height: 32)
+                        .foregroundStyle(MobileConversationStyle.accent(for: chat.backend).opacity(0.4))
+                        .accessibilityHidden(true)
+                }
+            }
+            .frame(maxWidth: .infinity).frame(height: 112)
+            .background(Color.primary.opacity(0.04))
+            .clipped()
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .top, spacing: 6) {
+                    Image((Backend(rawValue: chat.backend) ?? .claude).iconName)
+                        .resizable().scaledToFit().frame(width: 12, height: 12).padding(.top, 3)
+                        .foregroundStyle(MobileConversationStyle.accent(for: chat.backend))
+                    Text(chat.title).font(.subheadline.weight(.semibold)).lineLimit(2)
+                        .frame(maxWidth: .infinity, minHeight: 38, alignment: .topLeading)
+                }
+                Text(chat.isRunning ? "Reply in progress" : (chat.subtitle ?? "No replies yet"))
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                HStack(spacing: 5) {
+                    if chat.isWaitingOnYou {
+                        Circle().fill(.orange).frame(width: 6, height: 6)
+                        Text("Needs you").foregroundStyle(.orange)
+                    } else if chat.isRunning {
+                        ProgressView().controlSize(.mini).tint(MobileConversationStyle.accent(for: chat.backend))
+                        Text("Working").foregroundStyle(MobileConversationStyle.accent(for: chat.backend))
+                    } else if isNew {
+                        Circle().fill(.blue).frame(width: 6, height: 6)
+                        Text("New reply").foregroundStyle(.blue)
+                    } else { Text(chat.updatedAt, style: .relative).foregroundStyle(.secondary) }
+                }.font(.caption2).frame(height: 18, alignment: .leading)
+            }.padding(10)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(uiColor: .secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(selected ? Color.accentColor : chat.isWaitingOnYou ? Color.orange.opacity(0.6) : Color.primary.opacity(0.08)))
+        .contentShape(RoundedRectangle(cornerRadius: 16))
+    }
+
 }
