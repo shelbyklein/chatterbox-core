@@ -156,7 +156,7 @@ struct ContentView: View {
             } else if model.showingCommandCenter {
                 CommandCenterView(layout: commandCenter)
             } else if model.showingHome {
-                ChatHomeView(newStudio: { beginNewStudio() }) { session, icons in AnyView(row(session, number: nil, card: true, expanded: !icons, iconOnly: icons)) }
+                ChatHomeView(newStudio: { beginNewStudio() }) { AnyView(threadMenu($0)) }
             } else if mainChatID != nil, let session = model.sessions.first(where: {
                 $0.id == (chatSwitch.initialized ? chatSwitch.displayedID : model.selectedID)
             }) {
@@ -612,82 +612,86 @@ extension ContentView {
                         .strokeBorder(Color.yellow.opacity(session.isWaitingOnYou ? 0.7 : 0), lineWidth: 1))
                     .padding(.horizontal, 10)
             )
-            .contextMenu {
-                if model.canPinThread(session), session.record.archivedAt == nil {
-                    Button(model.isPinnedThread(session) ? "Unpin" : "Pin to Top") { model.togglePinnedThread(session) }
-                    Divider()
-                }
-                Button("Rename Chat\u{2026}") {
-                    // Start from the name the row shows.
-                    chatTitle = session.record.projectFolder != nil ? session.projectName : session.title
-                    renamingChat = session
-                }
-                RestartThreadControl(session: session)
-                if session.record.projectFolder == nil, !session.items.isEmpty {
-                    Button("Fork Chat") { model.fork(session) }
-                        .disabled(!model.canFork(session))
-                }
-                if let folder = session.record.projectFolder {
-                    ProjectStudioLinkMenu(folder: folder)
-                    if let place {
-                        Button("Add Pin\u{2026}") { model.pinSheet = PinSheetRequest(place: place, current: place) }
-                    }
-                    if session.record.worktreeOf == nil {
-                        Button("New Worktree\u{2026}") { worktreeName = ""; worktreeParent = session }
-                    } else {
-                        Button("Remove Worktree\u{2026}") { removingWorktree = session }
-                    }
-                    if session.record.worktreeOf == nil, session.record.sidechatOf == nil {
-                        Button("Automations\u{2026}") { automationsFor = session }
-                    }
-                    Button("Rename Project\u{2026}") {
-                        projectNickname = session.projectName
-                        renamingProject = session
-                    }
-                    Button("Set Project Icon\u{2026}") { ProjectIcons.shared.choose(for: folder) }
-                    if ProjectIcons.shared.hasCustom(folder) {
-                        Button("Remove Project Icon") { ProjectIcons.shared.remove(for: folder) }
-                    }
-                    if session.record.worktreeOf == nil, session.record.archivedAt == nil {
-                        Button("Convert to Studio\u{2026}") { beginNewStudio(from: session) }
-                            .disabled(session.isRunning || session.isRestartingThread)
-                    }
-                    Divider()
-                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: folder)]) }
-                    Button("Unbind from Folder") { session.unbindProject() }
-                    Divider()
-                }
-                Menu("Tags") {
-                    ForEach(model.allTags, id: \.self) { tag in
-                        Toggle(tag, isOn: Binding(get: { session.tags.contains { $0.caseInsensitiveCompare(tag) == .orderedSame } }, set: { _ in session.toggleTag(tag) }))
-                    }
-                    if !model.allTags.isEmpty { Divider() }
-                    Button("New Tag\u{2026}") { newTag = ""; taggingSession = session }
-                }
-                if session.record.archivedAt == nil, session.record.projectFolder == nil, session.record.sidechatOf == nil {
-                    Menu("Move to Studio") {
-                        ForEach(model.activeStudios) { studio in
-                            Button(studio.name) { beginNewStudio(from: session, destination: studio.id) }
-                                .disabled(studio.id == session.record.studioID)
-                        }
-                        if !model.activeStudios.isEmpty { Divider() }
-                        Button("New Studio\u{2026}") { beginNewStudio(from: session) }
-                        if model.studio(for: session) != nil {
-                            Divider()
-                            Button("Remove from Studio") { model.move(session, to: nil) }
-                        }
-                    }
-                    .disabled(session.isRunning)
-                }
-                if session.record.archivedAt == nil {
-                    NewSidechatControl(parent: session)
-                    Button(session.record.automationID != nil ? "End Automation Thread" : session.record.sidechatOf != nil ? "End Sidechat" : "Archive Chat") { model.archive(session) }
-                } else {
-                    Button("Unarchive Chat") { model.unarchive(session) }
-                }
-                Divider()
-                Button("Delete Chat\u{2026}", role: .destructive) { pendingDelete = session }
+            .contextMenu { threadMenu(session) }
+    }
+
+    /// A thread's right-click menu: the sidebar's, and the Studios page's cards and rows.
+    @ViewBuilder func threadMenu(_ session: ChatSession) -> some View {
+        let place = session.record.projectFolder != nil ? model.pinPlace(for: session) : nil
+        if model.canPinThread(session), session.record.archivedAt == nil {
+            Button(model.isPinnedThread(session) ? "Unpin" : "Pin to Top") { model.togglePinnedThread(session) }
+            Divider()
+        }
+        Button("Rename Chat\u{2026}") {
+            // Start from the name the row shows.
+            chatTitle = session.record.projectFolder != nil ? session.projectName : session.title
+            renamingChat = session
+        }
+        RestartThreadControl(session: session)
+        if session.record.projectFolder == nil, !session.items.isEmpty {
+            Button("Fork Chat") { model.fork(session) }
+                .disabled(!model.canFork(session))
+        }
+        if let folder = session.record.projectFolder {
+            ProjectStudioLinkMenu(folder: folder)
+            if let place {
+                Button("Add Pin\u{2026}") { model.pinSheet = PinSheetRequest(place: place, current: place) }
             }
+            if session.record.worktreeOf == nil {
+                Button("New Worktree\u{2026}") { worktreeName = ""; worktreeParent = session }
+            } else {
+                Button("Remove Worktree\u{2026}") { removingWorktree = session }
+            }
+            if session.record.worktreeOf == nil, session.record.sidechatOf == nil {
+                Button("Automations\u{2026}") { automationsFor = session }
+            }
+            Button("Rename Project\u{2026}") {
+                projectNickname = session.projectName
+                renamingProject = session
+            }
+            Button("Set Project Icon\u{2026}") { ProjectIcons.shared.choose(for: folder) }
+            if ProjectIcons.shared.hasCustom(folder) {
+                Button("Remove Project Icon") { ProjectIcons.shared.remove(for: folder) }
+            }
+            if session.record.worktreeOf == nil, session.record.archivedAt == nil {
+                Button("Convert to Studio\u{2026}") { beginNewStudio(from: session) }
+                    .disabled(session.isRunning || session.isRestartingThread)
+            }
+            Divider()
+            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: folder)]) }
+            Button("Unbind from Folder") { session.unbindProject() }
+            Divider()
+        }
+        Menu("Tags") {
+            ForEach(model.allTags, id: \.self) { tag in
+                Toggle(tag, isOn: Binding(get: { session.tags.contains { $0.caseInsensitiveCompare(tag) == .orderedSame } }, set: { _ in session.toggleTag(tag) }))
+            }
+            if !model.allTags.isEmpty { Divider() }
+            Button("New Tag\u{2026}") { newTag = ""; taggingSession = session }
+        }
+        if session.record.archivedAt == nil, session.record.projectFolder == nil, session.record.sidechatOf == nil {
+            Menu("Move to Studio") {
+                ForEach(model.activeStudios) { studio in
+                    Button(studio.name) { beginNewStudio(from: session, destination: studio.id) }
+                        .disabled(studio.id == session.record.studioID)
+                }
+                if !model.activeStudios.isEmpty { Divider() }
+                Button("New Studio\u{2026}") { beginNewStudio(from: session) }
+                if model.studio(for: session) != nil {
+                    Divider()
+                    Button("Remove from Studio") { model.move(session, to: nil) }
+                }
+            }
+            .disabled(session.isRunning)
+        }
+        if session.record.archivedAt == nil {
+            NewSidechatControl(parent: session)
+            Button(session.record.automationID != nil ? "End Automation Thread" : session.record.sidechatOf != nil ? "End Sidechat" : "Archive Chat") { model.archive(session) }
+        } else {
+            Button("Unarchive Chat") { model.unarchive(session) }
+        }
+        Divider()
+        Button("Delete Chat\u{2026}", role: .destructive) { pendingDelete = session }
     }
 }
 

@@ -253,15 +253,18 @@ enum HomeThreadPage: String, CaseIterable, Identifiable {
 /// a Studio's threads just because its navigation heading is folded.
 @MainActor
 enum HomeThreads {
-    static func groups(_ model: AppModel, search: String = "", filter: HomeThreadFilter = .all) -> [HomeThreadGroup] {
+    /// Whether a thread passes Home's search and All / Needs you / Working filter.
+    static func matches(_ session: ChatSession, _ model: AppModel, search: String, filter: HomeThreadFilter) -> Bool {
         let needle = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        let attention = session.isWaitingOnYou || Attention.shared.unread.contains(session.id)
+        guard filter != .needsYou || attention, filter != .working || session.isRunning || session.hasBackgroundWork else { return false }
+        return needle.isEmpty || [session.title, session.projectName, model.studio(for: session)?.name ?? "", session.record.worktreeBranch ?? ""]
+            .contains { $0.localizedCaseInsensitiveContains(needle) }
+    }
+
+    static func groups(_ model: AppModel, search: String = "", filter: HomeThreadFilter = .all) -> [HomeThreadGroup] {
         var seen = Set<UUID>()
-        func matching(_ session: ChatSession) -> Bool {
-            let attention = session.isWaitingOnYou || Attention.shared.unread.contains(session.id)
-            guard filter != .needsYou || attention, filter != .working || session.isRunning || session.hasBackgroundWork else { return false }
-            return needle.isEmpty || [session.title, session.projectName, model.studio(for: session)?.name ?? "", session.record.worktreeBranch ?? ""]
-                .contains { $0.localizedCaseInsensitiveContains(needle) }
-        }
+        func matching(_ session: ChatSession) -> Bool { matches(session, model, search: search, filter: filter) }
         func group(_ id: String, _ title: String, _ candidates: [ChatSession]) -> HomeThreadGroup {
             let threads = candidates.filter { seen.insert($0.id).inserted }.filter(matching)
             return HomeThreadGroup(id: id, title: title, threads: threads)
@@ -286,13 +289,7 @@ enum HomeThreads {
     /// Partition the overview without changing the combined chooser used by Command Center.
     static func groups(_ model: AppModel, page: HomeThreadPage, search: String = "", filter: HomeThreadFilter = .all) -> [HomeThreadGroup] {
         if page == .archive {
-            let needle = search.trimmingCharacters(in: .whitespacesAndNewlines)
-            let archived = model.archivedSessions.filter { session in
-                let attention = session.isWaitingOnYou || Attention.shared.unread.contains(session.id)
-                guard filter != .needsYou || attention, filter != .working || session.isRunning || session.hasBackgroundWork else { return false }
-                return needle.isEmpty || [session.title, session.projectName, model.studio(for: session)?.name ?? "", session.record.worktreeBranch ?? ""]
-                    .contains { $0.localizedCaseInsensitiveContains(needle) }
-            }
+            let archived = model.archivedSessions.filter { matches($0, model, search: search, filter: filter) }
             return archived.isEmpty ? [] : [HomeThreadGroup(id: "archive", title: "Archived threads", threads: archived)]
         }
         let studioIDs = Set(model.activeStudios.map { $0.id.uuidString })
@@ -310,189 +307,6 @@ enum HomeThreads {
         }
     }
 
-}
-
-/// Keep each Studio together, using its own width rather than equal-width columns.
-private struct StudioGroupFlow: Layout {
-    let spacing: CGFloat
-    private func arrangement(_ subviews: Subviews, width: CGFloat) -> (size: CGSize, origins: [CGPoint], sizes: [CGSize]) {
-        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
-        var origins: [CGPoint] = []
-        var x: CGFloat = 0
-        var y: CGFloat = 0
-        var rowHeight: CGFloat = 0
-        var usedWidth: CGFloat = 0
-        for size in sizes {
-            if x > 0, x + size.width > width {
-                x = 0; y += rowHeight + spacing; rowHeight = 0
-            }
-            origins.append(CGPoint(x: x, y: y))
-            usedWidth = max(usedWidth, x + size.width)
-            x += size.width + spacing
-            rowHeight = max(rowHeight, size.height)
-        }
-        return (CGSize(width: usedWidth, height: y + rowHeight), origins, sizes)
-    }
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        arrangement(subviews, width: proposal.width ?? .infinity).size
-    }
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let layout = arrangement(subviews, width: bounds.width)
-        for index in subviews.indices {
-            subviews[index].place(at: CGPoint(x: bounds.minX + layout.origins[index].x, y: bounds.minY + layout.origins[index].y),
-                                  anchor: .topLeading, proposal: ProposedViewSize(layout.sizes[index]))
-        }
-    }
-}
-
-struct ChatHomeView: View {
-    @Environment(AppModel.self) private var model
-    @State private var search = ""
-    @State private var filter: HomeThreadFilter = .all
-    /// Asks for a name and makes a Studio (ContentView owns that sheet).
-    var newStudio: () -> Void = {}
-    let card: (ChatSession, Bool) -> AnyView
-
-    @AppStorage("macHomePage") private var savedPage = HomeThreadPage.projects.rawValue
-    @AppStorage("homeCardScale") private var cardScale = 1.0
-    /// Studio thumbnails start at 1.6× the sidebar's tile size, so they read on a large screen;
-    /// the slider scales from there.
-    private var tileScale: Double { cardScale * 1.6 }
-    /// Home is the Studios page now: projects and chats live in the chat view's sidebar.
-    private var page: HomeThreadPage { .studios }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text("Studios").font(.largeTitle.weight(.bold))
-                    Spacer()
-                    cardSizeControl
-                    Button("New Studio", systemImage: "plus") { newStudio() }
-                }
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 16) { searchField; filterPicker.frame(width: 300) }
-                    VStack(alignment: .leading, spacing: 12) { searchField; filterPicker }
-                }
-                // The same New replies as the sidebar's, since this page has no sidebar.
-                UnseenRepliesStrip().frame(maxWidth: 560, alignment: .leading)
-            }.padding(28)
-            Divider()
-            ScrollView {
-                VStack(alignment: .leading, spacing: 26) {
-                    let groups = HomeThreads.groups(model, page: page, search: search, filter: filter)
-                    if page == .studios {
-                        studioGroups(groups)
-                    } else {
-                        ForEach(groups) { group in
-                            VStack(alignment: .leading, spacing: 12) {
-                                groupHeading(group)
-                                LazyVGrid(columns: [GridItem(.adaptive(minimum: CGFloat(260 * cardScale), maximum: CGFloat(440 * cardScale)), spacing: 16)], alignment: .leading, spacing: 16) {
-                                    ForEach(group.threads) { card($0, false) }
-                                }
-                            }
-                        }
-                    }
-                    if groups.isEmpty {
-                        ContentUnavailableView("No \(page.rawValue.lowercased()) to show", systemImage: page.icon,
-                                               description: Text(search.isEmpty && filter == .all ? "Threads will appear here as you add them." : "Try another search or choose All."))
-                            .frame(maxWidth: .infinity).padding(.vertical, 60)
-                    }
-                }.padding(28).frame(maxWidth: .infinity, alignment: .leading)
-            }.id(page)
-            .environment(\.threadCardScale, tileScale)
-        }
-        // The window's theme (Settings → Appearance), else the system's window color.
-        .background(Theme.currentBackground ?? Color(nsColor: .windowBackgroundColor))
-        .accessibilityLabel("Home \(page.rawValue.lowercased()) page")
-    }
-    private func studioGroups(_ groups: [HomeThreadGroup]) -> some View {
-        StudioGroupFlow(spacing: 16) {
-            ForEach(withEmptyStudios(groups)) { group in
-                let studio = model.activeStudios.first { $0.id.uuidString == group.id }
-                let columns = min(4, group.threads.count + (studio == nil ? 0 : 1))
-                let tile = CGFloat(80 * tileScale)
-                let width = max(160, CGFloat(columns) * tile + CGFloat(columns - 1) * 8)
-                VStack(alignment: .leading, spacing: 10) {
-                    groupHeading(group)
-                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(tile), spacing: 8), count: columns), alignment: .leading, spacing: 10) {
-                        ForEach(group.threads) { card($0, true) }
-                        if let studio { newChatTile(studio, side: tile) }
-                    }
-                }.frame(width: width, alignment: .topLeading)
-                .padding(16)
-                .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 18))
-                .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(Color.primary.opacity(0.12)))
-                #if DEBUG
-                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { MacHomeDebug.studioGroups[group.id] = $0 }
-                #endif
-            }
-        }.frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    /// Studios with no chats yet still show (with their New Chat tile) unless a search or
-    /// filter is narrowing the page.
-    private func withEmptyStudios(_ groups: [HomeThreadGroup]) -> [HomeThreadGroup] {
-        guard search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, filter == .all else { return groups }
-        let shown = Set(groups.map(\.id))
-        let empty = model.activeStudios.filter { !shown.contains($0.id.uuidString) }
-            .map { HomeThreadGroup(id: $0.id.uuidString, title: $0.name, threads: []) }
-        return groups + empty
-    }
-
-    /// The last tile in each Studio: opens a new chat there.
-    private func newChatTile(_ studio: Studio, side: CGFloat) -> some View {
-        Button {
-            model.newChat(in: studio)
-            model.showingHome = false
-        } label: {
-            // Same geometry as an icon-only ThreadCard, so it sits in line with the thumbnails.
-            VStack(spacing: 6) {
-                RoundedRectangle(cornerRadius: 14)
-                    .strokeBorder(Color.secondary.opacity(0.5), style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
-                    .frame(width: 64 * tileScale, height: 64 * tileScale)
-                    .overlay { Image(systemName: "plus").font(.system(size: 20 * tileScale, weight: .light)).foregroundStyle(.secondary) }
-                Text("New Chat").font(.system(size: 8.5 * tileScale, weight: .medium)).foregroundStyle(.secondary)
-                    .frame(height: 24 * tileScale, alignment: .top)
-            }
-            .frame(width: side, height: 94 * tileScale)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help("New chat in \(studio.name)")
-        .accessibilityLabel("New chat in \(studio.name)")
-    }
-
-    /// Card size: smaller to the left, larger to the right.
-    private var cardSizeControl: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "square.grid.3x3").font(.caption).foregroundStyle(.secondary)
-            Slider(value: $cardScale, in: 0.6...2.2).frame(width: 160).controlSize(.small)
-            Image(systemName: "square.grid.2x2").foregroundStyle(.secondary)
-        }
-        .help("Card size")
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Card size")
-        .padding(.trailing, 8)
-    }
-
-    private func groupHeading(_ group: HomeThreadGroup) -> some View {
-        HStack {
-            Text(group.title).font(.title2.weight(.semibold))
-            Text("\(group.threads.count)").font(.subheadline).foregroundStyle(.secondary)
-        }
-    }
-    private var searchField: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-            TextField("Search \(page.rawValue.lowercased())", text: $search).textFieldStyle(.plain)
-        }.padding(10).background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 8))
-    }
-    private var filterPicker: some View {
-        Picker("Threads", selection: $filter) {
-            ForEach(HomeThreadFilter.allCases) { Text($0.rawValue).tag($0) }
-        }.pickerStyle(.segmented).labelsHidden().accessibilityLabel("Filter threads")
-    }
 }
 
 struct DesktopOverviewControls: View {
@@ -517,10 +331,20 @@ struct DesktopOverviewControls: View {
 
 #if DEBUG
 @MainActor enum MacHomeDebug {
+    /// Pinned cards and inspector rows, by thread.
     static var cards: [UUID: CGRect] = [:]
-    static var studioGroups: [String: CGRect] = [:]
-    static var home: CGRect = .zero
-    static var tabs: [HomeThreadPage: CGRect] = [:]
+    /// Left-column entries: "pinned" or a Studio's id.
+    static var entries: [String: CGRect] = [:]
+    static var pinnedGroups: [String: CGRect] = [:]
+    static var column: CGRect = .zero
+    static var activity: CGRect = .zero
+    static var preview: CGRect = .zero
+    static var openChat: CGRect = .zero
+    static var filter: CGRect = .zero
+    /// The thread the inspector shows, and the pixel size of its preview image.
+    static var inspected: UUID?
+    static var listed: [UUID] = []
+    static var previewPixels: CGSize = .zero
 }
 #endif
 
@@ -533,8 +357,12 @@ struct DesktopOverviewControls: View {
 final class ThreadThumbnails {
     static let shared = ThreadThumbnails()
     private(set) var images: [UUID: NSImage] = [:]
+    /// The same newest image decoded large, for Studios' preview cards and inspector.
+    private(set) var largeImages: [UUID: NSImage] = [:]
     @ObservationIgnored private var keys: [UUID: String] = [:]
     @ObservationIgnored private var sources: [UUID: URL] = [:]
+    @ObservationIgnored private var largeSources: [UUID: URL] = [:]
+    static let largeSide = 1600
 
     /// Changes when the chat gains a row, not while a reply streams into the last one.
     static func key(_ session: ChatSession) -> String {
@@ -548,7 +376,9 @@ final class ThreadThumbnails {
         let id = session.id
         guard let url = session.latestThumbnailURL() else {
             sources[id] = nil
+            largeSources[id] = nil
             if images[id] != nil { images[id] = nil }
+            if largeImages[id] != nil { largeImages[id] = nil }
             return
         }
         guard sources[id] != url else { return }
@@ -562,7 +392,22 @@ final class ThreadThumbnails {
         }
     }
 
-    nonisolated private static func thumbnail(_ url: URL, side: Int) -> NSImage? {
+    /// Decodes the newest image large, on demand: only cards and the inspector ask for it.
+    func refreshLarge(_ session: ChatSession) {
+        refresh(session)
+        let id = session.id
+        guard let url = sources[id], largeSources[id] != url else { return }
+        largeSources[id] = url
+        Task.detached(priority: .utility) {
+            let image = Self.thumbnail(url, side: Self.largeSide)
+            await MainActor.run {
+                guard self.largeSources[id] == url else { return }
+                self.largeImages[id] = image
+            }
+        }
+    }
+
+    nonisolated static func thumbnail(_ url: URL, side: Int) -> NSImage? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
                 kCGImageSourceCreateThumbnailFromImageAlways: true,
