@@ -1281,6 +1281,7 @@ extension ContentView {
                     } else {
                         cardGrid(pinned.flatMap(cardFamily))
                     }
+                    Divider().padding(.vertical, 4)
                 }
                 switch section {
                 case .projects:
@@ -1317,6 +1318,7 @@ extension ContentView {
                         }
                     }
                 }
+                Divider().padding(.vertical, 4).listRowSeparator(.hidden)
             }
             switch section {
             case .projects:
