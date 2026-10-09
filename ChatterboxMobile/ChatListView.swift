@@ -325,7 +325,7 @@ struct ChatListView: View {
                 }
                 if let list = store.chatList {
                     if search.isEmpty {
-                        MobileNewReplies(activity: list.activity ?? [], chats: allChats, summary: summary(for:), open: open, compact: true)
+                        MobileNewReplies(activity: list.activity ?? [], chats: allChats, summary: summary(for:), open: open)
                         if !studioGroups.isEmpty {
                             ScrollView(.horizontal, showsIndicators: false) {
                                 HStack(spacing: 8) {

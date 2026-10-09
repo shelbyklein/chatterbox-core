@@ -52,7 +52,6 @@ struct MobileNewReplies: View {
     let open: (Companion.ChatSummary) -> Void
     /// The heading's inset: a list's rounded row would clip it at the corners.
     var headingInset: CGFloat = 4
-    var compact = false
     @AppStorage("mobileActivityExpanded") private var expanded = true
     private var replies: [Companion.TurnCompletion] { MobileSeenReplies.shared.newest(in: activity, limit: 3) }
     private var working: [Companion.ChatSummary] { chats.filter { $0.isRunning && $0.isDot != true } }
@@ -80,18 +79,6 @@ struct MobileNewReplies: View {
                 .accessibilityLabel("Activity, \(replies.count) new replies, \(working.count) working")
                 .accessibilityValue(expanded ? "Expanded" : "Collapsed")
                 if expanded {
-                    if compact {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 8) {
-                                ForEach(replies) { reply in
-                                    if let chat = summary(reply.chatID) { compactRow(chat, date: chat.isRunning ? nil : reply.endedAt, running: chat.isRunning) }
-                                }
-                                ForEach(working.filter { chat in !replies.contains { $0.chatID == chat.id } }) { chat in
-                                    compactRow(chat, date: nil, running: true)
-                                }
-                            }
-                        }
-                    } else {
                     VStack(spacing: 0) {
                         ForEach(replies) { reply in
                             if let chat = summary(reply.chatID) {
@@ -107,31 +94,9 @@ struct MobileNewReplies: View {
                         }
                     }
                     .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
-                    }
                 }
             }
         }
-    }
-
-    private func compactRow(_ chat: Companion.ChatSummary, date: Date?, running: Bool) -> some View {
-        Button { open(chat) } label: {
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 6) {
-                    if running { ProgressView().controlSize(.mini).tint(MobileConversationStyle.accent(for: chat.backend)) }
-                    else { Circle().fill(.blue).frame(width: 6, height: 6) }
-                    Text(chat.title).font(.subheadline.weight(.semibold)).lineLimit(1)
-                }
-                HStack {
-                    Text(running ? "Working" : "New reply").foregroundStyle(running ? MobileConversationStyle.accent(for: chat.backend) : .blue)
-                    Spacer()
-                    if let date { Text(date, style: .relative).foregroundStyle(.secondary) }
-                }.font(.caption2)
-            }
-            .padding(12).frame(width: 205, alignment: .leading)
-            .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
-            .contentShape(RoundedRectangle(cornerRadius: 12))
-        }.buttonStyle(.plain)
-        .accessibilityLabel("\(running ? "Working" : "New reply"): \(chat.title)")
     }
 
     private func row(_ chat: Companion.ChatSummary, backend: String, date: Date?, running: Bool) -> some View {
