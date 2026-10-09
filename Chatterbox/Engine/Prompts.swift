@@ -91,7 +91,7 @@ enum Prompts {
         \(personalitySpec(p))
 
         # About this app
-        You're running inside Chatterbox, a Mac chat app, not a terminal. The user reads your messages in a chat window that renders Markdown, and they can't see command or tool output unless you summarize it. Text you write before a tool call shows as a small inline note; your last message of the turn is the main reply. Blocks tagged <personality_spec>, <conversation_handoff>, or <app_note> come from the app, not from something the user typed. A newer <personality_spec> block replaces this one.
+        You're running inside Chatterbox, a Mac chat app, not a terminal. The user reads your messages in a chat window that renders Markdown, and they can't see command or tool output unless you summarize it. Text you write before a tool call shows as a small inline note; your last message of the turn is the main reply. Blocks tagged <personality_spec>, <conversation_handoff>, <sidequest>, <sidequest_result>, or <app_note> come from the app, not from something the user typed. A newer <personality_spec> block replaces this one.
 
         The chat shows visuals inline: HTML and SVG code blocks render as live previews, and images you make with an image-generation tool appear by themselves. A file on disk shows only when your final reply names its path: images (PNG, JPG, screenshots, renders, proofs), GIFs, videos, and Lottie files you name appear under the reply, and the user can click .html, .svg, and .pdf paths to open them beside the chat. Reading or viewing a file yourself doesn't show it to the user, so when they ask to see something, name each file's full path in your reply, like ![Full page](/path/to/full-page.png), or name the folder that holds them. Don't open files in a browser or another app (no `open`, `xdg-open`, or launching a browser) unless the user asks for that.
 
@@ -102,7 +102,7 @@ enum Prompts {
     }
 
     /// Bump when `agentInstructions` gains something chats already in progress should hear.
-    static let instructionsVersion = 5
+    static let instructionsVersion = 6
 
     /// What changed since earlier versions, sent once to chats whose session started before.
     static let instructionsUpdate = """
@@ -112,6 +112,8 @@ enum Prompts {
     When you need answers from the user before going on, especially several at once, ask with your question tool (AskUserQuestion, or request_user_input) instead of listing questions in a message. The chat shows them as an interactive card, one at a time, with your options as buttons.
 
     Publishing: when the user asks to share a web page or file at a link, publish it as a snippet with `snippet publish <file>` (add `--private` for a link only the user can open). It uploads an HTML page together with the local files it uses to https://snippets.shelbyklein.com, at an address that mirrors where the file lives, and prints the link. Publish only when asked, give the user the link, and say whether it's public. `snippet list` and `snippet remove <path>` manage what's published; publishing works on the user's home network.
+
+    Blocks tagged <sidequest> and <sidequest_result> also come from the app: a task handed between Claude and Codex, and its answer coming back.
     </app_note>
     """
 
@@ -122,26 +124,37 @@ enum Prompts {
             : "<app_note>\nThe user updated their instructions for every chat. These replace any earlier version:\n\n\(text)\n</app_note>"
     }
 
-    /// Starts a sidequest: the other agent gets the chat it came from, then the task.
-    static func sidequestStart(from other: String, chat title: String, transcript: String) -> String {
-        """
+    /// Starts a sidequest: the other agent gets the chat it came from, then the task. Each
+    /// direction has its usual job: Claude sends Codex to make visuals, and Codex sends Claude
+    /// to double-check its work. The task wins when it asks for something else.
+    static func sidequestStart(from other: String, to agent: Backend, chat title: String, transcript: String) -> String {
+        let job = agent == .codex
+            ? "Claude sends you on sidequests mostly to make visuals with your image generation tool, so unless the task says otherwise, that's the job: make what's asked, save or copy each image into your working folder, and end your reply with each image's full path, a line on what it shows, and the prompt you used."
+            : "Codex sends you on sidequests mostly to double-check its work, so unless the task says otherwise, treat it as a review: read what it did (the files, the changes, the output), check it against what the user asked, and report problems with evidence, such as the file and line or the command that shows it. Change files only if the task asks you to. End with a clear verdict and the issues, most important first."
+        return """
         <sidequest>
         The user sent you on a sidequest from another chat, \u{201C}\(title)\u{201D}, where \(other) is working. Here is that conversation so far, so you have its context. Do the task in the user's next message. When you finish, your final reply goes back to that chat automatically and \(other) carries on from it, so end with what it needs: what you did or found, the files you changed or made, and anything left undone.
+
+        \(job)
 
         \(transcript.isEmpty ? "(That chat hasn't started yet.)" : transcript)
         </sidequest>
         """
     }
 
-    /// A sidequest's answer, sent back to the chat it came from.
-    static func sidequestResult(from other: String, task: String, reply: String) -> String {
-        """
+    /// A sidequest's answer, sent back to the chat it came from (`from` is the agent that went).
+    static func sidequestResult(from agent: Backend, task: String, reply: String) -> String {
+        let other = agent.label
+        let next = agent == .codex
+            ? "If it made images, name each image's full path in your reply so the user sees them here, then carry on where this chat left off."
+            : "Treat it as a review of your work: fix what you agree with, tell the user about anything you disagree with and why, then carry on where this chat left off."
+        return """
         <sidequest_result>
         The user sent \(other) on a sidequest from this chat: \u{201C}\(task)\u{201D}. It has finished, and this is its final reply:
 
         \(reply)
         </sidequest_result>
-        Pick up from here: take in what \(other) did or found, tell the user briefly what came back, and carry on where this chat left off.
+        Pick up from here: take in what \(other) did or found, and tell the user briefly what came back. \(next)
         """
     }
 

@@ -101,3 +101,43 @@ extension EnvironmentValues {
         set { self[OpenChatKey.self] = newValue }
     }
 }
+
+/// In the bottom right of a chat: its sidequests, each a small chat window that shrinks to a
+/// bubble, opens full size, or closes (the sidequest stays in the sidebar).
+struct SidequestWindows: View {
+    let parent: ChatSession
+    var maxHeight: CGFloat = 560
+    @Environment(AppModel.self) private var model
+    @AppStorage("closedSidequestWindows") private var closed = ""
+    /// The window you're typing in takes the keyboard's chat shortcuts.
+    @State private var focused: UUID?
+
+    private var quests: [ChatSession] {
+        let shut = Set(closed.split(separator: ",").map(String.init))
+        return model.sessions
+            .filter { $0.record.sidequestOf == parent.id && $0.record.archivedAt == nil && !shut.contains($0.id.uuidString) }
+            .sorted { $0.record.createdAt < $1.record.createdAt }
+    }
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 12) {
+            ForEach(quests) { quest in
+                FloatingChat(session: quest, icon: "point.topleft.down.to.point.bottomright.curvepath",
+                             storageKey: "sidequestWindowCollapsed-" + quest.id.uuidString,
+                             label: "\(quest.record.backend.label) \u{00B7} Sidequest",
+                             title: quest.record.sidequestTask,
+                             height: min(560, maxHeight),
+                             tile: CommandCenterTileContext(isActive: focused == quest.id, activate: { focused = quest.id }),
+                             onClose: { close(quest) }) {
+                    model.selectedID = quest.id
+                }
+            }
+        }
+    }
+
+    private func close(_ quest: ChatSession) {
+        var ids = closed.split(separator: ",").map(String.init)
+        ids.append(quest.id.uuidString)
+        closed = ids.suffix(200).joined(separator: ",")
+    }
+}

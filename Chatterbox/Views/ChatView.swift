@@ -74,6 +74,15 @@ struct ChatView: View {
             if session.record.backend == .codex, let status = CodexAppServer.shared.statusMessage { claudeBanner(status) }
             if find.isOpen { ChatFindBar(find: find) }
             transcript
+                .overlay(alignment: .bottomTrailing) {
+                    if !compact && tileContext == nil && !session.isDot && !session.isSidequest {
+                        GeometryReader { geometry in
+                            SidequestWindows(parent: session, maxHeight: geometry.size.height - 32)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                                .padding(16)
+                        }
+                    }
+                }
             ThreadRestartStatus(session: session).padding(.horizontal, 20)
             if let stopStatus { Text(stopStatus).font(.caption).foregroundStyle(.secondary).padding(.horizontal, 20) }
             composer

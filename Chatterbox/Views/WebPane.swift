@@ -269,14 +269,30 @@ struct FloatingChat: View {
     let onExpand: () -> Void
     /// The bubble's symbol (Dot has its own).
     var icon = "bubble.left.and.bubble.right.fill"
+    /// A heading line above the title (a sidequest's "Codex · Sidequest").
+    var label: String?
+    /// Replaces the chat's title in the heading.
+    var title: String?
+    var height: CGFloat = 560
+    /// Set when the chat sits over another chat: it then mustn't take the window's toolbar,
+    /// find or keyboard shortcuts.
+    var tile: CommandCenterTileContext?
+    /// Shows a close button.
+    var onClose: (() -> Void)?
     @AppStorage private var collapsed: Bool
     private let appearance = ReaderStyleSettings()
 
     /// `storageKey` remembers whether this one is shrunk to its bubble.
     init(session: ChatSession, icon: String = "bubble.left.and.bubble.right.fill", storageKey: String = "floatingChatCollapsed",
-         onExpand: @escaping () -> Void) {
+         label: String? = nil, title: String? = nil, height: CGFloat = 560, tile: CommandCenterTileContext? = nil,
+         onClose: (() -> Void)? = nil, onExpand: @escaping () -> Void) {
         self.session = session
         self.icon = icon
+        self.label = label
+        self.title = title
+        self.height = height
+        self.tile = tile
+        self.onClose = onClose
         self.onExpand = onExpand
         _collapsed = AppStorage(wrappedValue: false, storageKey)
     }
@@ -287,12 +303,22 @@ struct FloatingChat: View {
         } else {
             VStack(spacing: 0) {
                 HStack(spacing: 8) {
-                    Text(session.title).font(.callout.weight(.semibold)).lineLimit(1)
+                    VStack(alignment: .leading, spacing: 1) {
+                        if let label {
+                            Label(label, systemImage: icon).font(.caption2.weight(.semibold))
+                                .foregroundStyle(appearance.style.color(for: session.record.backend))
+                        }
+                        Text(title ?? session.title).font(.callout.weight(.semibold)).lineLimit(1)
+                    }
                     Spacer()
                     Button { collapsed = true } label: { Image(systemName: "minus") }
                         .help("Shrink the chat")
                     Button(action: onExpand) { Image(systemName: "arrow.up.left.and.arrow.down.right") }
-                        .help("Close the page and show the chat full size")
+                        .help(tile == nil ? "Close the page and show the chat full size" : "Open the chat full size")
+                    if let onClose {
+                        Button(action: onClose) { Image(systemName: "xmark") }
+                            .help("Close this window. The chat stays in the sidebar.")
+                    }
                 }
                 .buttonStyle(.borderless)
                 .padding(.horizontal, 12)
@@ -302,8 +328,9 @@ struct FloatingChat: View {
                 ChatView(session: session)
                     .id(session.id)
                     .environment(\.compactChat, true)
+                    .transformEnvironment(\.commandCenterTile) { if let tile { $0 = tile } }
             }
-            .frame(width: 400, height: 560)
+            .frame(width: 400, height: height)
             .background(Color(nsColor: .windowBackgroundColor))
             .clipShape(RoundedRectangle(cornerRadius: 14))
             .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.quaternary))

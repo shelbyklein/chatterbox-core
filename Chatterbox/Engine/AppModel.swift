@@ -189,7 +189,8 @@ final class AppModel {
         return chat
     }
 
-    /// Sends `task` from `parent` to the other agent as a sidequest, and opens it. Its answer
+    /// Sends `task` from `parent` to the other agent as a sidequest. You stay in `parent`; the
+    /// sidequest floats in its corner (SidequestWindows). Its answer
     /// comes back to `parent` by itself (see ChatSession+Sidequest).
     func newSidequest(of parent: ChatSession, task: String) {
         let task = task.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -197,8 +198,7 @@ final class AppModel {
         if RuntimeClient.usesDaemon {
             Task {
                 do {
-                    let id = try await RuntimeClient.shared.request("sidequest", body: ["chatID": .string(parent.id.uuidString), "task": .string(task)])
-                    selectedID = id.string.flatMap(UUID.init(uuidString:))
+                    _ = try await RuntimeClient.shared.request("sidequest", body: ["chatID": .string(parent.id.uuidString), "task": .string(task)])
                 } catch { Diagnostics.note("Sidequest didn't start: \(error.localizedDescription)") }
             }
             return
@@ -208,7 +208,6 @@ final class AppModel {
         let quest = insertSession(ChatSession.sidequestRecord(of: parent, anchor: anchor, number: number,
                                                               backend: parent.record.backend == .claude ? .codex : .claude, task: task))
         quest.beginSidequest(from: parent)
-        selectedID = quest.id
     }
 
     /// Send Back: the sidequest's newest reply goes to the chat it came from.

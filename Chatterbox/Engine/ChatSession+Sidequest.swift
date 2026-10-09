@@ -20,7 +20,7 @@ extension ChatSession {
             record.codex?.model = defaults.string(forKey: "codexDefaultModel").flatMap { $0.isEmpty ? nil : $0 }
             record.codex?.effort = defaults.string(forKey: "codexDefaultEffort").flatMap { $0.isEmpty ? nil : $0 }
         }
-        record.pendingHandoff = Prompts.sidequestStart(from: parent.record.backend.label, chat: parent.title,
+        record.pendingHandoff = Prompts.sidequestStart(from: parent.record.backend.label, to: backend, chat: parent.title,
                                                        transcript: transcript(parent.record.items[...]))
         return record
     }
@@ -53,7 +53,7 @@ extension ChatSession {
     func returnSidequest(to parent: ChatSession) {
         guard let reply = unreturnedSidequestReply else { return }
         record.sidequestReturned = reply.id
-        parent.send(Prompts.sidequestResult(from: record.backend.label, task: record.sidequestTask ?? title, reply: reply.text))
+        parent.send(Prompts.sidequestResult(from: record.backend, task: record.sidequestTask ?? title, reply: reply.text))
         if let index = parent.record.items.lastIndex(where: { $0.kind == .user }) {
             parent.record.items[index].automatic = true
             parent.record.items[index].detail = "\(record.backend.label) is back from its sidequest"
