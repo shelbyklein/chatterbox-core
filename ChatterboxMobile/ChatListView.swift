@@ -259,7 +259,7 @@ struct ChatListView: View {
                     Label(problem, systemImage: "wifi.exclamationmark").font(.callout).foregroundStyle(.orange)
                 }
                 if let list = store.chatList {
-                    if search.isEmpty { MobileNewReplies(activity: list.activity ?? [], summary: summary(for:), open: open) }
+                    if search.isEmpty { MobileNewReplies(activity: list.activity ?? [], chats: allChats, summary: summary(for:), open: open) }
                     if search.isEmpty, let pins = list.pins, !pins.isEmpty { MobilePinPills(pins: pins) }
                     emptyPage
                     ForEach(groups) { group in
@@ -306,7 +306,7 @@ struct ChatListView: View {
             }
             if let list = store.chatList {
                 if search.isEmpty {
-                    MobileNewReplies(activity: list.activity ?? [], summary: summary(for:), open: open)
+                    MobileNewReplies(activity: list.activity ?? [], chats: allChats, summary: summary(for:), open: open, headingInset: 18)
                         .listRowInsets(EdgeInsets()).listRowBackground(Color.clear)
                 }
                 if search.isEmpty, let pins = list.pins, !pins.isEmpty {

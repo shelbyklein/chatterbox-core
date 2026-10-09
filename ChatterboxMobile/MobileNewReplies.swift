@@ -41,50 +41,89 @@ final class MobileSeenReplies {
     }
 }
 
-/// The three newest replies you haven't opened on the phone, at the top of the chat list.
-/// Opening one marks it seen, and the next unseen reply takes its place.
+/// At the top of the chat list, like the Mac sidebar's Activity: the three newest replies you
+/// haven't opened on the phone, then every chat working now. Opening a reply marks it seen,
+/// and the next unseen reply takes its place. Folds to its heading and counts.
 struct MobileNewReplies: View {
     let activity: [Companion.TurnCompletion]
+    /// Every chat on the Mac, for the working ones.
+    var chats: [Companion.ChatSummary] = []
     let summary: (UUID) -> Companion.ChatSummary?
     let open: (Companion.ChatSummary) -> Void
+    /// The heading's inset: a list's rounded row would clip it at the corners.
+    var headingInset: CGFloat = 4
+    @AppStorage("mobileActivityExpanded") private var expanded = true
     private var replies: [Companion.TurnCompletion] { MobileSeenReplies.shared.newest(in: activity, limit: 3) }
+    private var working: [Companion.ChatSummary] { chats.filter { $0.isRunning && $0.isDot != true } }
 
     var body: some View {
         let replies = replies.filter { summary($0.chatID) != nil }
-        if !replies.isEmpty {
+        let working = working
+        if !replies.isEmpty || !working.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
-                Text("New replies").font(.footnote.weight(.semibold)).foregroundStyle(.secondary).textCase(.uppercase)
-                VStack(spacing: 0) {
-                    ForEach(replies) { reply in
-                        if let chat = summary(reply.chatID) {
-                            Button { open(chat) } label: { row(reply, chat) }
+                Button { withAnimation(.easeOut(duration: 0.2)) { expanded.toggle() } } label: {
+                    HStack(spacing: 6) {
+                        Text("ACTIVITY")
+                        Image(systemName: "chevron.right").font(.caption2.weight(.bold))
+                            .rotationEffect(.degrees(expanded ? 90 : 0))
+                        Spacer()
+                        if !replies.isEmpty { Text("\(replies.count) new").foregroundStyle(.blue) }
+                        if !working.isEmpty { Text("\(working.count) working") }
+                    }
+                    .font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
+                    .textCase(nil)
+                    .padding(.horizontal, headingInset)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Activity, \(replies.count) new replies, \(working.count) working")
+                .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+                if expanded {
+                    VStack(spacing: 0) {
+                        ForEach(replies) { reply in
+                            if let chat = summary(reply.chatID) {
+                                Button { open(chat) } label: { row(chat, backend: reply.backend, date: reply.endedAt, running: false) }
+                                    .buttonStyle(.plain)
+                                if reply.id != replies.last?.id || !working.isEmpty { Divider().padding(.leading, 40) }
+                            }
+                        }
+                        ForEach(working) { chat in
+                            Button { open(chat) } label: { row(chat, backend: chat.backend, date: nil, running: true) }
                                 .buttonStyle(.plain)
-                            if reply.id != replies.last?.id { Divider().padding(.leading, 40) }
+                            if chat.id != working.last?.id { Divider().padding(.leading, 40) }
                         }
                     }
+                    .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
                 }
-                .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
             }
         }
     }
 
-    private func row(_ reply: Companion.TurnCompletion, _ chat: Companion.ChatSummary) -> some View {
+    private func row(_ chat: Companion.ChatSummary, backend: String, date: Date?, running: Bool) -> some View {
         HStack(spacing: 10) {
-            Circle().fill(.blue).frame(width: 8, height: 8)
-            Image((Backend(rawValue: reply.backend) ?? .claude).iconName).resizable().scaledToFit()
+            Group {
+                if running { ProgressView().controlSize(.mini).tint(MobileConversationStyle.accent(for: backend)) }
+                else { Circle().fill(.blue).frame(width: 8, height: 8) }
+            }.frame(width: 10)
+            Image((Backend(rawValue: backend) ?? .claude).iconName).resizable().scaledToFit()
                 .frame(width: 16, height: 16)
-                .foregroundStyle(MobileConversationStyle.accent(for: reply.backend))
+                .foregroundStyle(MobileConversationStyle.accent(for: backend))
             VStack(alignment: .leading, spacing: 2) {
-                Text(chat.title).font(.body.weight(.semibold)).lineLimit(1)
+                Text(chat.worktreeBranch ?? chat.project ?? chat.title).font(.body.weight(.semibold)).lineLimit(1)
                 if let subtitle = chat.subtitle, !subtitle.isEmpty {
                     Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
             }
             Spacer(minLength: 8)
-            Text(reply.endedAt, style: .relative).font(.caption2).foregroundStyle(.secondary)
-                .multilineTextAlignment(.trailing).frame(maxWidth: 80, alignment: .trailing)
+            if let date {
+                Text(date, style: .relative).font(.caption2).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.trailing).frame(maxWidth: 80, alignment: .trailing)
+            } else {
+                Text("Working").font(.caption2).foregroundStyle(.secondary)
+            }
         }
         .padding(.horizontal, 12).padding(.vertical, 10)
         .contentShape(Rectangle())
+        .accessibilityLabel("\(running ? "Working" : "New reply"): \(chat.title)")
     }
 }
