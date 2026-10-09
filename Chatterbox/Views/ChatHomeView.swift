@@ -37,15 +37,7 @@ struct ThreadCard: View {
     }
     private var messageCount: Int { session.items.filter { $0.kind == .user || $0.kind == .assistant }.count }
     private var tint: Color { appearance.style.color(for: session.record.provider) }
-    @ViewBuilder private var activityIndicator: some View {
-        if session.isRunning {
-            ActivitySpinner(color: tint).frame(width: 10, height: 10)
-                .help("\(session.record.provider.label) is working")
-        } else {
-            Circle().fill(session.isWaitingOnYou ? .orange : Attention.shared.unread.contains(session.id) ? .blue : .secondary.opacity(0.4))
-                .frame(width: 6, height: 6)
-        }
-    }
+    private var activityIndicator: some View { SessionActivityIndicator(session: session) }
     // Cards are also used outside List, where listRowBackground cannot highlight them.
     // Waiting on the user takes priority over the selected-card appearance.
     private var cardBackground: Color {
@@ -70,11 +62,7 @@ struct ThreadCard: View {
                     .frame(width: (expanded ? 24 : 16) * scale, height: (expanded ? 24 : 16) * scale)
                     .clipShape(RoundedRectangle(cornerRadius: expanded ? 5 : 3.5, style: .continuous))
             }
-            Image(session.record.provider.iconName).resizable().scaledToFit()
-                .frame(width: (expanded ? 19 : 13) * scale, height: (expanded ? 19 : 13) * scale)
-                .foregroundStyle(tint)
-                .accessibilityLabel(session.record.provider.label)
-                .help(session.record.provider == session.record.backend ? session.record.provider.label : "Claude model via Codex")
+            SessionProviderIcon(session: session, size: (expanded ? 19 : 13) * scale)
         }
         .task(id: session.record.projectFolder) { ProjectIcons.shared.load(session.record.projectFolder) }
     }
@@ -415,5 +403,48 @@ final class ThreadThumbnails {
                 kCGImageSourceThumbnailMaxPixelSize: side,
               ] as CFDictionary) else { return nil }
         return NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
+    }
+}
+
+/// The provider selected for the session, including Claude models routed through Codex.
+struct SessionProviderIcon: View {
+    let session: ChatSession
+    var size: CGFloat = 13
+    private let appearance = ReaderStyleSettings()
+
+    var body: some View {
+        Image(session.record.provider.iconName).resizable().scaledToFit()
+            .frame(width: size, height: size)
+            .foregroundStyle(appearance.style.color(for: session.record.provider))
+            .accessibilityLabel(session.record.provider.label)
+            .help(session.record.provider == session.record.backend ? session.record.provider.label : "Claude model via Codex")
+    }
+}
+
+/// Shared by Project cards and Studio previews, rows and inspector headers.
+struct SessionActivityIndicator: View {
+    let session: ChatSession
+    private let appearance = ReaderStyleSettings()
+
+    var body: some View {
+        Group {
+            if session.isRunning || session.hasBackgroundWork {
+                ActivitySpinner(color: session.isRunning ? appearance.style.color(for: session.record.provider) : .secondary)
+                    .frame(width: 10, height: 10)
+            } else {
+                Circle().fill(session.isWaitingOnYou ? .orange : Attention.shared.unread.contains(session.id) ? .blue : .secondary.opacity(0.4))
+                    .frame(width: 6, height: 6)
+            }
+        }
+        .help(label)
+        .accessibilityLabel(label)
+    }
+
+    private var label: String {
+        if session.isRunning { return "\(session.record.provider.label) is working" }
+        if session.hasBackgroundWork { return "Running in the background" }
+        if session.isWaitingOnYou { return "Needs you" }
+        if Attention.shared.unread.contains(session.id) { return "New reply" }
+        return "Ready"
     }
 }

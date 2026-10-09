@@ -302,7 +302,7 @@ private struct PinnedSheet: View {
     }
 }
 
-/// A pinned session: its newest image large, its status over it, and its title and latest note.
+/// A pinned session: Project-card provider/activity header, then its image, title and note.
 private struct StudioPreviewCard: View {
     let session: ChatSession
     let inspect: () -> Void
@@ -312,9 +312,13 @@ private struct StudioPreviewCard: View {
     var body: some View {
         let summary = StudioSessionSummary(session)
         Button { StudioClicks.handle(inspect: inspect, open: open) } label: { VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                SessionProviderIcon(session: session)
+                Spacer(minLength: 6)
+                SessionActivityIndicator(session: session)
+            }
             StudioPreviewImage(session: session, cornerRadius: 12)
                 .aspectRatio(4 / 3, contentMode: .fit)
-                .overlay(alignment: .bottomLeading) { StatusPill(status: summary.status).padding(10) }
                 .overlay {
                     RoundedRectangle(cornerRadius: 12)
                         .strokeBorder(summary.status == .needsYou ? Color.orange : Color.primary.opacity(hovered ? 0.3 : 0.1), lineWidth: summary.status == .needsYou ? 2 : 1)
@@ -324,6 +328,7 @@ private struct StudioPreviewCard: View {
                 Spacer(minLength: 6)
                 Text(ShortAge.string(since: summary.lastActivity)).font(.caption).foregroundStyle(.secondary)
             }
+            StudioAttentionLabel(status: summary.status)
             Text(summary.note).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
         }
         .contentShape(Rectangle()) }
@@ -400,13 +405,15 @@ private struct InspectorRow: View {
         Button { StudioClicks.handle(inspect: inspect, open: open) } label: { HStack(alignment: .top, spacing: 12) {
             StudioPreviewImage(session: session, cornerRadius: 8, small: true).frame(width: 58, height: 58)
             VStack(alignment: .leading, spacing: 3) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text(session.title).font(.body.weight(.semibold)).lineLimit(1)
+                HStack {
+                    SessionProviderIcon(session: session)
                     Spacer(minLength: 6)
-                    Text(ShortAge.string(since: summary.lastActivity)).font(.caption2).foregroundStyle(.secondary)
+                    SessionActivityIndicator(session: session)
                 }
-                StatusLabel(status: summary.status)
+                Text(session.title).font(.body.weight(.semibold)).lineLimit(1)
+                StudioAttentionLabel(status: summary.status)
                 Text(summary.note).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                Text(ShortAge.string(since: summary.lastActivity)).font(.caption2).foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
         }
@@ -440,9 +447,12 @@ private struct InspectorDetail: View {
         let summary = StudioSessionSummary(session)
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .firstTextBaseline) {
+                SessionProviderIcon(session: session, size: 19)
+                    .alignmentGuide(.firstTextBaseline, computeValue: SidebarRow.centerOnTextLine)
                 Text(session.title).font(.title2.weight(.semibold)).lineLimit(2)
                 Spacer(minLength: 12)
-                StatusLabel(status: summary.status)
+                SessionActivityIndicator(session: session)
+                    .alignmentGuide(.firstTextBaseline, computeValue: SidebarRow.centerOnTextLine)
             }
             // Without an image, a short placeholder rather than an empty stage.
             let hasImage = ThreadThumbnails.shared.images[session.id] != nil || ThreadThumbnails.shared.largeImages[session.id] != nil
@@ -462,7 +472,7 @@ private struct InspectorDetail: View {
             if !hasImage { Spacer(minLength: 0) }
             Divider()
             VStack(alignment: .leading, spacing: 6) {
-                StatusLabel(status: summary.status)
+                StudioAttentionLabel(status: summary.status)
                 Text(StudioSessionSummary.note(session, limit: 320)).font(.body).lineLimit(4).textSelection(.enabled)
                 HStack {
                     Text("Last active \(summary.lastActivity.formatted(.relative(presentation: .named))) · \(session.record.provider.label)")
@@ -511,9 +521,7 @@ private struct StudioPreviewImage: View {
                     .accessibilityLabel("Latest image in \(session.title)")
             } else {
                 VStack(spacing: 10) {
-                    Image(session.record.provider.iconName).resizable().scaledToFit()
-                        .foregroundStyle(appearance.style.color(for: session.record.provider))
-                        .frame(width: small ? 24 : 40, height: small ? 24 : 40)
+                    SessionProviderIcon(session: session, size: small ? 24 : 40)
                     if fit { Text("No image yet").font(.callout).foregroundStyle(.secondary) }
                 }
             }
@@ -531,25 +539,14 @@ private struct StudioPreviewImage: View {
     }
 }
 
-/// The status over a preview card's image.
-private struct StatusPill: View {
+/// Only states requiring action need text; activity itself lives in the top-right indicator.
+private struct StudioAttentionLabel: View {
     let status: StudioSessionStatus
     var body: some View {
-        StatusLabel(status: status).font(.caption.weight(.medium))
-            .padding(.horizontal, 8).padding(.vertical, 4)
-            .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 6))
-            .environment(\.colorScheme, .dark)
-    }
-}
-
-private struct StatusLabel: View {
-    let status: StudioSessionStatus
-    var body: some View {
-        HStack(spacing: 5) {
-            Circle().fill(status.color).frame(width: 7, height: 7)
-            Text(status.rawValue).foregroundStyle(status == .idle ? Color.secondary : status.color)
+        if status == .needsYou || status == .review {
+            Text(status == .review ? "New reply" : status.rawValue)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(status == .needsYou ? Color.orange : .blue)
         }
-        .font(.caption.weight(.medium))
-        .accessibilityElement(children: .combine)
     }
 }
