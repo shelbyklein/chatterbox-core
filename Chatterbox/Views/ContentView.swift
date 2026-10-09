@@ -24,6 +24,8 @@ struct ContentView: View {
     @State private var renamingProject: ChatSession?
     /// The project whose Automations window is open.
     @State private var automationsFor: ChatSession?
+    @State private var sidequestFrom: ChatSession?
+    @State private var sidequestTask = ""
     @State private var worktreeParent: ChatSession?
     @State private var worktreeName = ""
     @State private var removingWorktree: ChatSession?
@@ -193,6 +195,12 @@ struct ContentView: View {
         .sheet(isPresented: $model.editingDotMemory) { DotMemorySheet() }
         // Dot asked to show you its computer.
         .sheet(item: $model.pinSheet) { AddPinSheet(request: $0) }
+        .sheet(item: $sidequestFrom) { parent in
+            SidequestForm(agent: parent.record.backend == .claude ? "Codex" : "Claude", from: parent.record.backend.label, task: $sidequestTask) {
+                model.newSidequest(of: parent, task: sidequestTask)
+                sidequestFrom = nil
+            }
+        }
         .sheet(item: $automationsFor) { project in
             if let folder = project.record.projectFolder {
                 AutomationsSheet(projectFolder: folder, projectName: project.projectName).environment(model)
@@ -686,6 +694,11 @@ extension ContentView {
         }
         if session.record.archivedAt == nil {
             NewSidechatControl(parent: session)
+            if !session.isSidequest, !session.isDot {
+                Button("Sidequest to \(session.record.backend == .claude ? "Codex" : "Claude")\u{2026}", systemImage: "point.topleft.down.to.point.bottomright.curvepath") {
+                    sidequestTask = ""; sidequestFrom = session
+                }
+            }
             Button(session.record.automationID != nil ? "End Automation Thread" : session.record.sidechatOf != nil ? "End Sidechat" : "Archive Chat") { model.archive(session) }
         } else {
             Button("Unarchive Chat") { model.unarchive(session) }

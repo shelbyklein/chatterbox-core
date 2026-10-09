@@ -122,6 +122,29 @@ enum Prompts {
             : "<app_note>\nThe user updated their instructions for every chat. These replace any earlier version:\n\n\(text)\n</app_note>"
     }
 
+    /// Starts a sidequest: the other agent gets the chat it came from, then the task.
+    static func sidequestStart(from other: String, chat title: String, transcript: String) -> String {
+        """
+        <sidequest>
+        The user sent you on a sidequest from another chat, \u{201C}\(title)\u{201D}, where \(other) is working. Here is that conversation so far, so you have its context. Do the task in the user's next message. When you finish, your final reply goes back to that chat automatically and \(other) carries on from it, so end with what it needs: what you did or found, the files you changed or made, and anything left undone.
+
+        \(transcript.isEmpty ? "(That chat hasn't started yet.)" : transcript)
+        </sidequest>
+        """
+    }
+
+    /// A sidequest's answer, sent back to the chat it came from.
+    static func sidequestResult(from other: String, task: String, reply: String) -> String {
+        """
+        <sidequest_result>
+        The user sent \(other) on a sidequest from this chat: \u{201C}\(task)\u{201D}. It has finished, and this is its final reply:
+
+        \(reply)
+        </sidequest_result>
+        Pick up from here: take in what \(other) did or found, tell the user briefly what came back, and carry on where this chat left off.
+        """
+    }
+
     /// Hands the conversation to a different agent, or to a fresh session of the same one.
     static func handoff(from other: String, transcript: String, isWholeConversation: Bool) -> String {
         """

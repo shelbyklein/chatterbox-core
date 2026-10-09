@@ -94,6 +94,8 @@ struct DisplayItem: Identifiable, Codable, Equatable {
     var approvalStyle: ApprovalStyle?
     /// A user row Chatterbox sent for Dot (a check-in), shown by its label in `detail`.
     var automatic: Bool?
+    /// In the chat a sidequest came from: the sidequest this row starts or brings back.
+    var sidequest: UUID?
     /// Question rows: answers Golem suggests (by question id), why, and under which name.
     /// Only a suggestion: the card shows it picked, and nothing is sent until you send it.
     var suggested: [String: [String]]?
@@ -163,6 +165,11 @@ struct ConversationRecord: Codable {
     var worktreeBranch: String?
     /// A temporary independent conversation sharing its parent's working folder.
     var sidechatOf: UUID?
+    /// A sidequest (a Sidechat on the other agent): the chat its answer goes back to, the task
+    /// it was sent on, and the last reply already sent back (see ChatSession+Sidequest).
+    var sidequestOf: UUID?
+    var sidequestTask: String?
+    var sidequestReturned: UUID?
     /// Set on a project's Automation thread: the automation it runs (see ProjectAutomations).
     var automationID: UUID?
     var sidechatFolder: String?

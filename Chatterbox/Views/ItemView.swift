@@ -13,6 +13,7 @@ struct ItemView: View {
     var onSendNow: (UUID) -> Void = { _ in }
     @Environment(\.readerStyle) private var style
     @Environment(\.chatFolder) private var chatFolder
+    @Environment(\.openChat) private var openChat
 
     var body: some View {
         Group {
@@ -34,7 +35,21 @@ struct ItemView: View {
 
     @ViewBuilder
     private var userBubble: some View {
-        if item.automatic == true {
+        if item.automatic == true, let quest = item.sidequest {
+            // A sidequest's answer, sent back: its label, and a way to open the sidequest.
+            Button { openChat.open(quest) } label: {
+                Label(item.detail ?? "Back from a sidequest", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
+                    .font(.caption)
+                    .padding(.horizontal, 10).padding(.vertical, 5)
+                    .background(Capsule().fill(Color.accentColor.opacity(0.12)))
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 4)
+            .help("Open the sidequest")
+        } else if item.automatic == true {
             // A check-in Chatterbox sent Dot: its label, not the instructions behind it.
             Label(item.detail ?? "Check-in", systemImage: "clock.arrow.circlepath")
                 .font(.caption)
@@ -151,12 +166,27 @@ struct ItemView: View {
         .animation(.spring(response: 0.3, dampingFraction: 0.6), value: item.toolState)
     }
 
+    @ViewBuilder
     private var noticeRow: some View {
-        Text(item.text)
+        if let quest = item.sidequest {
+            Button { openChat.open(quest) } label: {
+                Label(item.text, systemImage: "point.topleft.down.to.point.bottomright.curvepath")
+                    .multilineTextAlignment(.center)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
             .font(.caption)
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 4)
+            .help("Open the sidequest")
+        } else {
+            Text(item.text)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
+        }
     }
 }
 

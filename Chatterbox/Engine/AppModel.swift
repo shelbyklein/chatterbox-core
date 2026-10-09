@@ -189,6 +189,37 @@ final class AppModel {
         return chat
     }
 
+    /// Sends `task` from `parent` to the other agent as a sidequest, and opens it. Its answer
+    /// comes back to `parent` by itself (see ChatSession+Sidequest).
+    func newSidequest(of parent: ChatSession, task: String) {
+        let task = task.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !task.isEmpty else { return }
+        if RuntimeClient.usesDaemon {
+            Task {
+                do {
+                    let id = try await RuntimeClient.shared.request("sidequest", body: ["chatID": .string(parent.id.uuidString), "task": .string(task)])
+                    selectedID = id.string.flatMap(UUID.init(uuidString:))
+                } catch { Diagnostics.note("Sidequest didn't start: \(error.localizedDescription)") }
+            }
+            return
+        }
+        let anchor = parent.record.sidechatOf.flatMap { id in sessions.first { $0.id == id } } ?? parent
+        let number = sessions.filter { $0.record.sidechatOf == anchor.id }.count + 1
+        let quest = insertSession(ChatSession.sidequestRecord(of: parent, anchor: anchor, number: number,
+                                                              backend: parent.record.backend == .claude ? .codex : .claude, task: task))
+        quest.beginSidequest(from: parent)
+        selectedID = quest.id
+    }
+
+    /// Send Back: the sidequest's newest reply goes to the chat it came from.
+    func returnSidequest(_ quest: ChatSession) {
+        if RuntimeClient.usesDaemon {
+            RuntimeClient.shared.command("returnSidequest", body: ["chatID": .string(quest.id.uuidString)])
+        } else if let parent = quest.record.sidequestOf.flatMap({ id in sessions.first { $0.id == id } }) {
+            quest.returnSidequest(to: parent)
+        }
+    }
+
     /// Every tag in use, for the Tags menu.
     var allTags: [String] {
         var seen: [String: String] = [:]
@@ -291,6 +322,9 @@ final class AppModel {
             if session.isDot { DotActivity.shared.dotTurnEnded(session) }
             #endif
             NextSteps.shared.turnEnded(session, commands: session.availableSlashCommands)
+            if let parent = session.record.sidequestOf {
+                DispatchQueue.main.async { [weak self] in session.sidequestTurnEnded(parent: self?.sessions.first { $0.id == parent }) }
+            }
             if session.automaticTurn {
                 session.automaticTurn = false
                 #if GOLEM_APP

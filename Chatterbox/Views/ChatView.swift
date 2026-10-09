@@ -69,6 +69,7 @@ struct ChatView: View {
     private var chatContent: some View {
         VStack(spacing: 0) {
             if session.record.archivedAt != nil { archivedBanner }
+            if session.isSidequest { SidequestBanner(session: session) }
             if session.record.backend == .claude, let status = ClaudeModels.shared.statusMessage { claudeBanner(status) }
             if session.record.backend == .codex, let status = CodexAppServer.shared.statusMessage { claudeBanner(status) }
             if find.isOpen { ChatFindBar(find: find) }
@@ -91,6 +92,7 @@ struct ChatView: View {
                                       panelWidth: min(280, max(220, (geometry.size.width - appearance.style.contentWidth) / 2 - 32)))
                                 .id(PinnedNotesStore.scope(for: session.record))
                             ChatQuickActions(session: session)
+                            if !session.isSidequest { SidequestButton(session: session) }
                         }
                         ChatPins(chat: session.record.id, agentName: session.record.backend == .codex ? "Codex" : "Claude",
                                  panelWidth: min(280, max(220, (geometry.size.width - appearance.style.contentWidth) / 2 - 32))) { pinJump = $0 }
@@ -517,6 +519,7 @@ struct ChatView: View {
                     .environment(\.readerStyle, appearance.style)
                     .environment(\.reviewImage, ImageReviewAction { reviewing = $0 })
                     .environment(\.pinMessage, PinMessageAction(chat: showsPins ? session.record.id : nil))
+                    .environment(\.openChat, OpenChatAction { model.selectedID = $0 })
                     .frame(maxWidth: .infinity)
                     }
                 }
