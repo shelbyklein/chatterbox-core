@@ -50,10 +50,16 @@ struct ChatterboxWidgetView: View {
     @Environment(\.widgetFamily) private var family
     private var snapshot: WidgetSnapshot { entry.snapshot }
 
-    private var rows: [Row] {
-        snapshot.waiting.map { Row(state: .waiting, item: $0) }
-            + snapshot.newReplies.map { Row(state: .reply, item: $0) }
-            + snapshot.working.map { Row(state: .working, item: $0) }
+    private var rows: [Row] { attention + workingRows }
+    /// Waiting on you and new replies: what needs you, first.
+    private var attention: [Row] {
+        snapshot.waiting.map { Row(state: .waiting, item: $0) } + snapshot.newReplies.map { Row(state: .reply, item: $0) }
+    }
+    /// Chats working now. Only the app writes the snapshot, so after half an hour without it
+    /// they may well have finished: left out rather than shown as working.
+    private var workingRows: [Row] {
+        guard entry.date.timeIntervalSince(snapshot.updatedAt) < 1800 else { return [] }
+        return snapshot.working.map { Row(state: .working, item: $0) }
     }
     private var needsYou: Int { snapshot.waiting.count + snapshot.newReplies.count }
     private var stale: Bool { entry.date.timeIntervalSince(snapshot.updatedAt) > 3600 && snapshot.updatedAt != .distantPast }
@@ -64,7 +70,7 @@ struct ChatterboxWidgetView: View {
         case .accessoryRectangular: rectangular
         case .systemSmall: small
         case .systemLarge: list(limit: 6)
-        default: list(limit: 3)
+        default: list(limit: 3, compactWorking: true)
         }
     }
 
@@ -114,24 +120,53 @@ struct ChatterboxWidgetView: View {
         .widgetURL(rows.first?.item.link)
     }
 
-    private func list(limit: Int) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+    /// What needs you first, then what's working: in its own rows when there's room, or one
+    /// line naming them (`compactWorking`), so working chats never fall off the end.
+    private func list(limit: Int, compactWorking: Bool = false) -> some View {
+        let working = workingRows
+        let workingSpace = working.isEmpty ? 0 : compactWorking ? 1 : min(working.count, max(2, limit - attention.count))
+        let shown = Array(attention.prefix(limit - workingSpace))
+        let hidden = attention.count - shown.count + (compactWorking ? 0 : working.count - min(working.count, workingSpace))
+        return VStack(alignment: .leading, spacing: 6) {
             header
-            if rows.isEmpty {
+            if attention.isEmpty && working.isEmpty {
                 Spacer(minLength: 0)
                 caughtUp
                 Spacer(minLength: 0)
             } else {
-                ForEach(rows.prefix(limit)) { row in
+                ForEach(shown) { row in
                     Link(destination: row.item.link) { rowView(row) }
                 }
-                if rows.count > limit {
-                    Text("\(rows.count - limit) more in Chatterbox").font(.caption2).foregroundStyle(.secondary)
+                if !working.isEmpty {
+                    if compactWorking {
+                        workingLine(working)
+                    } else {
+                        ForEach(working.prefix(workingSpace)) { row in
+                            Link(destination: row.item.link) { rowView(row) }
+                        }
+                    }
+                }
+                if hidden > 0 {
+                    Text("\(hidden) more in Chatterbox").font(.caption2).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    /// "Working: Galley, Coach Archie" in one row; opens the first.
+    private func workingLine(_ working: [Row]) -> some View {
+        Link(destination: working[0].item.link) {
+            HStack(spacing: 8) {
+                Image(systemName: symbol(.working)).font(.caption.weight(.semibold))
+                    .foregroundStyle(color(working[0])).frame(width: 16)
+                (Text("Working ").font(.subheadline.weight(.semibold))
+                 + Text(working.map(\.item.title).joined(separator: ", ")).font(.subheadline).foregroundStyle(.secondary))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+        }
     }
 
     private func rowView(_ row: Row) -> some View {
@@ -169,7 +204,7 @@ struct ChatterboxWidgetView: View {
         var parts: [String] = []
         if !snapshot.waiting.isEmpty { parts.append("\(snapshot.waiting.count) waiting") }
         if !snapshot.newReplies.isEmpty { parts.append("\(snapshot.newReplies.count) new") }
-        if !snapshot.working.isEmpty { parts.append("\(snapshot.working.count) working") }
+        if !workingRows.isEmpty { parts.append("\(workingRows.count) working") }
         return parts.isEmpty ? "Chatterbox" : parts.joined(separator: " · ")
     }
 
