@@ -57,6 +57,8 @@ final class MobileStore {
             connection = try? JSONDecoder().decode(Connection.self, from: data)
         }
         token = Keychain.read("token")
+        // Last session's chats, so they show (with their saved text) before the Mac answers.
+        if isPaired { chatList = MobileTranscriptCache.loadList() }
         let saved = AppPreferences.defaults.dictionary(forKey: "drafts") as? [String: String] ?? [:]
         drafts = Dictionary(uniqueKeysWithValues: saved.compactMap { key, value in UUID(uuidString: key).map { ($0, value) } })
     }
@@ -83,7 +85,21 @@ final class MobileStore {
         await syncPushRegistration(force: true)
     }
 
+    @ObservationIgnored private var prefetched: [UUID: (updatedAt: Date, at: Date)] = [:]
+    /// The two most recently active chats, saved ahead so they open with their text. Each is
+    /// fetched again only once it has changed, and at most once a minute.
+    private func prefetchRecent() {
+        let recent = (chatList?.groups.flatMap(\.chats) ?? []).sorted { $0.updatedAt > $1.updatedAt }.prefix(2)
+        for chat in recent {
+            if let last = prefetched[chat.id], last.updatedAt == chat.updatedAt || Date().timeIntervalSince(last.at) < 60 { continue }
+            prefetched[chat.id] = (chat.updatedAt, Date())
+            Task { if case .detail(let saved)? = try? await detail(chat.id, since: nil) { MobileTranscriptCache.save(saved) } }
+        }
+    }
+
     func forget() {
+        MobileTranscriptCache.clear()
+        prefetched = [:]
         // Capture the authenticated request before erasing pairing. Best effort; removing
         // the device on the Mac always revokes it, even when this phone is offline.
         if let host = connection?.hosts.first, let token {
@@ -103,11 +119,16 @@ final class MobileStore {
 
     func loadChats() async {
         do {
-            chatList = try await call("/v1/chats")
+            let fresh: Companion.ChatList = try await call("/v1/chats")
+            chatList = fresh
+            MobileTranscriptCache.saveList(fresh)
+            prefetchRecent()
             await syncPushRegistration()
             if Date().timeIntervalSince(addressesChecked) > 60 { await refreshAddresses() }
         } catch {
             note(error)
+            // The Mac can't be reached: last session's chats, with their saved text, still show.
+            if chatList == nil, isPaired { chatList = MobileTranscriptCache.loadList() }
         }
     }
 
@@ -513,10 +534,15 @@ final class MobileChatHistory {
     private(set) var detail: Companion.ChatDetail?
     private(set) var problem: String?
     private(set) var refreshing = false
+    /// Showing the copy saved on the last visit until the Mac's arrives.
+    private(set) var isCached = false
     @ObservationIgnored private var task: Task<Void, Never>?
     @ObservationIgnored private var generation = UUID()
 
-    init(id: UUID) { self.id = id }
+    init(id: UUID) {
+        self.id = id
+        if let saved = MobileTranscriptCache.load(id) { detail = saved; isCached = true }
+    }
 
     func cancel() {
         generation = UUID()
@@ -529,7 +555,9 @@ final class MobileChatHistory {
     func apply(_ fresh: Companion.ChatDetail) {
         cancel()
         detail = fresh
+        isCached = false
         problem = nil
+        MobileTranscriptCache.save(fresh)
     }
 
     @discardableResult
@@ -544,9 +572,14 @@ final class MobileChatHistory {
                 if generation == token { task = nil; refreshing = false }
             }
             do {
-                let response = try await store.detail(id, since: force ? nil : detail?.revision)
+                // A saved copy's revision may predate a restart on the Mac: ask for the whole thing.
+                let response = try await store.detail(id, since: force || isCached ? nil : detail?.revision)
                 guard !Task.isCancelled, generation == token else { return }
-                if case .detail(let fresh) = response { detail = fresh }
+                if case .detail(let fresh) = response {
+                    detail = fresh
+                    MobileTranscriptCache.save(fresh)
+                }
+                isCached = false
                 problem = nil
             } catch {
                 guard !Task.isCancelled, generation == token else { return }
