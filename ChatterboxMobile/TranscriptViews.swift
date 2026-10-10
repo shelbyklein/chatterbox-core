@@ -142,6 +142,17 @@ struct ChatStatusBar: View {
 
     private var tasks: [Companion.BackgroundTask] { detail.backgroundTasks ?? [] }
 
+    /// Golem compacts his conversation at 100k tokens (autoCompactWindow in
+    /// ~/Chatterbox/Dot/.claude/settings.local.json), long before his model's 1M window, so his
+    /// ring shows how close he is to that refresh rather than to the window.
+    static let golemCompactWindow = 100_000
+    private var contextFraction: Double? {
+        if detail.summary.isDot == true, let tokens = detail.contextTokens {
+            return min(1, Double(tokens) / Double(Self.golemCompactWindow))
+        }
+        return detail.contextFraction
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 10) {
@@ -157,7 +168,7 @@ struct ChatStatusBar: View {
                     .buttonStyle(.plain)
                 }
                 Spacer(minLength: 0)
-                if let fraction = detail.contextFraction {
+                if let fraction = contextFraction {
                     ContextRing(fraction: fraction)
                 }
             }
