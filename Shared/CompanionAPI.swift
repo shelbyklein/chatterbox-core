@@ -120,6 +120,8 @@ enum Companion {
         var turnsPerDay: Double? = nil
         /// Latest image preview, fetched separately as a bounded thumbnail.
         var thumbnail: File? = nil
+        /// Stable identity for the reply in progress; absent on older Macs.
+        var turnStartedAt: Date? = nil
     }
 
     /// The assistant's animations and head image, to play on the phone too.

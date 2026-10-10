@@ -48,6 +48,9 @@ struct ChatListView: View {
     /// The Studio whose instructions are open.
     @State private var editingStudio: Companion.ChatGroup?
     @State private var selectedStudioID: String?
+    @State private var renaming: Companion.ChatSummary?
+    @State private var newTitle = ""
+    @State private var managementError: String?
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columns, preferredCompactColumn: $compactColumn) {
@@ -125,6 +128,15 @@ struct ChatListView: View {
         }
         .sheet(isPresented: $savedPDFs) { SavedPDFsView() }
         .sheet(isPresented: $appearance) { MobileAppearanceSettings() }
+        .alert("Rename Chat", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } }), presenting: renaming) { chat in
+            TextField("Name", text: $newTitle)
+            Button("Rename") { rename(chat, to: newTitle.trimmingCharacters(in: .whitespacesAndNewlines)) }
+                .disabled(newTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Button("Cancel", role: .cancel) { renaming = nil }
+        }
+        .alert("Couldn't rename chat", isPresented: Binding(get: { managementError != nil }, set: { if !$0 { managementError = nil } })) {
+            Button("OK", role: .cancel) { managementError = nil }
+        } message: { Text(managementError ?? "") }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
                 history?.refresh(in: store, force: true)
@@ -279,7 +291,7 @@ struct ChatListView: View {
                     Label(problem, systemImage: "wifi.exclamationmark").font(.callout).foregroundStyle(.orange)
                 }
                 if let list = store.chatList {
-                    if search.isEmpty { MobileNewReplies(activity: list.activity ?? [], chats: allChats, summary: summary(for:), open: open) }
+                    if search.isEmpty { MobileNewReplies(activity: list.activity ?? [], chats: allChats, summary: summary(for:), open: open, rename: beginRename) }
                     if search.isEmpty, let pins = list.pins, !pins.isEmpty { MobilePinPills(pins: pins) }
                     emptyPage
                     ForEach(groups) { group in
@@ -288,9 +300,7 @@ struct ChatListView: View {
                             LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
                                 ForEach(group.chats) { chat in
                                     ChatCard(chat: chat, showsThumbnail: page == .studios, selected: sizeClass == .regular && selection == chat.id, activity: sort == .active ? Self.activityLine(chat) : nil) { open(chat) }
-                                        .contextMenu {
-                                            Button(role: .destructive) { archive(chat) } label: { Label("Archive", systemImage: "archivebox") }
-                                        }
+                                        .contextMenu { chatActions(chat) }
                                 }
                             }
                         }
@@ -325,7 +335,7 @@ struct ChatListView: View {
                 }
                 if let list = store.chatList {
                     if search.isEmpty {
-                        MobileNewReplies(activity: list.activity ?? [], chats: allChats, summary: summary(for:), open: open)
+                        MobileNewReplies(activity: list.activity ?? [], chats: allChats, summary: summary(for:), open: open, rename: beginRename)
                         if !studioGroups.isEmpty {
                             ScrollView(.horizontal, showsIndicators: false) {
                                 HStack(spacing: 8) {
@@ -365,7 +375,7 @@ struct ChatListView: View {
                                 LazyVStack(spacing: 0) {
                                     ForEach(group.chats) { chat in
                                         ChatRow(chat: chat) { open(chat) }.padding(12)
-                                            .contextMenu { Button(role: .destructive) { archive(chat) } label: { Label("Archive", systemImage: "archivebox") } }
+                                            .contextMenu { chatActions(chat) }
                                         if chat.id != group.chats.last?.id { Divider().padding(.leading, 38) }
                                     }
                                 }
@@ -375,7 +385,7 @@ struct ChatListView: View {
                                     ForEach(group.chats) { chat in
                                         ChatCard(chat: chat, showsThumbnail: true, selected: sizeClass == .regular && selection == chat.id,
                                                  isNew: isNewReply(chat)) { open(chat) }
-                                            .contextMenu { Button(role: .destructive) { archive(chat) } label: { Label("Archive", systemImage: "archivebox") } }
+                                            .contextMenu { chatActions(chat) }
                                     }
                                 }
                             }
@@ -414,7 +424,7 @@ struct ChatListView: View {
             }
             if let list = store.chatList {
                 if search.isEmpty {
-                    MobileNewReplies(activity: list.activity ?? [], chats: allChats, summary: summary(for:), open: open, headingInset: 18)
+                    MobileNewReplies(activity: list.activity ?? [], chats: allChats, summary: summary(for:), open: open, rename: beginRename, headingInset: 18)
                         .listRowInsets(EdgeInsets()).listRowBackground(Color.clear)
                 }
                 if search.isEmpty, let pins = list.pins, !pins.isEmpty {
@@ -429,6 +439,7 @@ struct ChatListView: View {
                         ForEach(group.chats) { chat in
                             ChatRow(chat: chat, activity: sort == .active ? Self.activityLine(chat) : nil) { open(chat) }
                                 .listRowBackground(sizeClass == .regular && selection == chat.id ? Color.primary.opacity(0.08) : nil)
+                                .contextMenu { chatActions(chat) }
                                 .swipeActions(edge: .trailing) {
                                     Button(role: .destructive) { archive(chat) } label: { Label("Archive", systemImage: "archivebox") }
                                 }
@@ -520,6 +531,27 @@ struct ChatListView: View {
             if selection == chat.id { selection = nil }
             await store.loadChats()
         }
+    }
+
+    private func beginRename(_ chat: Companion.ChatSummary) {
+        newTitle = chat.title
+        renaming = chat
+    }
+
+    private func rename(_ chat: Companion.ChatSummary, to title: String) {
+        guard !title.isEmpty else { return }
+        Task {
+            do {
+                let result = try await store.rename(chat.id, to: title)
+                if selection == chat.id { opened = result.summary; history?.refresh(in: store, force: true) }
+                await store.loadChats()
+            } catch { managementError = error.localizedDescription }
+        }
+    }
+
+    @ViewBuilder private func chatActions(_ chat: Companion.ChatSummary) -> some View {
+        Button { beginRename(chat) } label: { Label("Rename", systemImage: "pencil") }
+        Button(role: .destructive) { archive(chat) } label: { Label("Archive", systemImage: "archivebox") }
     }
 
     /// Opens a chat, even one the list doesn't show yet (a new, empty chat).

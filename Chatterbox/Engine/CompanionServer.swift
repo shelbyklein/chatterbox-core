@@ -406,6 +406,16 @@ final class CompanionServer {
             let revision = model.companionRevision(of: session.id)
             if let since, since == revision { return .json(Companion.Unchanged(revision: revision)) }
             return .json(CompanionMapper.detail(session, model: model))
+        case ("DELETE", 3) where parts[1] == "chats":
+            guard !local, currentProduct == "chatterbox" else { return .error(403, "Only the paired Chatterbox app can delete a chat here.") }
+            guard let session = session(parts[2]), !session.isDot else { return .error(404, "That chat is gone.") }
+            #if CHATTERBOX_HEADLESS
+            do { try model.runtime.remove(session.id) }
+            catch { return .error(503, "Couldn't delete the chat. Try again after reconnecting.") }
+            #else
+            model.delete(session)
+            #endif
+            return .json(["ok": true])
         case ("POST", 4) where parts[1] == "chats" && parts[3] == "messages":
             guard let session = session(parts[2]) else { return .error(404, "That chat is gone.") }
             guard !session.isRestartingThread else { return .error(409, "This thread is reconnecting. Your message wasn't sent; try again when it's ready.") }
@@ -749,7 +759,7 @@ enum CompanionMapper {
                      sidechatOf: session.record.sidechatOf,
                      tags: session.tags.isEmpty ? nil : session.tags,
                      turnsToday: activity.day, turnsThisWeek: activity.week, turnsPerDay: activity.perDay,
-                     thumbnail: thumbnail(session))
+                     thumbnail: thumbnail(session), turnStartedAt: session.isRunning ? session.record.turnStartedAt : nil)
     }
 
     private static func thumbnail(_ session: ChatSession) -> Companion.File? {

@@ -228,6 +228,10 @@ final class MobileStore {
         try await call("/v1/chats/\(chat.uuidString)/\(archived ? "archive" : "unarchive")", method: "POST", body: Data("{}".utf8))
     }
 
+    func deleteChat(_ chat: UUID) async throws {
+        _ = try await raw("/v1/chats/\(chat.uuidString)", method: "DELETE")
+    }
+
     func fork(_ chat: UUID) async throws -> Companion.ChatDetail {
         try await call("/v1/chats/\(chat.uuidString)/fork", method: "POST", body: Data("{}".utf8))
     }
