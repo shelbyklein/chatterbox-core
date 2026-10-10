@@ -41,8 +41,8 @@ final class MobileSeenReplies {
     }
 }
 
-/// At the top of the chat list, like the Mac sidebar's Activity: the three newest replies you
-/// haven't opened on the phone, then every chat working now. Opening a reply marks it seen,
+/// At the top of the chat list: every chat working now, then the three newest replies you
+/// haven't opened on the phone. Opening a reply marks it seen,
 /// and the next unseen reply takes its place. Folds to its heading and counts.
 struct MobileNewReplies: View {
     let activity: [Companion.TurnCompletion]
@@ -67,8 +67,8 @@ struct MobileNewReplies: View {
                         Image(systemName: "chevron.right").font(.caption2.weight(.bold))
                             .rotationEffect(.degrees(expanded ? 90 : 0))
                         Spacer()
-                        if !replies.isEmpty { Text("\(replies.count) new").foregroundStyle(.blue) }
                         if !working.isEmpty { Text("\(working.count) working") }
+                        if !replies.isEmpty { Text("\(replies.count) new").foregroundStyle(.blue) }
                     }
                     .font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
                     .textCase(nil)
@@ -80,17 +80,17 @@ struct MobileNewReplies: View {
                 .accessibilityValue(expanded ? "Expanded" : "Collapsed")
                 if expanded {
                     VStack(spacing: 0) {
+                        ForEach(working) { chat in
+                            Button { open(chat) } label: { row(chat, backend: chat.backend, date: nil, running: true) }
+                                .buttonStyle(.plain)
+                            if chat.id != working.last?.id || !replies.isEmpty { Divider().padding(.leading, 40) }
+                        }
                         ForEach(replies) { reply in
                             if let chat = summary(reply.chatID) {
                                 Button { open(chat) } label: { row(chat, backend: reply.backend, date: reply.endedAt, running: false) }
                                     .buttonStyle(.plain)
-                                if reply.id != replies.last?.id || !working.isEmpty { Divider().padding(.leading, 40) }
+                                if reply.id != replies.last?.id { Divider().padding(.leading, 40) }
                             }
-                        }
-                        ForEach(working) { chat in
-                            Button { open(chat) } label: { row(chat, backend: chat.backend, date: nil, running: true) }
-                                .buttonStyle(.plain)
-                            if chat.id != working.last?.id { Divider().padding(.leading, 40) }
                         }
                     }
                     .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
