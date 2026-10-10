@@ -44,6 +44,7 @@ struct ChatDetailView: View {
     /// The Next Steps set you opened; a new set arrives folded to one line.
     @State private var expandedSteps: [String]?
     @State private var confirmingRestart = false
+    @State private var promoting: ChatPromotionTarget?
     @State private var controllingSession = false
     @State private var sessionControlStatus: String?
     #if GOLEM_APP
@@ -243,6 +244,9 @@ struct ChatDetailView: View {
                 if !title.isEmpty { perform { try await store.rename(chat.id, to: title) } }
             }
             Button("Cancel", role: .cancel) {}
+        }
+        .sheet(item: $promoting) { target in
+            ChatPromotionSheet(target: target) { result in history.apply(result) }
         }
         #if DEBUG
         // Simulator tests: tap Golem in, then send him back.
@@ -635,6 +639,12 @@ struct ChatDetailView: View {
             Button { showingSettings = true } label: { Label("Chat Settings", systemImage: "slider.horizontal.3") }
                 .disabled(detail?.options == nil)
             Button { newTitle = summary.title; renaming = true } label: { Label("Rename", systemImage: "pencil") }
+            if summary.canPromote == true, detail?.isArchived != true {
+                Button { promoting = .init(chat: summary, kind: .studio) } label: { Label("Move to Studio…", systemImage: "paintpalette") }
+                    .disabled(summary.isRunning || controllingSession)
+                Button { promoting = .init(chat: summary, kind: .project) } label: { Label("Make Project…", systemImage: "folder.badge.plus") }
+                    .disabled(summary.isRunning || controllingSession)
+            }
             if detail?.canFork == true {
                 Button { forkChat() } label: { Label("Fork", systemImage: "arrow.triangle.branch") }
             }

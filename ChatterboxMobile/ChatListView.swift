@@ -49,6 +49,7 @@ struct ChatListView: View {
     @State private var editingStudio: Companion.ChatGroup?
     @State private var selectedStudioID: String?
     @State private var renaming: Companion.ChatSummary?
+    @State private var promoting: ChatPromotionTarget?
     @State private var newTitle = ""
     @State private var managementError: String?
 
@@ -128,6 +129,9 @@ struct ChatListView: View {
         }
         .sheet(isPresented: $savedPDFs) { SavedPDFsView() }
         .sheet(isPresented: $appearance) { MobileAppearanceSettings() }
+        .sheet(item: $promoting) { target in
+            ChatPromotionSheet(target: target) { result in open(result.summary); history?.apply(result) }
+        }
         .alert("Rename Chat", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } }), presenting: renaming) { chat in
             TextField("Name", text: $newTitle)
             Button("Rename") { rename(chat, to: newTitle.trimmingCharacters(in: .whitespacesAndNewlines)) }
@@ -551,6 +555,12 @@ struct ChatListView: View {
 
     @ViewBuilder private func chatActions(_ chat: Companion.ChatSummary) -> some View {
         Button { beginRename(chat) } label: { Label("Rename", systemImage: "pencil") }
+        if chat.canPromote == true {
+            Button { promoting = .init(chat: chat, kind: .studio) } label: { Label("Move to Studio…", systemImage: "paintpalette") }
+                .disabled(chat.isRunning)
+            Button { promoting = .init(chat: chat, kind: .project) } label: { Label("Make Project…", systemImage: "folder.badge.plus") }
+                .disabled(chat.isRunning)
+        }
         Button(role: .destructive) { archive(chat) } label: { Label("Archive", systemImage: "archivebox") }
     }
 

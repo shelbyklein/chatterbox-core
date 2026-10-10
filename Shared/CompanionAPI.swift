@@ -72,6 +72,37 @@ enum Companion {
         var text: String
     }
 
+    struct PromotionRequest: Codable {
+        enum Kind: String, Codable, Identifiable { case studio, project; var id: String { rawValue } }
+        var kind: Kind
+        var studioID: UUID? = nil
+        var name: String? = nil
+        var folder: String? = nil
+        var newFolderName: String? = nil
+        var keepFolder: Bool = true
+    }
+
+    struct PromotionOptions: Codable {
+        struct Destination: Codable, Identifiable {
+            var id: UUID
+            var name: String
+            var folder: String
+        }
+        var currentFolder: String
+        var studios: [Destination]
+    }
+
+    struct ProjectFolders: Codable {
+        struct Folder: Codable, Identifiable {
+            var path: String
+            var name: String
+            var id: String { path }
+        }
+        var path: String
+        var parent: String?
+        var folders: [Folder]
+    }
+
     /// A slash command or Codex skill the chat can use.
     struct Command: Codable, Hashable, Identifiable {
         var id: String { name }
@@ -122,6 +153,8 @@ enum Companion {
         var thumbnail: File? = nil
         /// Stable identity for the reply in progress; absent on older Macs.
         var turnStartedAt: Date? = nil
+        /// A regular chat that can become a Project or join a Studio. Older Macs omit it.
+        var canPromote: Bool? = nil
     }
 
     /// The assistant's animations and head image, to play on the phone too.

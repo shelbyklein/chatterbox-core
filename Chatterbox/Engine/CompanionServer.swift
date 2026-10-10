@@ -244,6 +244,19 @@ final class CompanionServer {
     // MARK: - Routes
 
     func respondAsync(to request:HTTPRequest,local:Bool) async -> HTTPResponse {
+        if request.method == "GET", request.path == "/v1/project-folders" {
+            guard !local else { return .error(403, "Only the paired Chatterbox app can browse folders here.") }
+            guard let device = authorize(request) else { return .error(401, "Pair this device again.") }
+            guard (device.product ?? "chatterbox") == "chatterbox",
+                  (request.headers["x-chatterbox-product"] ?? "chatterbox") == "chatterbox" else {
+                return .error(403, "This action belongs to Chatterbox.")
+            }
+            let path = request.query["path"]
+            return await Task.detached(priority: .userInitiated) {
+                do { return HTTPResponse.json(try ChatPromotion.folders(at: path)) }
+                catch { return HTTPResponse.error(400, error.localizedDescription) }
+            }.value
+        }
         let restartParts = request.path.split(separator: "/").map(String.init)
         if request.method == "POST", restartParts.count == 4,
            restartParts[0] == "v1", restartParts[1] == "chats", restartParts[3] == "restart" {
@@ -484,6 +497,24 @@ final class CompanionServer {
             guard let body = try? Companion.decoder.decode(Companion.RenameRequest.self, from: request.body) else { return .error(400, "Bad name.") }
             if session.isDot { model.renameDot(body.title) } else { session.setTitle(body.title) }
             return .json(CompanionMapper.detail(session, model: model))
+        case ("GET", 4) where parts[1] == "chats" && parts[3] == "organization":
+            guard !local, currentProduct == "chatterbox" else { return .error(403, "Only the paired Chatterbox app can promote chats here.") }
+            guard let session = session(parts[2]) else { return .error(404, "That chat is gone.") }
+            guard ChatPromotion.eligible(session) else { return .error(409, "Only ordinary, unarchived chats can be promoted.") }
+            return .json(Companion.PromotionOptions(currentFolder: session.workingFolder,
+                studios: model.activeStudios.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+                    .map { .init(id: $0.id, name: $0.name, folder: $0.folder) }))
+        case ("POST", 4) where parts[1] == "chats" && parts[3] == "promote":
+            guard !local, currentProduct == "chatterbox" else { return .error(403, "Only the paired Chatterbox app can promote chats here.") }
+            guard let session = session(parts[2]) else { return .error(404, "That chat is gone.") }
+            guard let body = try? Companion.decoder.decode(Companion.PromotionRequest.self, from: request.body) else { return .error(400, "Choose a Studio or Project destination.") }
+            #if CHATTERBOX_HEADLESS
+            do { try model.runtime.promote(session, using: body) }
+            catch { return .error(409, error.localizedDescription) }
+            return .json(CompanionMapper.detail(session, model: model))
+            #else
+            return .error(503, "Promotion requires the updated Chatterbox background service.")
+            #endif
         case ("POST", 4) where parts[1] == "chats" && (parts[3] == "archive" || parts[3] == "unarchive"):
             guard let session = session(parts[2]) else { return .error(404, "That chat is gone.") }
             let shown = model.selectedID
@@ -759,7 +790,8 @@ enum CompanionMapper {
                      sidechatOf: session.record.sidechatOf,
                      tags: session.tags.isEmpty ? nil : session.tags,
                      turnsToday: activity.day, turnsThisWeek: activity.week, turnsPerDay: activity.perDay,
-                     thumbnail: thumbnail(session), turnStartedAt: session.isRunning ? session.record.turnStartedAt : nil)
+                     thumbnail: thumbnail(session), turnStartedAt: session.isRunning ? session.record.turnStartedAt : nil,
+                     canPromote: ChatPromotion.eligible(session))
     }
 
     private static func thumbnail(_ session: ChatSession) -> Companion.File? {

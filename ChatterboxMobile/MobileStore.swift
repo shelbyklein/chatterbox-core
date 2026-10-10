@@ -224,6 +224,22 @@ final class MobileStore {
         try await call("/v1/chats/\(chat.uuidString)/rename", method: "POST", body: try JSONEncoder().encode(Companion.RenameRequest(title: title)))
     }
 
+    func promotionOptions(_ chat: UUID) async throws -> Companion.PromotionOptions {
+        try await call("/v1/chats/\(chat.uuidString)/organization")
+    }
+
+    func promote(_ chat: UUID, using request: Companion.PromotionRequest) async throws -> Companion.ChatDetail {
+        let result: Companion.ChatDetail = try await call("/v1/chats/\(chat.uuidString)/promote", method: "POST", body: try JSONEncoder().encode(request))
+        await loadChats()
+        return result
+    }
+
+    func projectFolders(at path: String?) async throws -> Companion.ProjectFolders {
+        var query = URLComponents()
+        if let path { query.queryItems = [URLQueryItem(name: "path", value: path)] }
+        return try await call("/v1/project-folders" + (query.percentEncodedQuery.map { "?" + $0 } ?? ""))
+    }
+
     func setArchived(_ archived: Bool, chat: UUID) async throws -> Companion.ChatDetail {
         try await call("/v1/chats/\(chat.uuidString)/\(archived ? "archive" : "unarchive")", method: "POST", body: Data("{}".utf8))
     }
