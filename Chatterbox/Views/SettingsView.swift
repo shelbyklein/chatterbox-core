@@ -238,8 +238,8 @@ struct SettingsView: View {
             }
             Section {
                 Picker("Start with", selection: $newStudioPreset) {
-                    let maestro = ModelPresets.shared.presets.first { $0.nickname?.caseInsensitiveCompare(ModelPresets.newStudioDefaultNickname) == .orderedSame }
-                    Text(maestro.map { "\($0.displayName) (default)" } ?? "Maestro (default, no preset has that nickname)").tag("")
+                    let maestro = ModelPresets.shared.presets.first { $0.title.caseInsensitiveCompare(ModelPresets.newStudioDefaultNickname) == .orderedSame }
+                    Text(maestro.map { "\($0.displayName) (default)" } ?? "Maestro (default, no preset has that name)").tag("")
                     Text("Same as new chats").tag("none")
                     Divider()
                     ForEach(ModelPresets.shared.presets.filter { $0.id != maestro?.id }) { preset in
@@ -421,12 +421,6 @@ struct SettingsView: View {
                     .labelsHidden()
                     .multilineTextAlignment(.leading)
                     .frame(maxWidth: 220, alignment: .leading)
-                TextField("Nickname", text: Binding(get: { preset.nickname ?? "" }, set: { presets.setNickname(preset, to: $0) }),
-                          prompt: Text("Nickname"))
-                    .textFieldStyle(.roundedBorder)
-                    .labelsHidden()
-                    .frame(width: 110)
-                    .help("A short name agents know this preset by: \u{201C}start that in Galley with Sol\u{201D}.")
                 Spacer()
                 if !isEditing { Text(presetDetail(preset)).foregroundStyle(.secondary).font(.caption) }
                 Button(isEditing ? "Done" : "Edit") { editingPreset = isEditing ? nil : preset.id }

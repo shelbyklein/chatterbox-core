@@ -13,7 +13,7 @@ struct ModelPreset: Codable, Identifiable, Equatable {
     /// Switches to the default model and effort for its agent (Settings → Default models),
     /// whatever they are; its name follows them too. Editing it makes it a fixed preset.
     var followsDefault: Bool?
-    /// What you call it ("Sol"), so you can tell an agent "start that in Galley with Sol".
+    /// Older presets had a nickname beside the name; it became the name (see `init`).
     var nickname: String?
 
     /// Whose model it runs: a Claude model through Codex (via the proxy) is still Claude's.
@@ -22,11 +22,7 @@ struct ModelPreset: Codable, Identifiable, Equatable {
         return backend
     }
 
-    /// Keep stored model titles intact; nicknames are the visible quick-switch label.
-    var displayName: String {
-        let name = nickname?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return name.isEmpty ? title : name
-    }
+    var displayName: String { title }
 
     var configurationDescription: String {
         let agent = provider == backend ? backend.rawValue.capitalized : "Claude model via Codex"
@@ -74,6 +70,15 @@ final class ModelPresets {
                 if Self.original.contains(where: { $0.0 == preset.backend.rawValue && $0.1 == preset.model && $0.2 == preset.effort }) {
                     saved[index].followsDefault = true
                 }
+            }
+            // A nickname was a second name; it becomes the name, so a preset has one.
+            for index in saved.indices {
+                guard let nickname = saved[index].nickname?.trimmingCharacters(in: .whitespacesAndNewlines) else { continue }
+                if !nickname.isEmpty {
+                    if saved[index].followsDefault == true { saved[index] = Self.resolved(saved[index]); saved[index].followsDefault = false }
+                    saved[index].title = nickname
+                }
+                saved[index].nickname = nil
             }
             self.saved = saved
         } else {
@@ -128,7 +133,7 @@ final class ModelPresets {
     }
 
     /// Settings → New Chats → New Studios: the preset a new Studio's first chat starts with.
-    /// Saved as the preset's id; empty means the default (the preset nicknamed Maestro),
+    /// Saved as the preset's id; empty means the default (the preset named Maestro),
     /// "none" means the usual new-chat defaults.
     static let newStudioKey = "newStudioPreset"
     static let newStudioDefaultNickname = "Maestro"
@@ -137,7 +142,7 @@ final class ModelPresets {
         let saved = AppPreferences.defaults.string(forKey: Self.newStudioKey) ?? ""
         if saved == "none" { return nil }
         if let id = UUID(uuidString: saved), let preset = presets.first(where: { $0.id == id }) { return preset }
-        return presets.first { $0.nickname?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return presets.first { $0.title.trimmingCharacters(in: .whitespacesAndNewlines)
             .caseInsensitiveCompare(Self.newStudioDefaultNickname) == .orderedSame }
     }
 
@@ -225,18 +230,10 @@ final class ModelPresets {
         save()
     }
 
-    func setNickname(_ preset: ModelPreset, to nickname: String) {
-        guard let index = saved.firstIndex(where: { $0.id == preset.id }) else { return }
-        let trimmed = nickname.trimmingCharacters(in: .whitespacesAndNewlines)
-        saved[index].nickname = trimmed.isEmpty ? nil : trimmed
-        save()
-    }
-
-    /// A preset by its nickname or title, ignoring case.
+    /// A preset by its name, ignoring case.
     func preset(named name: String) -> ModelPreset? {
         let wanted = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        return presets.first { $0.nickname?.caseInsensitiveCompare(wanted) == .orderedSame }
-            ?? presets.first { $0.title.caseInsensitiveCompare(wanted) == .orderedSame }
+        return presets.first { $0.title.caseInsensitiveCompare(wanted) == .orderedSame }
     }
 
     /// What a preset switches to, in words: "Codex · GPT-6.1-Sol · Low".

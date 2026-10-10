@@ -63,7 +63,7 @@ struct PresetPills: View {
         .alert("Rename Preset", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Name", text: $newTitle)
             Button("Rename") {
-                if let renaming { presets.setNickname(renaming, to: newTitle) }
+                if let renaming { presets.rename(renaming, to: newTitle.trimmingCharacters(in: .whitespacesAndNewlines)) }
             }
             Button("Cancel", role: .cancel) {}
         }

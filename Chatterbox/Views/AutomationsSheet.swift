@@ -87,7 +87,7 @@ struct AutomationsSheet: View {
             Picker("Preset", selection: binding(automation, \.preset)) {
                 Text("The thread's own model").tag(UUID?.none)
                 ForEach(ModelPresets.shared.presets) { preset in
-                    Text(preset.nickname.map { "\($0) \u{00B7} \(preset.title)" } ?? preset.title).tag(UUID?.some(preset.id))
+                    Text(preset.title).tag(UUID?.some(preset.id))
                 }
             }
             VStack(alignment: .leading, spacing: 6) {

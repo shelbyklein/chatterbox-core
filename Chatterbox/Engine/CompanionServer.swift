@@ -484,7 +484,7 @@ final class CompanionServer {
             return .json(CompanionMapper.detail(session, model: model))
         case ("GET", 2) where parts[1] == "presets":
             return .json(ModelPresets.shared.presets.map {
-                Companion.PresetInfo(id: $0.id, nickname: $0.nickname, title: $0.title, backend: $0.backend.rawValue, summary: ModelPresets.summary($0))
+                Companion.PresetInfo(id: $0.id, nickname: nil, title: $0.title, backend: $0.backend.rawValue, summary: ModelPresets.summary($0))
             })
         case ("POST", 4) where parts[1] == "chats" && parts[3] == "settings":
             guard let session = session(parts[2]) else { return .error(404, "That chat is gone.") }
@@ -877,7 +877,7 @@ enum CompanionMapper {
         }
         let presets = ModelPresets.shared.presets.map {
             Companion.PresetOption(id: $0.id, title: $0.title, backend: $0.backend.rawValue, isActive: ModelPresets.shared.matches($0, session: session),
-                                   nickname: $0.nickname, provider: $0.provider.rawValue)
+                                   summary: ModelPresets.summary($0), provider: $0.provider.rawValue)
         }
         return .init(backend: session.record.backend.rawValue,
                      // The phone matches by id: name the chat's model as the list does

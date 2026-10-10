@@ -16,7 +16,7 @@ struct ChatSettingsSheet: View {
             Form {
                 if !options.presets.isEmpty {
                     Section("Presets") {
-                        LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                        LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
                             ForEach(options.presets) { preset in
                                 PresetBubble(preset: preset) { apply(.init(preset: preset.id)) }
                             }
@@ -106,51 +106,47 @@ private struct ChoiceRowStyle: ButtonStyle {
     }
 }
 
-/// A preset as a large rounded bubble, filled with the tint when it's the chat's current setup.
+/// A preset as a compact rounded card: its agent, name and what it switches to, filled with
+/// its own agent's color when it's the chat's current setup.
 private struct PresetBubble: View {
     let preset: Companion.PresetOption
     let choose: () -> Void
 
     var body: some View {
-        let isCodex = preset.backend == "codex"
         let provider = preset.provider ?? preset.backend
-        let agentLabel = isCodex && provider == "claude" ? "Claude via Codex" : (isCodex ? "Codex" : "Claude")
+        let color = MobileConversationStyle.accent(for: provider)
+        // Older Macs send a nickname beside the name; it was the name you see.
+        let name = preset.nickname ?? preset.title
+        let detail = preset.summary ?? (preset.backend == "codex" ? (provider == "claude" ? "Claude via Codex" : "Codex") : "Claude")
         Button(action: choose) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Image(provider == "codex" ? "AgentCodex" : "AgentClaude")
-                        .resizable().scaledToFit()
-                        .frame(width: 18, height: 18)
-                        .foregroundStyle(preset.isActive ? Color.white : MobileConversationStyle.accent(for: provider))
-                    Spacer()
-                    if preset.isActive { Image(systemName: "checkmark.circle.fill").font(.subheadline) }
+            HStack(spacing: 10) {
+                Image(provider == "codex" ? "AgentCodex" : "AgentClaude")
+                    .resizable().scaledToFit()
+                    .frame(width: 18, height: 18)
+                    .foregroundStyle(preset.isActive ? Color.white : color)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(name).font(.subheadline.weight(.semibold)).lineLimit(1)
+                    Text(detail).font(.caption2).opacity(0.75).lineLimit(1)
                 }
                 Spacer(minLength: 0)
-                Text(preset.nickname ?? preset.title)
-                    .font(.headline)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-                Text(preset.nickname != nil ? "\(preset.title) \u{00B7} \(agentLabel)" : agentLabel)
-                    .lineLimit(2)
-                    .font(.caption)
-                    .opacity(0.75)
+                if preset.isActive { Image(systemName: "checkmark.circle.fill").font(.subheadline) }
             }
             .foregroundStyle(preset.isActive ? Color.white : Color.primary)
-            .padding(14)
-            .frame(maxWidth: .infinity, minHeight: 104, alignment: .leading)
+            .padding(.horizontal, 12).padding(.vertical, 10)
+            .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
             .background(
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(preset.isActive ? AnyShapeStyle(.tint) : AnyShapeStyle(Color(.secondarySystemGroupedBackground)))
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(preset.isActive ? AnyShapeStyle(color) : AnyShapeStyle(Color(.secondarySystemGroupedBackground)))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .strokeBorder(preset.isActive ? Color.clear : Color.primary.opacity(0.08))
             )
-            .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(preset.nickname.map { "\($0), " } ?? "")\(preset.title), \(agentLabel) preset")
+        .accessibilityLabel("\(name) preset, \(detail)")
         .accessibilityAddTraits(preset.isActive ? [.isButton, .isSelected] : .isButton)
     }
 }

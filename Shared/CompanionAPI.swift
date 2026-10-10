@@ -233,8 +233,10 @@ enum Companion {
         var title: String
         var backend: String
         var isActive: Bool
-        /// What you call it; shown in place of the title when set.
+        /// Older Macs' second name for it; newer ones fold it into the title.
         var nickname: String? = nil
+        /// What it switches to: "Claude · Opus 5.5 · Medium".
+        var summary: String? = nil
         /// Whose model it runs ("claude" for a Claude model through Codex); the agent otherwise.
         var provider: String? = nil
     }

@@ -54,14 +54,12 @@ enum PermissionModes {
         record.activeBackend = backend
     }
 
-    /// Defaults for new chats, from Settings.
+    /// Defaults for new chats, from Settings: unrestricted unless you choose otherwise.
     static var defaultClaude: String {
-        AppPreferences.defaults.string(forKey: "claudeDefaultMode")
-            ?? ((AppPreferences.defaults.object(forKey: "codexCanEdit") as? Bool ?? false) ? "acceptEdits" : "default")
+        AppPreferences.defaults.string(forKey: "claudeDefaultMode") ?? "bypassPermissions"
     }
 
     static var defaultCodex: String {
-        AppPreferences.defaults.string(forKey: "codexDefaultMode")
-            ?? ((AppPreferences.defaults.object(forKey: "codexCanEdit") as? Bool ?? false) ? "ask" : "readOnly")
+        AppPreferences.defaults.string(forKey: "codexDefaultMode") ?? "fullAccess"
     }
 }
