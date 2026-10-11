@@ -49,6 +49,9 @@ struct GolemCapabilitiesView: View {
             ("Email", [
                 Item(icon: "envelope.badge", title: "Important email alerts",
                      how: "He watches your Gmail accounts and notifies you once about mail that matters. He never sends, archives or marks mail read.", on: on("dotEmailWatch")),
+                Item(icon: "envelope.open.badge.clock", title: "Outlook in Chrome",
+                     how: "He reads new mail in the Outlook inbox open in your Chrome, in a background tab, and puts a summary with action items, deadlines and a link in the Journal; important ones he brings to you. He sets each message back to unread and never sends, deletes or moves mail. Settings → Automation on your Mac.",
+                     on: automation.map { $0["dotOutlookWatch"] ?? false }),
                 Item(icon: "envelope.open", title: "Ask about email",
                      how: "Ask him to find or summarize mail. This needs him on Codex, which has your Gmail connections."),
             ]),
