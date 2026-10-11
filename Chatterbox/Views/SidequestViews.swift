@@ -78,6 +78,12 @@ struct SidequestBanner: View {
             if let parent {
                 Button("Open Chat") { model.selectedID = parent.id }
             }
+            Button("End Sidequest") {
+                if let parent { model.selectedID = parent.id }
+                model.archive(session)
+            }
+            .disabled(session.isRunning)
+            .help(session.isRunning ? "Stop it first, or wait for it to finish" : "Archive this sidequest; it moves to Archived")
         }
         .font(.callout)
         .padding(.horizontal, 16)
@@ -177,6 +183,10 @@ struct SidequestCardRow: View {
             .contentShape(RoundedRectangle(cornerRadius: 6))
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            Button("Open Sidequest") { model.selectedID = quest.id }
+            Button("End Sidequest") { model.archive(quest) }.disabled(quest.isRunning)
+        }
         .help("Sidequest to \(quest.record.backend.label): \(quest.record.sidequestTask ?? quest.title)"
               + (quest.isRunning ? " (working)" : quest.record.sidequestReturned != nil ? " (answer sent back)" : ""))
         .accessibilityLabel("Open sidequest: \(quest.record.sidequestTask ?? quest.title)")

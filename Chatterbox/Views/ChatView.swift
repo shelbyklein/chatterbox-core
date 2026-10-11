@@ -74,6 +74,28 @@ struct ChatView: View {
             if session.record.backend == .codex, let status = CodexAppServer.shared.statusMessage { claudeBanner(status) }
             if find.isOpen { ChatFindBar(find: find) }
             transcript
+                // Under the banners above (a sidequest's, an archived chat's), never over them.
+                .overlay(alignment: .topTrailing) {
+                    if !compact && tileContext == nil && !session.isDot {
+                        GeometryReader { geometry in
+                            VStack(alignment: .trailing, spacing: 8) {
+                                HStack(alignment: .top, spacing: 8) {
+                                    SessionTools(bridge: windowToolbar ?? ownToolbar)
+                                    SessionImages(bridge: windowToolbar ?? ownToolbar)
+                                    ChatNotes(scope: PinnedNotesStore.scope(for: session.record), project: session.record.projectFolder != nil,
+                                              panelWidth: min(280, max(220, (geometry.size.width - appearance.style.contentWidth) / 2 - 32)))
+                                        .id(PinnedNotesStore.scope(for: session.record))
+                                    ChatQuickActions(session: session)
+                                    if !session.isSidequest { SidequestButton(session: session) }
+                                }
+                                ChatPins(chat: session.record.id, agentName: session.record.backend == .codex ? "Codex" : "Claude",
+                                         panelWidth: min(280, max(220, (geometry.size.width - appearance.style.contentWidth) / 2 - 32))) { pinJump = $0 }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                            .padding(16)
+                        }
+                    }
+                }
                 .overlay(alignment: .bottomTrailing) {
                     if !compact && tileContext == nil && !session.isDot && !session.isSidequest {
                         GeometryReader { geometry in
@@ -88,27 +110,6 @@ struct ChatView: View {
             composer
             if showingTerminal {
                 TerminalPanel(session: session, onClose: { showingTerminal = false }, pending: $terminalCommand)
-            }
-        }
-        .overlay(alignment: .topTrailing) {
-            if !compact && tileContext == nil && !session.isDot {
-                GeometryReader { geometry in
-                    VStack(alignment: .trailing, spacing: 8) {
-                        HStack(alignment: .top, spacing: 8) {
-                            SessionTools(bridge: windowToolbar ?? ownToolbar)
-                            SessionImages(bridge: windowToolbar ?? ownToolbar)
-                            ChatNotes(scope: PinnedNotesStore.scope(for: session.record), project: session.record.projectFolder != nil,
-                                      panelWidth: min(280, max(220, (geometry.size.width - appearance.style.contentWidth) / 2 - 32)))
-                                .id(PinnedNotesStore.scope(for: session.record))
-                            ChatQuickActions(session: session)
-                            if !session.isSidequest { SidequestButton(session: session) }
-                        }
-                        ChatPins(chat: session.record.id, agentName: session.record.backend == .codex ? "Codex" : "Claude",
-                                 panelWidth: min(280, max(220, (geometry.size.width - appearance.style.contentWidth) / 2 - 32))) { pinJump = $0 }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-                    .padding(16)
-                }
             }
         }
     }
