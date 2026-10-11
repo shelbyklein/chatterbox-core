@@ -141,3 +141,44 @@ struct SidequestWindows: View {
         closed = ids.suffix(200).joined(separator: ",")
     }
 }
+
+/// A sidequest inside its chat's card: the other agent, the task, and whether it's still
+/// going, waiting on you, or back. Click it to open the sidequest.
+struct SidequestCardRow: View {
+    let quest: ChatSession
+    var scale: CGFloat = 1
+    @Environment(AppModel.self) private var model
+    private let appearance = ReaderStyleSettings()
+
+    var body: some View {
+        Button { model.selectedID = quest.id } label: {
+            HStack(spacing: 5) {
+                Group {
+                    if quest.isWaitingOnYou {
+                        Circle().fill(.yellow).frame(width: 6 * scale, height: 6 * scale)
+                    } else if quest.isRunning {
+                        ActivitySpinner(color: appearance.style.color(for: quest.record.backend))
+                    } else if quest.record.sidequestReturned != nil {
+                        Image(systemName: "checkmark").font(.system(size: 8 * scale, weight: .bold)).foregroundStyle(.secondary)
+                    } else {
+                        Image(systemName: "point.topleft.down.to.point.bottomright.curvepath").font(.system(size: 8 * scale))
+                    }
+                }
+                .frame(width: 10 * scale, height: 10 * scale)
+                Image(quest.record.provider.iconName).resizable().scaledToFit()
+                    .foregroundStyle(appearance.style.color(for: quest.record.provider))
+                    .frame(width: 10 * scale, height: 10 * scale)
+                Text(quest.record.sidequestTask ?? quest.title)
+                    .font(.system(size: 10 * scale)).lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.horizontal, 6 * scale).padding(.vertical, 3 * scale)
+            .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 6))
+            .contentShape(RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(.plain)
+        .help("Sidequest to \(quest.record.backend.label): \(quest.record.sidequestTask ?? quest.title)"
+              + (quest.isRunning ? " (working)" : quest.record.sidequestReturned != nil ? " (answer sent back)" : ""))
+        .accessibilityLabel("Open sidequest: \(quest.record.sidequestTask ?? quest.title)")
+    }
+}

@@ -1305,7 +1305,8 @@ extension ContentView {
         if root.record.projectFolder != nil || root.record.convertedProjectFolder != nil {
             for branch in model.worktrees(of: root) { threads += [branch] + model.sidechats(of: branch) }
         }
-        return threads.filter(isShown)
+        // Sidequests show inside their chat's card instead of as cards of their own.
+        return threads.filter { isShown($0) && !model.showsInsideParentCard($0) }
     }
 
     private func cardGrid(_ threads: [ChatSession]) -> some View {

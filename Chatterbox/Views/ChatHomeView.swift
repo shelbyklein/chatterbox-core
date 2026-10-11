@@ -154,6 +154,12 @@ struct ThreadCard: View {
                 }
                 Text(preview).font(.system(size: (expanded ? 13 : 10.5) * scale)).foregroundStyle(.secondary)
                     .lineLimit(expanded ? 4 : 2).frame(maxWidth: .infinity, alignment: .leading)
+                let quests = model.sidequests(of: session)
+                if !quests.isEmpty {
+                    VStack(alignment: .leading, spacing: 3) {
+                        ForEach(quests) { quest in SidequestCardRow(quest: quest, scale: scale) }
+                    }
+                }
                 if showsThumbnail, let thumbnail = ThreadThumbnails.shared.images[session.id] {
                     Image(nsImage: thumbnail).resizable().scaledToFit()
                         .frame(height: (expanded ? 100 : 56) * scale)
@@ -262,7 +268,8 @@ enum HomeThreads {
             if root.record.projectFolder != nil || root.record.convertedProjectFolder != nil {
                 for branch in model.worktrees(of: root) { threads += [branch] + model.sidechats(of: branch) }
             }
-            return threads
+            // Sidequests show inside their chat's card.
+            return threads.filter { !model.showsInsideParentCard($0) }
         }
         var result = [group("golem", model.dotName, model.activeSessions.filter(\.isDot)),
                       group("projects", "Projects", model.sidebarProjects.flatMap(family))]

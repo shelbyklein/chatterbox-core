@@ -177,6 +177,18 @@ final class AppModel {
         activeSessions.filter { $0.record.sidechatOf == parent.id }.sorted { $0.lastActivity > $1.lastActivity }
     }
 
+    /// A sidequest whose chat is open shows inside that chat's card; once the chat is
+    /// archived it gets a card of its own again.
+    func showsInsideParentCard(_ session: ChatSession) -> Bool {
+        guard let parent = session.record.sidequestOf else { return false }
+        return activeSessions.contains { $0.id == parent }
+    }
+
+    /// The sidequests a chat started, oldest first; cards show them inside the chat's own card.
+    func sidequests(of parent: ChatSession) -> [ChatSession] {
+        activeSessions.filter { $0.record.sidequestOf == parent.id }.sorted { $0.record.createdAt < $1.record.createdAt }
+    }
+
     @discardableResult
     func newSidechat(of parent: ChatSession) -> ChatSession {
         // Always anchor at the original parent; don't make a recursive tree of
