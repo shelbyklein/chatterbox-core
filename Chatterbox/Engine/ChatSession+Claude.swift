@@ -134,7 +134,8 @@ extension ChatSession {
             forkSession: record.claudeForkPending == true,
             mcpConfig: claudeMCPConfig,
             allowedTools: claudeAllowedTools,
-            environment: claudeProxyEnvironment.merging(SecretVault.shared.environment(for: self)) { $1 },
+            environment: claudeProxyEnvironment.merging(SecretVault.shared.environment(for: self)) { $1 }
+                .merging(["CHATTERBOX_CHAT_ID": id.uuidString]) { $1 },
             fastMode: record.claudeFastMode == true && supportsClaudeFastMode
         ), id: "claude-\(id.uuidString)-\(UUID().uuidString.prefix(8))")
         // A fresh session gets the current tone and instructions in its system prompt.
