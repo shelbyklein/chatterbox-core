@@ -16,7 +16,8 @@ struct ChatSettingsSheet: View {
             Form {
                 if !options.presets.isEmpty {
                     Section("Presets") {
-                        LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
+                        // Four to a row: small tiles, so effort and permissions fit below at half height.
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 6) {
                             ForEach(options.presets) { preset in
                                 PresetBubble(preset: preset) { apply(.init(preset: preset.id)) }
                             }
@@ -106,8 +107,8 @@ private struct ChoiceRowStyle: ButtonStyle {
     }
 }
 
-/// A preset as a compact rounded card: its agent, name and what it switches to, filled with
-/// its own agent's color when it's the chat's current setup.
+/// A preset as a small tile, four to a row: its agent and name (what it switches to on a
+/// long press), filled with its own agent's color when it's the chat's current setup.
 private struct PresetBubble: View {
     let preset: Companion.PresetOption
     let choose: () -> Void
@@ -119,32 +120,28 @@ private struct PresetBubble: View {
         let name = preset.nickname ?? preset.title
         let detail = preset.summary ?? (preset.backend == "codex" ? (provider == "claude" ? "Claude via Codex" : "Codex") : "Claude")
         Button(action: choose) {
-            HStack(spacing: 10) {
+            VStack(spacing: 5) {
                 Image(provider == "codex" ? "AgentCodex" : "AgentClaude")
                     .resizable().scaledToFit()
-                    .frame(width: 18, height: 18)
+                    .frame(width: 16, height: 16)
                     .foregroundStyle(preset.isActive ? Color.white : color)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(name).font(.subheadline.weight(.semibold)).lineLimit(1)
-                    Text(detail).font(.caption2).opacity(0.75).lineLimit(1)
-                }
-                Spacer(minLength: 0)
-                if preset.isActive { Image(systemName: "checkmark.circle.fill").font(.subheadline) }
+                Text(name).font(.caption.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.75)
             }
             .foregroundStyle(preset.isActive ? Color.white : Color.primary)
-            .padding(.horizontal, 12).padding(.vertical, 10)
-            .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+            .padding(.horizontal, 4)
+            .frame(maxWidth: .infinity, minHeight: 56)
             .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(preset.isActive ? AnyShapeStyle(color) : AnyShapeStyle(Color(.secondarySystemGroupedBackground)))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .strokeBorder(preset.isActive ? Color.clear : Color.primary.opacity(0.08))
             )
-            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .buttonStyle(.plain)
+        .contextMenu { Text(detail) }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(name) preset, \(detail)")
         .accessibilityAddTraits(preset.isActive ? [.isButton, .isSelected] : .isButton)
