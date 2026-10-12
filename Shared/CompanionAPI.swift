@@ -143,6 +143,10 @@ enum Companion {
         var worktreeBranch: String? = nil
         /// A temporary independent conversation, listed under this parent when available.
         var sidechatOf: UUID? = nil
+        /// A sidequest: the chat it reports back to, its task, and whether it has. Older Macs omit them.
+        var sidequestOf: UUID? = nil
+        var sidequestTask: String? = nil
+        var sidequestReturned: Bool? = nil
         /// A project's tags, and how active the chat is: turns in the last day and week, and
         /// its average turns a day since it started (for chats from before turns were timed).
         var tags: [String]? = nil
@@ -240,6 +244,9 @@ enum Companion {
         /// Whose model it runs ("claude" for a Claude model through Codex); the agent otherwise.
         var provider: String? = nil
     }
+
+    /// Hand a task from a chat to the other agent.
+    struct SidequestRequest: Codable { var task: String }
 
     /// Change any of a chat's settings; leave the rest nil.
     struct SettingsRequest: Codable {

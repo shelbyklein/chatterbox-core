@@ -248,6 +248,14 @@ final class MobileStore {
         _ = try await raw("/v1/chats/\(chat.uuidString)", method: "DELETE")
     }
 
+    /// Sends a task from `chat` to the other agent; returns the new sidequest.
+    func sidequest(from chat: UUID, task: String) async throws -> Companion.ChatDetail {
+        let result: Companion.ChatDetail = try await call("/v1/chats/\(chat.uuidString)/sidequest", method: "POST",
+                                                          body: try JSONEncoder().encode(Companion.SidequestRequest(task: task)))
+        await loadChats()
+        return result
+    }
+
     func fork(_ chat: UUID) async throws -> Companion.ChatDetail {
         try await call("/v1/chats/\(chat.uuidString)/fork", method: "POST", body: Data("{}".utf8))
     }

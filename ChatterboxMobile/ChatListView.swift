@@ -194,7 +194,14 @@ struct ChatListView: View {
     private var groups: [Companion.ChatGroup] {
         let all = (store.chatList?.groups ?? []).filter { $0.kind != .dot || !hidesAssistant }
         // A tab searches its own page; the switcher's search looks through every page.
-        return sorted(filtered(search.isEmpty || fixedPage != nil ? all.filter { $0.kind == page.kind } : all.filter { $0.kind != .dot }))
+        let everyChat = all.flatMap(\.chats)
+        // Sidequests are shown with the chat that started them, not as chats of their own.
+        let lists = all.map { group in
+            var group = group
+            group.chats = group.chats.filter { !MobileSidequests.listedWithParent($0, in: everyChat) }
+            return group
+        }
+        return sorted(filtered(search.isEmpty || fixedPage != nil ? lists.filter { $0.kind == page.kind } : lists.filter { $0.kind != .dot }))
     }
 
     /// The groups in the chosen order. A project's worktrees and sidechats, listed right after
@@ -604,6 +611,7 @@ struct ChatListView: View {
 }
 
 private struct ChatRow: View {
+    @Environment(MobileStore.self) private var store
     let chat: Companion.ChatSummary
     var activity: String? = nil
     var open: () -> Void
@@ -649,6 +657,11 @@ private struct ChatRow: View {
             // Pins keep their own actions instead of being nested inside the chat button.
             if let pins = chat.pins, !pins.isEmpty {
                 MobilePinPills(pins: pins).padding(.leading, 24)
+            }
+            if let line = MobileSidequests.line(MobileSidequests.of(chat.id, in: store.chatList?.groups.flatMap(\.chats) ?? [])) {
+                Label(line, systemImage: "point.topleft.down.to.point.bottomright.curvepath")
+                    .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    .padding(.leading, 26)
             }
         }
         .padding(.vertical, 2)
@@ -698,6 +711,7 @@ private struct ChatCard: View {
                         .lineLimit(3)
                         .multilineTextAlignment(.leading)
                 }
+                sidequestLine
                 if showsThumbnail, let thumbnail {
                     Image(uiImage: thumbnail).resizable().scaledToFit()
                         .frame(height: 80)
@@ -724,6 +738,14 @@ private struct ChatCard: View {
             if showsThumbnail, let file = chat.thumbnail { thumbnail = try? await store.thumbnail(file, in: chat.id) }
         }
     }
+    /// The sidequests this chat started, in one line; open the chat to open one.
+    @ViewBuilder private var sidequestLine: some View {
+        if let line = MobileSidequests.line(MobileSidequests.of(chat.id, in: store.chatList?.groups.flatMap(\.chats) ?? [])) {
+            Label(line, systemImage: "point.topleft.down.to.point.bottomright.curvepath")
+                .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+        }
+    }
+
     private var studioCard: some View {
         VStack(alignment: .leading, spacing: 0) {
             Group {
@@ -750,6 +772,7 @@ private struct ChatCard: View {
                 }
                 Text(chat.isRunning ? "Reply in progress" : (chat.subtitle ?? "No replies yet"))
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                sidequestLine
                 HStack(spacing: 5) {
                     if chat.isWaitingOnYou {
                         Circle().fill(.orange).frame(width: 6, height: 6)

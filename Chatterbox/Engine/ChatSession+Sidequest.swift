@@ -48,9 +48,9 @@ extension ChatSession {
         return reply
     }
 
-    /// After a sidequest's turn: the first finished answer goes back by itself. Later ones
-    /// (after you keep chatting in it) wait for Send Back, so refining doesn't restart the
-    /// other chat each time.
+    /// After a sidequest's turn: its finished answer goes back by itself, and the sidequest
+    /// archives itself. Unarchived and continued, later answers wait for Send Back, so
+    /// refining doesn't restart the other chat each time.
     func sidequestTurnEnded(parent: ChatSession?) {
         guard let parent, record.sidequestReturned == nil, !isWaitingOnYou, unreturnedSidequestReply != nil else { return }
         returnSidequest(to: parent)
@@ -67,7 +67,9 @@ extension ChatSession {
             parent.record.items[index].sidequest = id
         }
         parent.onChange?(parent)
-        notice("Sent back to \u{201C}\(parent.title)\u{201D}.")
+        notice("Sent back to \u{201C}\(parent.title)\u{201D}. This sidequest is archived; it's still here if you want it.")
+        // Done: it leaves the sidebar and its window. The report is in the chat it came from.
+        setArchived(true)
         onChange?(self)
     }
 }

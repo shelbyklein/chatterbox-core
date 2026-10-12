@@ -112,6 +112,8 @@ struct ChatDetailView: View {
     @State private var showingSettings = false
     @State private var renaming = false
     @State private var newTitle = ""
+    @State private var askingSidequest = false
+    @State private var sidequestTask = ""
 
     private var summary: Companion.ChatSummary { detail?.summary ?? chat }
     private var isConversation: Bool { summary.isDot == true }
@@ -133,6 +135,15 @@ struct ChatDetailView: View {
 
     var body: some View {
         transcript
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if !isConversation {
+                MobileSidequestStrip(summary: summary, chats: store.chatList?.groups.flatMap(\.chats) ?? [], open: open) {
+                    let parent = summary.sidequestOf.flatMap { id in store.chatList?.groups.flatMap(\.chats).first { $0.id == id } }
+                    perform { try await store.setArchived(true, chat: chat.id) }
+                    if let parent { open(parent) }
+                }
+            }
+        }
         // Opening a chat here, from anywhere, clears it from New replies.
         .onAppear { MobileSeenReplies.shared.markSeen(chat.id) }
         .onDisappear { MobileSeenReplies.shared.markSeen(chat.id) }
@@ -236,6 +247,21 @@ struct ChatDetailView: View {
                     .tint(agentAccent)
                     .presentationDetents(Self.settingsDetents)
             }
+        }
+        .alert("Sidequest to \(summary.otherAgentLabel)", isPresented: $askingSidequest) {
+            TextField("What should \(summary.otherAgentLabel) do?", text: $sidequestTask, axis: .vertical)
+            Button("Start Sidequest") {
+                let task = sidequestTask.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !task.isEmpty else { return }
+                // You stay in this chat; the sidequest shows above the transcript.
+                Task {
+                    do { _ = try await store.sidequest(from: chat.id, task: task); error = nil; await refresh(force: true) }
+                    catch { self.error = error.localizedDescription }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("\(summary.otherAgentLabel) reads this chat, does the task in its own sidequest, and its answer comes back here.")
         }
         .alert("Rename Chat", isPresented: $renaming) {
             TextField("Title", text: $newTitle)
@@ -639,6 +665,11 @@ struct ChatDetailView: View {
             Button { showingSettings = true } label: { Label("Chat Settings", systemImage: "slider.horizontal.3") }
                 .disabled(detail?.options == nil)
             Button { newTitle = summary.title; renaming = true } label: { Label("Rename", systemImage: "pencil") }
+            if !isConversation, !summary.isSidequest, detail?.isArchived != true {
+                Button { sidequestTask = ""; askingSidequest = true } label: {
+                    Label("Sidequest to \(summary.otherAgentLabel)…", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
+                }
+            }
             if summary.canPromote == true, detail?.isArchived != true {
                 Button { promoting = .init(chat: summary, kind: .studio) } label: { Label("Move to Studio…", systemImage: "paintpalette") }
                     .disabled(summary.isRunning || controllingSession)

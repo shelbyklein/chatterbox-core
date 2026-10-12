@@ -521,6 +521,21 @@ final class CompanionServer {
             if parts[3] == "archive" { model.archive(session) } else { session.setArchived(false) }
             if let shown, shown != session.id, model.sessions.contains(where: { $0.id == shown }) { model.selectedID = shown }
             return .json(CompanionMapper.detail(session, model: model))
+        case ("POST", 4) where parts[1] == "chats" && parts[3] == "sidequest":
+            guard !local, currentProduct == "chatterbox" else { return .error(403, "Only the paired Chatterbox app can start a sidequest here.") }
+            guard let session = session(parts[2]), !session.isDot, !session.isSidequest, session.record.archivedAt == nil else { return .error(404, "That chat is gone.") }
+            guard let body = try? Companion.decoder.decode(Companion.SidequestRequest.self, from: request.body),
+                  !body.task.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .error(400, "Say what the sidequest should do.") }
+            let shown = model.selectedID
+            #if CHATTERBOX_HEADLESS
+            let quest: ChatSession
+            do { quest = try model.newSidequest(of: session, task: body.task) } catch { return .error(503, "Couldn't start the sidequest.") }
+            #else
+            model.newSidequest(of: session, task: body.task)
+            let quest = session
+            #endif
+            if let shown { model.selectedID = shown }
+            return .json(CompanionMapper.detail(quest, model: model))
         case ("POST", 4) where parts[1] == "chats" && parts[3] == "fork":
             guard let session = session(parts[2]) else { return .error(404, "That chat is gone.") }
             let shown = model.selectedID
@@ -788,6 +803,8 @@ enum CompanionMapper {
                      unread: session.isDot ? Attention.shared.dotUnreadCount(session) : nil,
                      worktreeBranch: session.record.worktreeOf != nil ? (session.record.worktreeBranch ?? session.projectName) : nil,
                      sidechatOf: session.record.sidechatOf,
+                     sidequestOf: session.record.sidequestOf, sidequestTask: session.record.sidequestTask,
+                     sidequestReturned: session.record.sidequestOf != nil ? session.record.sidequestReturned != nil : nil,
                      tags: session.tags.isEmpty ? nil : session.tags,
                      turnsToday: activity.day, turnsThisWeek: activity.week, turnsPerDay: activity.perDay,
                      thumbnail: thumbnail(session), turnStartedAt: session.isRunning ? session.record.turnStartedAt : nil,
