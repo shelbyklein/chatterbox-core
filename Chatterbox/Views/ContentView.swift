@@ -58,6 +58,8 @@ struct ContentView: View {
     @AppStorage(Theme.highlightKey) private var themeHighlight = "default"
     @AppStorage(ProjectSort.key) private var projectSort = ProjectSort.recent
     @AppStorage("sidebarProjectActivity") private var projectActivity = ProjectActivity.all
+    @AppStorage(ProjectSort.chatsKey) private var chatSort = ProjectSort.recent
+    @AppStorage("sidebarChatActivity") private var chatActivity = ProjectActivity.all
 
     @MainActor init(chatSwitch: ChatSwitchTransition? = nil, commandCenter: CommandCenterLayout? = nil) {
         _chatSwitch = State(initialValue: chatSwitch ?? ChatSwitchTransition())
@@ -531,16 +533,16 @@ extension ContentView {
 
     private var tagFilterMenu: some View {
         Menu {
-            if !model.showingChatsSidebar {
-            Picker("Sort By", selection: $projectSort) {
+            // Projects and Chats each keep their own sort and activity filter.
+            let chats = model.showingChatsSidebar
+            Picker("Sort By", selection: chats ? $chatSort : $projectSort) {
                 ForEach(ProjectSort.allCases, id: \.self) { Text($0.label).tag($0) }
             }
             .pickerStyle(.inline)
-            Picker("Activity", selection: $projectActivity) {
-                ForEach(ProjectActivity.allCases, id: \.self) { Text($0.label).tag($0) }
+            Picker("Activity", selection: chats ? $chatActivity : $projectActivity) {
+                ForEach(ProjectActivity.allCases, id: \.self) { Text($0 == .all ? (chats ? "All Chats" : "All Projects") : $0.label).tag($0) }
             }
             .pickerStyle(.inline)
-            }
             Section("Tags") {
                 Button("All Tags") { setSidebarTagFilter("") }
                 ForEach(model.allTags, id: \.self) { tag in
@@ -550,13 +552,13 @@ extension ContentView {
                 Toggle("Show Tag Pills", isOn: $showsTagPills)
             }
         } label: {
-            Image(systemName: activeTag == nil && (model.showingChatsSidebar || projectActivity == .all)
+            Image(systemName: activeTag == nil && (model.showingChatsSidebar ? chatActivity : projectActivity) == .all
                   ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help(model.showingChatsSidebar ? "Filter chats by tag" : "Sort and filter projects")
+        .help(model.showingChatsSidebar ? "Sort and filter chats" : "Sort and filter projects")
     }
 
     private func rowWithSidechats(_ session: ChatSession, numbers: [UUID: Int]) -> some View {
@@ -1343,7 +1345,7 @@ extension ContentView {
                     cardGrid(threads)
                     if threads.isEmpty { Text("No matching projects").font(.caption).foregroundStyle(.secondary) }
                 case .chats:
-                    let threads = model.sidebarChats.filter { !model.isPinnedThread($0) }.flatMap(cardFamily)
+                    let threads = model.sidebarChats.filter { !model.isPinnedThread($0) }.filter(chatActivity.includes).flatMap(cardFamily)
                     if showsTagPills, !model.allTags.isEmpty { tagPills }
                     cardGrid(threads)
                     if threads.isEmpty { Text("No matching chats").font(.caption).foregroundStyle(.secondary) }
@@ -1392,11 +1394,11 @@ extension ContentView {
                     if chats.isEmpty { Text("No matching sessions").font(.caption).foregroundStyle(.secondary) }
                 }
             case .chats:
-                let chats = model.sidebarChats.filter { !model.isPinnedThread($0) }.filter(isShown)
+                let chats = model.sidebarChats.filter { !model.isPinnedThread($0) }.filter(isShown).filter(chatActivity.includes)
                 if showsTagPills, !model.allTags.isEmpty { tagPills.listRowSeparator(.hidden) }
                 ForEach(chats) { session in rowWithSidechats(session, numbers: numbers) }
                 if chats.isEmpty {
-                    Text(isFiltering ? "No matching chats" : "Chats that aren't in a project or a Studio.")
+                    Text(isFiltering || chatActivity != .all ? "No matching chats" : "Chats that aren't in a project or a Studio.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }

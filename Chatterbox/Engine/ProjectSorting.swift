@@ -5,7 +5,10 @@ enum ProjectSort: String, CaseIterable {
     case recent, active, stalest, name
 
     static let key = "sidebarProjectSort"
+    /// The Chats section's own choice, from the same options.
+    static let chatsKey = "sidebarChatSort"
     static var current: ProjectSort { AppPreferences.defaults.string(forKey: key).flatMap(Self.init) ?? .recent }
+    static var currentForChats: ProjectSort { AppPreferences.defaults.string(forKey: chatsKey).flatMap(Self.init) ?? .recent }
 
     var label: String {
         switch self {
@@ -23,7 +26,7 @@ enum ProjectActivity: String, CaseIterable {
 
     var label: String {
         switch self {
-        case .all: "All Projects"
+        case .all: "All"
         case .active: "Active This Week"
         case .stale: "Stale (2+ Weeks)"
         }

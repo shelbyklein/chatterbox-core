@@ -114,12 +114,16 @@ final class AppModel {
     /// sidebar's order, which Next and Previous Chat follow.
     var sidebarProjects: [ChatSession] {
         let projects = activeSessions.filter { $0.record.projectFolder != nil && $0.record.worktreeOf == nil && !$0.isDot }
-        let byName: (ChatSession, ChatSession) -> Bool = { $0.projectName.localizedStandardCompare($1.projectName) == .orderedAscending }
-        switch ProjectSort.current {
-        case .name: return projects.sorted(by: byName)
-        case .recent: return projects.sorted { $0.lastActivity != $1.lastActivity ? $0.lastActivity > $1.lastActivity : byName($0, $1) }
-        case .stalest: return projects.sorted { $0.lastActivity != $1.lastActivity ? $0.lastActivity < $1.lastActivity : byName($0, $1) }
-        case .active: return mostActive(projects)
+        return ordered(projects, by: ProjectSort.current, name: \.projectName)
+    }
+    /// Threads in a sort's order; ties go by name.
+    private func ordered(_ threads: [ChatSession], by sort: ProjectSort, name: @escaping (ChatSession) -> String) -> [ChatSession] {
+        let byName: (ChatSession, ChatSession) -> Bool = { name($0).localizedStandardCompare(name($1)) == .orderedAscending }
+        switch sort {
+        case .name: return threads.sorted(by: byName)
+        case .recent: return threads.sorted { $0.lastActivity != $1.lastActivity ? $0.lastActivity > $1.lastActivity : byName($0, $1) }
+        case .stalest: return threads.sorted { $0.lastActivity != $1.lastActivity ? $0.lastActivity < $1.lastActivity : byName($0, $1) }
+        case .active: return mostActive(threads)
         }
     }
     /// Projects by how busy they are, counting their worktrees' and Sidechats' turns.
@@ -145,9 +149,10 @@ final class AppModel {
     /// Chats in neither a project nor a Studio. A chat whose Studio is gone shows here too.
     var sidebarChats: [ChatSession] {
         let studioIDs = Set(activeStudios.map(\.id))
-        return activeSessions.filter { session in
+        let chats = activeSessions.filter { session in
             session.record.projectFolder == nil && !session.isDot && !hasVisibleSidechatParent(session) && !(session.record.studioID.map(studioIDs.contains) ?? false)
         }
+        return ordered(chats, by: ProjectSort.currentForChats, name: \.title)
     }
     var sidebarOrder: [ChatSession] {
         var ordered: [ChatSession] = []
