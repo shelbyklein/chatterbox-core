@@ -80,6 +80,9 @@ struct ChatHomeView: View {
     @AppStorage("macStudioSelection") private var savedSelection = "pinned"
     /// Each Studio's inspected session, as "studio=session" pairs.
     @AppStorage("macStudioInspected") private var savedInspected = ""
+    /// A Studio as its session list and inspector, or as cards across the page.
+    @AppStorage("macStudioLayout") private var layout = "list"
+    @AppStorage("macStudioCardColumns") private var cardColumns = 4.0
 
     /// A Studio that no longer exists falls back to Pinned.
     private var selection: StudioSelection {
@@ -101,7 +104,15 @@ struct ChatHomeView: View {
                 header.padding(.horizontal, 28).padding(.top, 24).padding(.bottom, 16)
                 Divider()
                 if let studio = selectedStudio {
-                    StudioInspector(studio: studio, sessions: sessions(in: studio), inspected: inspectedBinding(studio), menu: menu)
+                    if layout == "cards" {
+                        StudioCards(sessions: sessions(in: studio), columns: Int(cardColumns), menu: menu) { session in
+                            // Click a card to see it in the inspector; double-click opens its chat.
+                            setInspected(session.id, in: studio.id)
+                            withAnimation(.smooth(duration: 0.2)) { layout = "list" }
+                        }
+                    } else {
+                        StudioInspector(studio: studio, sessions: sessions(in: studio), inspected: inspectedBinding(studio), menu: menu)
+                    }
                 } else {
                     PinnedSheet(groups: pinnedGroups, filtering: isFiltering, menu: menu) { session in
                         guard let id = session.record.studioID else { return }
@@ -137,8 +148,8 @@ struct ChatHomeView: View {
                 }
             }
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: 16) { searchField; filterPicker.frame(width: 300) }
-                VStack(alignment: .leading, spacing: 10) { searchField; filterPicker }
+                HStack(spacing: 16) { searchField; filterPicker.frame(width: 300); layoutControls }
+                VStack(alignment: .leading, spacing: 10) { searchField; HStack(spacing: 16) { filterPicker; layoutControls } }
             }
         }
     }
@@ -149,6 +160,30 @@ struct ChatHomeView: View {
             TextField(selectedStudio.map { "Search \($0.name)" } ?? "Search pinned sessions", text: $search).textFieldStyle(.plain)
         }.padding(9).background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 8))
     }
+    /// List or Cards for a Studio; with Cards, how many to a row (6 small to 2 large).
+    @ViewBuilder private var layoutControls: some View {
+        if selectedStudio != nil {
+            HStack(spacing: 10) {
+                if layout == "cards" {
+                    Image(systemName: "square.grid.3x3").font(.caption).foregroundStyle(.secondary)
+                    // Left is more, smaller cards; right is fewer, larger ones.
+                    Slider(value: Binding(get: { 8 - cardColumns }, set: { cardColumns = (8 - $0).rounded() }), in: 2...6, step: 1)
+                        .frame(width: 120)
+                        .help("\(Int(cardColumns)) cards to a row")
+                        .accessibilityLabel("Card size")
+                        .accessibilityValue("\(Int(cardColumns)) to a row")
+                    Image(systemName: "square.grid.2x2").font(.callout).foregroundStyle(.secondary)
+                }
+                Picker("Layout", selection: $layout) {
+                    Image(systemName: "list.bullet.rectangle").tag("list").accessibilityLabel("List")
+                    Image(systemName: "square.grid.2x2").tag("cards").accessibilityLabel("Cards")
+                }
+                .pickerStyle(.segmented).labelsHidden().fixedSize()
+                .help(layout == "cards" ? "Show the session list and inspector" : "Show the sessions as cards")
+            }
+        }
+    }
+
     private var filterPicker: some View {
         Picker("Threads", selection: $filter) {
             ForEach(HomeThreadFilter.allCases) { Text($0.rawValue).tag($0) }
@@ -359,6 +394,34 @@ private struct StudioPreviewCard: View {
         #if DEBUG
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { MacHomeDebug.cards[session.id] = $0 }
         #endif
+    }
+}
+
+/// A Studio's sessions as cards across the page, `columns` to a row (2 to 6).
+private struct StudioCards: View {
+    @Environment(AppModel.self) private var model
+    let sessions: [ChatSession]
+    let columns: Int
+    let menu: (ChatSession) -> AnyView
+    let inspect: (ChatSession) -> Void
+
+    var body: some View {
+        ScrollView {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 18, alignment: .top), count: max(2, min(6, columns))),
+                      alignment: .leading, spacing: 22) {
+                ForEach(sessions) { session in
+                    StudioPreviewCard(session: session, inspect: { inspect(session) }, open: { model.selectedID = session.id })
+                        .contextMenu { menu(session) }
+                }
+            }
+            .padding(28)
+            .animation(.smooth(duration: 0.2), value: columns)
+        }
+        .overlay {
+            if sessions.isEmpty {
+                ContentUnavailableView("No sessions to show", systemImage: "paintpalette", description: Text("Try another search or choose All."))
+            }
+        }
     }
 }
 
