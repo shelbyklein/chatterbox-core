@@ -36,6 +36,8 @@ struct ChatListView: View {
     @State private var savedPDFs = false
     @State private var appearance = false
     @State private var notificationSettings = false
+    @State private var showingActivity = false
+    @State private var activityPick: UUID?
     @State private var selection: UUID?
     /// The chat that's open, kept if it drops out of the list (archived on the Mac).
     @State private var opened: Companion.ChatSummary?
@@ -71,7 +73,6 @@ struct ChatListView: View {
                         ToolbarItem(placement: .topBarTrailing) {
                             Menu {
                                 connectionItems
-                                Button { notificationSettings = true } label: { Label("Notifications", systemImage: "bell") }
                                 Picker("Sort", selection: $sortName) {
                                     ForEach(Sort.allCases.filter { $0 != .tag }) { Text($0.title).tag($0.rawValue) }
                                 }
@@ -83,9 +84,6 @@ struct ChatListView: View {
                         }
                     } else {
                     ToolbarItem(placement: .topBarTrailing) { connectionMenu }
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button { notificationSettings = true } label: { Image(systemName: "bell") }.accessibilityLabel("Notifications")
-                    }
                     ToolbarItem(placement: .topBarTrailing) {
                         Menu {
                             Picker("Sort", selection: Binding(get: { sort }, set: { new in withAnimation(.easeOut(duration: 0.2)) { sortName = new.rawValue } })) {
@@ -108,6 +106,10 @@ struct ChatListView: View {
         }
         .navigationSplitViewStyle(.balanced)
         .onChange(of: compactColumn, initial: true) { _, column in onShowingChat(sizeClass != .regular && column == .detail) }
+        .sheet(isPresented: $showingActivity, onDismiss: {
+            // Opening a chat while the sheet is still closing is dropped; wait until it's gone.
+            if let id = activityPick { activityPick = nil; MobilePushNotifications.shared.pendingChat = id }
+        }) { MobileActivityView { activityPick = $0 }.environment(store) }
         .sheet(isPresented: $notificationSettings) {
             NavigationStack {
                 MobileNotificationSettings().environment(store)
@@ -486,6 +488,8 @@ struct ChatListView: View {
                 ForEach(connection.hosts, id: \.self) { Text($0) }
             }
         }
+        Button { showingActivity = true } label: { Label("Activity", systemImage: "clock") }
+        Button { notificationSettings = true } label: { Label("Notifications", systemImage: "bell") }
         Button { appearance = true } label: { Label("Appearance", systemImage: "paintbrush") }
         Button { savedPDFs = true } label: { Label("Saved PDFs", systemImage: "doc.richtext") }
         Button("Unpair This \(UIDevice.current.model)", role: .destructive) { store.forget() }
