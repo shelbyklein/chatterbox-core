@@ -205,9 +205,11 @@ private struct StudioColumn: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("STUDIOS").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                         .padding(.horizontal, 10).padding(.bottom, 6)
-                    entry(.pinned, title: "Pinned", count: model.pinnedThreads.filter { $0.record.studioID != nil }.count, icon: "pin")
+                    let pinned = model.pinnedThreads.filter { $0.record.studioID != nil }
+                    entry(.pinned, title: "Pinned", count: pinned.count, attention: pinned.filter(Attention.shared.needsAttention).count, icon: "pin")
                     ForEach(model.activeStudios) { studio in
-                        entry(.studio(studio.id), title: studio.name, count: model.chats(in: studio).count, icon: "paintpalette")
+                        entry(.studio(studio.id), title: studio.name, count: model.chats(in: studio).count,
+                              attention: attention(in: studio), icon: "paintpalette")
                     }
                     Button { newStudio() } label: {
                         Label("New Studio", systemImage: "plus").font(.callout).foregroundStyle(.secondary)
@@ -230,13 +232,26 @@ private struct StudioColumn: View {
         #endif
     }
 
-    private func entry(_ value: StudioSelection, title: String, count: Int, icon: String) -> some View {
+    /// The Studio's sessions (Sidechats and sidequests too) the toolbar's Studios badge counts.
+    private func attention(in studio: Studio) -> Int {
+        model.activeSessions.filter { $0.record.studioID == studio.id && !$0.isDot && Attention.shared.needsAttention($0) }.count
+    }
+
+    private func entry(_ value: StudioSelection, title: String, count: Int, attention: Int, icon: String) -> some View {
         let selected = selection == value
         return Button { withAnimation(.smooth(duration: 0.2)) { select(value) } } label: {
             HStack(spacing: 8) {
                 Image(systemName: selected && value == .pinned ? "pin.fill" : icon).frame(width: 18).foregroundStyle(.secondary)
                 Text(title).lineLimit(1)
                 Spacer(minLength: 4)
+                // As on the toolbar's Studios button: which Studio has something for you.
+                if attention > 0 {
+                    Text("\(attention)").font(.caption2.weight(.bold).monospacedDigit())
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 6).padding(.vertical, 1)
+                        .background(Capsule().fill(Color.orange))
+                        .help("\(attention) session\(attention == 1 ? "" : "s") waiting on you or with a new reply")
+                }
                 Text("\(count)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             }
             .padding(.horizontal, 10).padding(.vertical, 7)

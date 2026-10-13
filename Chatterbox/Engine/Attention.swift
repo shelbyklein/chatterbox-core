@@ -99,11 +99,16 @@ final class Attention: NSObject, UNUserNotificationCenterDelegate {
         var chats = 0
     }
 
+    /// Waiting on you, or a reply you haven't seen: what the toolbar's view badges count.
+    func needsAttention(_ session: ChatSession) -> Bool {
+        !pendingItems(session).isEmpty || (unread.contains(session.id) && !session.isRunning)
+    }
+
     /// A session counts once even if it has both an unread reply and a pending question.
     func viewCounts(in model: AppModel) -> ViewCounts {
         var counts = ViewCounts()
         for session in model.sessions where !session.isDot && session.record.archivedAt == nil {
-            guard !pendingItems(session).isEmpty || (unread.contains(session.id) && !session.isRunning) else { continue }
+            guard needsAttention(session) else { continue }
             if session.record.studioID != nil { counts.studios += 1 }
             else if session.record.projectFolder != nil { counts.projects += 1 }
             else { counts.chats += 1 }
