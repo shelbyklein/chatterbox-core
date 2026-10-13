@@ -1,4 +1,5 @@
 import AppKit
+import QuickLookThumbnailing
 import SwiftUI
 
 /// Every image a session rendered or shared, newest first, in a grid: the Studio inspector's
@@ -93,5 +94,124 @@ struct SessionImageGrid: View {
             Button("Copy Image") { ImageClipboard.copy(image.url) }
         }
         .accessibilityLabel("Image \(image.url.lastPathComponent)")
+    }
+}
+
+/// Every file a session made or shared that isn't an image (PDFs, InDesign, Word, HTML…),
+/// newest first, with Finder's preview. Click to open (PDFs and text in the viewer, the rest
+/// in their app); right-click to show it in Finder or copy its path.
+struct SessionFileGrid: View {
+    let session: ChatSession
+    @State private var files: [SessionFile] = []
+    @State private var loaded = false
+    @State private var viewing: LocalDocument?
+
+    struct SessionFile: Identifiable, Hashable {
+        var id: String { url.path }
+        var url: URL
+        var date: Date
+    }
+
+    /// Files attached in the chat, and files its replies point to, that still exist.
+    static func collect(_ session: ChatSession) -> [SessionFile] {
+        let fm = FileManager.default
+        var seen = Set<String>()
+        var found: [SessionFile] = []
+        func add(_ url: URL) {
+            var isDirectory: ObjCBool = false
+            guard fm.fileExists(atPath: url.path, isDirectory: &isDirectory), !isDirectory.boolValue,
+                  !MediaKind.isStillImage(url.path), url.pathExtension.lowercased() != "gif",
+                  seen.insert(url.path).inserted else { return }
+            let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            found.append(SessionFile(url: url, date: date))
+        }
+        for item in session.items {
+            item.attachments?.forEach { add($0.url) }
+            if item.kind == .assistant, item.phase == .final {
+                PathLinks.referencedFiles(in: item.text, folder: session.workingFolder).forEach { add(URL(fileURLWithPath: $0)) }
+            }
+        }
+        return found.sorted { $0.date > $1.date }
+    }
+
+    var body: some View {
+        Group {
+            if !loaded {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if files.isEmpty {
+                ContentUnavailableView("No files yet", systemImage: "doc.on.doc",
+                                       description: Text("PDFs, documents and other files this session makes, or points you to, collect here."))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 170, maximum: 260), spacing: 16)], spacing: 16) {
+                        ForEach(files) { tile($0) }
+                    }
+                    .padding(16)
+                }
+            }
+        }
+        .task(id: "\(session.id)|\(session.items.count)") {
+            let session = session
+            files = Self.collect(session)
+            loaded = true
+        }
+        .sheet(item: $viewing) { document in
+            DocumentViewer(document: document).frame(minWidth: 720, minHeight: 640)
+        }
+        .accessibilityLabel("Files in \(session.title), \(files.count)")
+    }
+
+    private func open(_ file: SessionFile) {
+        if LocalDocument.supports(file.url) { viewing = LocalDocument(url: file.url) } else { NSWorkspace.shared.open(file.url) }
+    }
+
+    private func tile(_ file: SessionFile) -> some View {
+        Button { open(file) } label: {
+            VStack(alignment: .leading, spacing: 10) {
+                FileThumbnail(url: file.url)
+                    .frame(height: 140).frame(maxWidth: .infinity)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(file.url.lastPathComponent).font(.callout.weight(.medium)).lineLimit(1).truncationMode(.middle)
+                    let age = ShortAge.string(since: file.date)
+                    Text((age == "now" ? "Just now" : age + " ago") + " \u{00B7} " + file.url.pathExtension.uppercased())
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 2)
+            }
+            .padding(12)
+            .background(RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(0.055)))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.primary.opacity(0.1)))
+            .contentShape(RoundedRectangle(cornerRadius: 12))
+        }
+        .buttonStyle(.plain)
+        .help(file.url.path)
+        .contextMenu {
+            Button("Open") { open(file) }
+            Button("Open in App") { NSWorkspace.shared.open(file.url) }
+            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([file.url]) }
+            Button("Copy Path") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(file.url.path, forType: .string) }
+        }
+        .accessibilityLabel("File \(file.url.lastPathComponent)")
+    }
+}
+
+/// Finder's preview of a file (a PDF's first page, a document's icon), made off the main thread.
+struct FileThumbnail: View {
+    let url: URL
+    @State private var image: NSImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image).resizable().interpolation(.high).aspectRatio(contentMode: .fit)
+            } else {
+                Image(nsImage: NSWorkspace.shared.icon(forFile: url.path)).resizable().aspectRatio(contentMode: .fit).padding(24)
+            }
+        }
+        .task(id: url) {
+            let request = QLThumbnailGenerator.Request(fileAt: url, size: CGSize(width: 400, height: 300), scale: 2, representationTypes: .thumbnail)
+            image = try? await QLThumbnailGenerator.shared.generateBestRepresentation(for: request).nsImage
+        }
     }
 }

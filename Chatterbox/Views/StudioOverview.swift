@@ -529,7 +529,8 @@ private struct InspectorDetail: View {
     let session: ChatSession
     private let appearance = ReaderStyleSettings()
     /// The session's newest image, or a grid of all of them.
-    @AppStorage("macStudioInspectorImages") private var showsAll = false
+    /// "latest", "images" or "files".
+    @AppStorage("macStudioInspectorShows") private var shows = "latest"
 
     var body: some View {
         let summary = StudioSessionSummary(session)
@@ -545,14 +546,18 @@ private struct InspectorDetail: View {
             // Without an image, a short placeholder rather than an empty stage.
             let hasImage = ThreadThumbnails.shared.images[session.id] != nil || ThreadThumbnails.shared.largeImages[session.id] != nil
             if hasImage {
-                Picker("Images", selection: $showsAll) {
-                    Text("Latest").tag(false)
-                    Text("All Images").tag(true)
-                }
-                .pickerStyle(.segmented).labelsHidden().fixedSize()
-                .help(showsAll ? "Show only the newest image" : "Show every image this session made or shared")
             }
-            if hasImage && showsAll {
+            Picker("Show", selection: $shows) {
+                if hasImage { Text("Latest").tag("latest"); Text("All Images").tag("images") } else { Text("Preview").tag("latest") }
+                Text("Files").tag("files")
+            }
+            .pickerStyle(.segmented).labelsHidden().fixedSize()
+            .help("The newest image, or every image or file this session made or shared")
+            if shows == "files" {
+                SessionFileGrid(session: session)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
+            } else if hasImage && shows == "images" {
                 SessionImageGrid(session: session)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))

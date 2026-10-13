@@ -110,7 +110,14 @@ extension ChatSession {
 
     /// Starts this chat's Claude Code process if it isn't running, resuming its session.
     private func claudeEnsureProcess(earlierItems: Int) throws -> ClaudeCodeProcess {
-        if let process = claudeProcess, process.isRunning { return process }
+        if let process = claudeProcess, process.isRunning {
+            // The Tools settings changed since it started: start a fresh one with them, resuming
+            // the conversation. Checked here, as a message is sent, so changing a setting
+            // doesn't have to reach every chat at once.
+            guard !isRunning, ToolScopes.fingerprint(for: self) != claudeToolsFingerprint else { return process }
+            process.terminate()
+            claudeProcess = nil
+        }
 
         let resuming = record.claudeSessionID != nil
         // A new session knows nothing of this chat yet (older chats, or a changed folder).

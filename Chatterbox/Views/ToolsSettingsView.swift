@@ -298,11 +298,8 @@ struct ToolsPanel: View {
         do {
             try ToolScopes.save(sets)
             problem = nil
-            // Claude Code reads its tools at launch: idle chats at this level restart into them
-            // (Codex threads reload on their own, from the configuration key).
-            for session in model.sessions where session.record.backend == .claude && ToolScopes.scopes(for: session).contains(scope) {
-                session.restartClaudeForNewTools()
-            }
+            // Nothing to send: each chat picks the change up with its next message (Claude
+            // restarts its process then; Codex reloads its thread from the configuration key).
         } catch {
             problem = "Couldn't save: \(error.localizedDescription)"
         }
