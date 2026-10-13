@@ -29,10 +29,10 @@ struct StudioImageGrid: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 200, maximum: 300), spacing: 14)], spacing: 16) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 220, maximum: 320), spacing: 20)], spacing: 20) {
                         ForEach(images) { tile($0) }
                     }
-                    .padding(20)
+                    .padding(24)
                 }
             }
         }
@@ -67,18 +67,23 @@ struct StudioImageGrid: View {
 
     private func tile(_ image: StudioImage) -> some View {
         Button { reviewing = image } label: {
-            VStack(alignment: .leading, spacing: 5) {
+            // A card: the image with room around it, and its session and age inside.
+            VStack(alignment: .leading, spacing: 10) {
                 GalleryThumbnail(url: image.url)
-                    .frame(height: 180)
+                    .frame(height: 170)
                     .frame(maxWidth: .infinity)
-                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.05)))
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.1)))
-                Text(image.title).font(.callout.weight(.medium)).lineLimit(1)
-                let age = ShortAge.string(since: image.date)
-                Text(age == "now" ? "Just now" : age + " ago").font(.caption).foregroundStyle(.secondary)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(image.title).font(.callout.weight(.medium)).lineLimit(1)
+                    let age = ShortAge.string(since: image.date)
+                    Text(age == "now" ? "Just now" : age + " ago").font(.caption).foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 2)
             }
-            .contentShape(Rectangle())
+            .padding(12)
+            .background(RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(0.055)))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.primary.opacity(0.1)))
+            .contentShape(RoundedRectangle(cornerRadius: 12))
         }
         .buttonStyle(.plain)
         .help(image.url.lastPathComponent)
