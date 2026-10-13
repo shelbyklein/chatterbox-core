@@ -195,9 +195,9 @@ struct ChatHomeView: View {
         #endif
     }
 
-    /// A Studio's chats with their Sidechats, newest first, through the search and filter.
+    /// A Studio's chats with their Sidechats, in the sidebar's order, through the search and filter.
     private func sessions(in studio: Studio) -> [ChatSession] {
-        model.chats(in: studio).sorted { $0.lastActivity > $1.lastActivity }
+        model.sortedChats(in: studio)
             .flatMap { [$0] + model.sidechats(of: $0) }
             .filter { HomeThreads.matches($0, model, search: search, filter: filter) }
     }

@@ -204,6 +204,10 @@ final class AppModel {
         }
         return ordered(chats, by: ProjectSort.currentForChats, name: \.title)
     }
+    /// A Studio's chats in the order its sessions list shows them.
+    func sortedChats(in studio: Studio) -> [ChatSession] {
+        ordered(chats(in: studio), by: ProjectSort.currentForStudios, name: \.title)
+    }
     var sidebarOrder: [ChatSession] {
         var ordered: [ChatSession] = []
         // Pinned threads lead, as they do in the sidebar.
@@ -217,7 +221,7 @@ final class AppModel {
             for worktree in worktrees(of: project) { ordered += [worktree] + sidechats(of: worktree) }
         }
         for studio in activeStudios where studio.collapsed != true {
-            for chat in chats(in: studio) where !pinned.contains(where: { $0 === chat }) { ordered += studioFamily(of: chat) }
+            for chat in sortedChats(in: studio) where !pinned.contains(where: { $0 === chat }) { ordered += studioFamily(of: chat) }
         }
         for chat in sidebarChats where !pinned.contains(where: { $0 === chat }) { ordered += [chat] + sidechats(of: chat) }
         return ordered

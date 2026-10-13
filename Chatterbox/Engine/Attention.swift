@@ -48,6 +48,7 @@ final class Attention: NSObject, UNUserNotificationCenterDelegate {
         for session in model.sessions { wasRunning[session.id] = session.isRunning; notified.formUnion(pendingItems(session).map(\.id)) }
         // The first time, everything so far counts as read.
         if dotSeenItem == nil, let dot = model.dot { markDotSeen(dot) }
+        refreshBadge()
     }
 
     /// The buttons notifications offer: Allow and Deny on approvals, and the email watch's
@@ -184,10 +185,10 @@ final class Attention: NSObject, UNUserNotificationCenterDelegate {
     /// The newest unread reply's text, for the sidebar.
     func dotLatestUnread(_ dot: ChatSession) -> String? { unreadDotReplies(dot).last?.text }
 
-    /// Chats waiting on you or with news, for the Dock badge.
+    /// Chats waiting on you or with news, for the Dock badge. Archived chats don't count:
+    /// sidequests archive themselves once they've reported back.
     var attentionCount: Int {
-        let waiting = (model?.sessions ?? []).filter { !pendingItems($0).isEmpty }.map(\.id)
-        return Set(waiting).union(unread).count
+        (model?.sessions ?? []).filter { $0.record.archivedAt == nil && needsAttention($0) }.count
     }
 
     private func pendingItems(_ session: ChatSession) -> [DisplayItem] {
@@ -234,6 +235,9 @@ final class Attention: NSObject, UNUserNotificationCenterDelegate {
     }
 
     private func refreshBadge() {
+        // An archived chat's unread mark would never clear, so drop it.
+        let archived = Set((model?.sessions ?? []).filter { $0.record.archivedAt != nil }.map(\.id))
+        if !unread.isDisjoint(with: archived) { unread.subtract(archived) }
         let count = attentionCount
         NSApp.dockTile.badgeLabel = showBadge && count > 0 ? "\(count)" : nil
     }

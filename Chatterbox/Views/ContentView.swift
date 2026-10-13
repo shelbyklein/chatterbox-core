@@ -61,6 +61,8 @@ struct ContentView: View {
     @AppStorage("sidebarProjectActivity") private var projectActivity = ProjectActivity.all
     @AppStorage(ProjectSort.chatsKey) private var chatSort = ProjectSort.recent
     @AppStorage("sidebarChatActivity") private var chatActivity = ProjectActivity.all
+    @AppStorage(ProjectSort.studiosKey) private var studioSort = ProjectSort.recent
+    @AppStorage("sidebarStudioActivity") private var studioActivity = ProjectActivity.all
 
     @MainActor init(chatSwitch: ChatSwitchTransition? = nil, commandCenter: CommandCenterLayout? = nil) {
         _chatSwitch = State(initialValue: chatSwitch ?? ChatSwitchTransition())
@@ -531,34 +533,40 @@ extension ContentView {
         return !moved.isEmpty
     }
 
-    private var tagFilterMenu: some View {
-        Menu {
-            // Projects and Chats each keep their own sort and activity filter.
-            let chats = model.showingChatsSidebar
-            Picker("Sort By", selection: chats ? $chatSort : $projectSort) {
+    /// Projects, Chats and Studio sessions each keep their own sort and activity filter.
+    /// Studio sessions have no tag filter: the tags are the Projects and Chats one.
+    private func tagFilterMenu(_ section: SidebarSection) -> some View {
+        let sort = section == .studios ? $studioSort : section == .chats ? $chatSort : $projectSort
+        let activity = section == .studios ? $studioActivity : section == .chats ? $chatActivity : $projectActivity
+        let all = section == .studios ? "All Sessions" : section == .chats ? "All Chats" : "All Projects"
+        return Menu {
+            Picker("Sort By", selection: sort) {
                 ForEach(ProjectSort.allCases, id: \.self) { Text($0.label).tag($0) }
             }
             .pickerStyle(.inline)
-            Picker("Activity", selection: chats ? $chatActivity : $projectActivity) {
-                ForEach(ProjectActivity.allCases, id: \.self) { Text($0 == .all ? (chats ? "All Chats" : "All Projects") : $0.label).tag($0) }
+            Picker("Activity", selection: activity) {
+                ForEach(ProjectActivity.allCases, id: \.self) { Text($0 == .all ? all : $0.label).tag($0) }
             }
             .pickerStyle(.inline)
-            Section("Tags") {
-                Button("All Tags") { setSidebarTagFilter("") }
-                ForEach(model.allTags, id: \.self) { tag in
-                    Toggle(tag, isOn: Binding(get: { isActive(tag) }, set: { _ in toggleTag(tag) }))
+            if section != .studios {
+                Section("Tags") {
+                    Button("All Tags") { setSidebarTagFilter("") }
+                    ForEach(model.allTags, id: \.self) { tag in
+                        Toggle(tag, isOn: Binding(get: { isActive(tag) }, set: { _ in toggleTag(tag) }))
+                    }
+                    Divider()
+                    Toggle("Show Tag Pills", isOn: $showsTagPills)
                 }
-                Divider()
-                Toggle("Show Tag Pills", isOn: $showsTagPills)
             }
         } label: {
-            Image(systemName: activeTag == nil && (model.showingChatsSidebar ? chatActivity : projectActivity) == .all
+            Image(systemName: (section == .studios || activeTag == nil) && activity.wrappedValue == .all
                   ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help(model.showingChatsSidebar ? "Sort and filter chats" : "Sort and filter projects")
+        .help(section == .studios ? "Sort and filter sessions" : section == .chats ? "Sort and filter chats" : "Sort and filter projects")
+        .accessibilityLabel(section == .studios ? "Sort and Filter Sessions" : "Sort and Filter")
     }
 
     private func rowWithSidechats(_ session: ChatSession, numbers: [UUID: Int]) -> some View {
@@ -1263,7 +1271,7 @@ extension ContentView {
             Spacer()
             switch section {
             case .projects:
-                tagFilterMenu
+                tagFilterMenu(.projects)
                 Menu {
                     Button("New Project\u{2026}") { model.showingNewProject = true }
                     Button("Open Project\u{2026}") { model.chooseAndOpenProject() }
@@ -1277,12 +1285,13 @@ extension ContentView {
                 .help("New project (hold for Open Project or GitHub)")
                 .accessibilityLabel("New Project")
             case .studios:
+                tagFilterMenu(.studios)
                 if let studio = model.sidebarStudio {
                     Button { model.newChat(in: studio) } label: { Image(systemName: "plus") }
                         .buttonStyle(.borderless).help("New chat in \(studio.name)").accessibilityLabel("New Studio Chat")
                 }
             case .chats:
-                tagFilterMenu
+                tagFilterMenu(.chats)
                 Button { model.newChat() } label: { Image(systemName: "square.and.pencil") }
                     .buttonStyle(.borderless).help("New Chat").accessibilityLabel("New Chat")
             }
@@ -1354,7 +1363,11 @@ extension ContentView {
                     cardGrid(threads)
                     if threads.isEmpty { Text("No matching chats").font(.caption).foregroundStyle(.secondary) }
                 case .studios:
-                    if let studio = model.sidebarStudio { cardGrid(model.chats(in: studio).filter { !model.isPinnedThread($0) }.flatMap(cardFamily)) }
+                    if let studio = model.sidebarStudio {
+                        let threads = model.sortedChats(in: studio).filter { !model.isPinnedThread($0) }.filter(isShown).filter(studioActivity.includes).flatMap(cardFamily)
+                        cardGrid(threads)
+                        if threads.isEmpty { Text("No matching sessions").font(.caption).foregroundStyle(.secondary) }
+                    }
                 }
             }.padding(.horizontal, 10).padding(.vertical, 6)
         }.accessibilityLabel(section.title)
@@ -1393,7 +1406,7 @@ extension ContentView {
                 }
             case .studios:
                 if let studio = model.sidebarStudio {
-                    let chats = model.chats(in: studio).filter { !model.isPinnedThread($0) }.filter(isShown)
+                    let chats = model.sortedChats(in: studio).filter { !model.isPinnedThread($0) }.filter(isShown).filter(studioActivity.includes)
                     ForEach(chats) { session in rowWithSidechats(session, numbers: numbers) }
                     if chats.isEmpty { Text("No matching sessions").font(.caption).foregroundStyle(.secondary) }
                 }

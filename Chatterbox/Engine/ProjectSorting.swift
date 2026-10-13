@@ -7,8 +7,11 @@ enum ProjectSort: String, CaseIterable {
     static let key = "sidebarProjectSort"
     /// The Chats section's own choice, from the same options.
     static let chatsKey = "sidebarChatSort"
+    /// A Studio's sessions, the same in every Studio.
+    static let studiosKey = "sidebarStudioSort"
     static var current: ProjectSort { AppPreferences.defaults.string(forKey: key).flatMap(Self.init) ?? .recent }
     static var currentForChats: ProjectSort { AppPreferences.defaults.string(forKey: chatsKey).flatMap(Self.init) ?? .recent }
+    static var currentForStudios: ProjectSort { AppPreferences.defaults.string(forKey: studiosKey).flatMap(Self.init) ?? .recent }
 
     var label: String {
         switch self {
