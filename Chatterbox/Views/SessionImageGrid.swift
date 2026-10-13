@@ -1,12 +1,13 @@
 import AppKit
 import SwiftUI
 
-/// A Studio's Images view: everything its sessions rendered or shared, newest first, in one
-/// grid. Each tile names its session; click one to review it (Previous and Next step through
-/// the rest), and right-click to open its chat.
-struct StudioImageGrid: View {
+/// Every image a session rendered or shared, newest first, in a grid: the Studio inspector's
+/// alternative to its latest image. Click one to review it (Previous and Next step through
+/// the rest); right-click to show it in Finder or copy it.
+struct SessionImageGrid: View {
     @Environment(AppModel.self) private var model
-    let sessions: [ChatSession]
+    let session: ChatSession
+    private var sessions: [ChatSession] { [session] }
     @State private var images: [StudioImage] = []
     @State private var loaded = false
     @State private var reviewing: StudioImage?
@@ -25,14 +26,14 @@ struct StudioImageGrid: View {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if images.isEmpty {
                 ContentUnavailableView("No images yet", systemImage: "photo.on.rectangle",
-                                       description: Text("Images this Studio's sessions make, and screenshots or renders they show, collect here."))
+                                       description: Text("Images this session makes, and screenshots or renders it shows, collect here."))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 220, maximum: 320), spacing: 20)], spacing: 20) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 170, maximum: 260), spacing: 16)], spacing: 16) {
                         ForEach(images) { tile($0) }
                     }
-                    .padding(24)
+                    .padding(16)
                 }
             }
         }
@@ -46,7 +47,7 @@ struct StudioImageGrid: View {
                 model.sessions.first { $0.id == image.session }?.send(text, attachments: files)
             }
         }
-        .accessibilityLabel("Images, \(images.count)")
+        .accessibilityLabel("All images in \(session.title), \(images.count)")
     }
 
     /// Every session's images (ChatImageGallery's rules), newest first, each once.
@@ -70,11 +71,11 @@ struct StudioImageGrid: View {
             // A card: the image with room around it, and its session and age inside.
             VStack(alignment: .leading, spacing: 10) {
                 GalleryThumbnail(url: image.url)
-                    .frame(height: 170)
+                    .frame(height: 140)
                     .frame(maxWidth: .infinity)
                     .clipShape(RoundedRectangle(cornerRadius: 6))
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(image.title).font(.callout.weight(.medium)).lineLimit(1)
+                    Text(image.url.lastPathComponent).font(.callout.weight(.medium)).lineLimit(1).truncationMode(.middle)
                     let age = ShortAge.string(since: image.date)
                     Text(age == "now" ? "Just now" : age + " ago").font(.caption).foregroundStyle(.secondary)
                 }
@@ -88,10 +89,9 @@ struct StudioImageGrid: View {
         .buttonStyle(.plain)
         .help(image.url.lastPathComponent)
         .contextMenu {
-            Button("Open Chat") { model.selectedID = image.session; model.showingHome = false }
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([image.url]) }
             Button("Copy Image") { ImageClipboard.copy(image.url) }
         }
-        .accessibilityLabel("Image from \(image.title)")
+        .accessibilityLabel("Image \(image.url.lastPathComponent)")
     }
 }
