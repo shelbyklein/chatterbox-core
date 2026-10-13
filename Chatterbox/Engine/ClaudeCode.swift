@@ -64,6 +64,10 @@ final class ClaudeCodeProcess {
         var mcpConfig: String?
         /// Tools that run without asking.
         var allowedTools: [String] = []
+        /// The Tools settings: a file of servers to add, rules for what's off, plugin folders.
+        var toolsMCPConfig: String?
+        var disallowedTools: [String] = []
+        var pluginDirs: [String] = []
         /// Added to the environment (EasyCLIProxyAPI's address and key).
         var environment: [String: String] = [:]
         var fastMode = false
@@ -104,6 +108,10 @@ final class ClaudeCodeProcess {
         for dir in config.extraDirectories { args += ["--add-dir", dir] }
         if let mcp = config.mcpConfig { args += ["--mcp-config", mcp] }
         if !config.allowedTools.isEmpty { args += ["--allowedTools", config.allowedTools.joined(separator: ",")] }
+        // Joined with "=": these flags take several values, and a bare one swallows what follows.
+        if let file = config.toolsMCPConfig { args.append("--mcp-config=" + file) }
+        for rule in config.disallowedTools { args.append("--disallowedTools=" + rule) }
+        for dir in config.pluginDirs { args += ["--plugin-dir", dir] }
         return args
     }
 

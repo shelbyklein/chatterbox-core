@@ -121,6 +121,9 @@ extension ChatSession {
             }
         }
         let process = makeClaudeProcess()
+        // The Tools settings for this chat's levels (none: launches as before).
+        let tools = ToolScopes.effective(for: self)
+        claudeToolsFingerprint = ToolScopes.fingerprint(for: self)
         // A fresh id per process: a relaunch only ever reattaches to the one this chat recorded.
         try process.start(ClaudeCodeProcess.Config(
             cwd: claudeWorkingFolder,
@@ -134,6 +137,9 @@ extension ChatSession {
             forkSession: record.claudeForkPending == true,
             mcpConfig: claudeMCPConfig,
             allowedTools: claudeAllowedTools,
+            toolsMCPConfig: claudeToolsMCPConfigFile(tools),
+            disallowedTools: Self.claudeDisallowedTools(tools),
+            pluginDirs: claudeToolsPluginDir(tools).map { [$0] } ?? [],
             environment: claudeProxyEnvironment.merging(SecretVault.shared.environment(for: self)) { $1 }
                 .merging(["CHATTERBOX_CHAT_ID": id.uuidString]) { $1 },
             fastMode: record.claudeFastMode == true && supportsClaudeFastMode
@@ -239,7 +245,11 @@ extension ChatSession {
 
         switch message["type"]?.string {
         case "system":
-            if message["subtype"]?.string == "init" { preserveClaudeSessionOnResumeFailure = false }
+            if message["subtype"]?.string == "init" {
+                preserveClaudeSessionOnResumeFailure = false
+                // The claude.ai connectors it loaded, for the Tools settings' Connectors list.
+                ToolDiscovery.noteClaudeServers(message["mcp_servers"]?.array?.compactMap { $0["name"]?.string } ?? [])
+            }
             if message["subtype"]?.string == "init", let id = message["session_id"]?.string, id != record.claudeSessionID {
                 record.claudeSessionID = id
                 onChange?(self)

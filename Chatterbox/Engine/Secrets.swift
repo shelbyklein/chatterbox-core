@@ -71,6 +71,11 @@ final class SecretVault {
 
     func hasValue(_ entry: SecretEntry) -> Bool { !(values[entry.id] ?? "").isEmpty }
 
+    /// A secret's value by its variable, for an MCP server's key (see ToolScopes).
+    func value(forVariable variable: String) -> String? {
+        entries.first { $0.variable == variable }.flatMap { values[$0.id] }.flatMap { $0.isEmpty ? nil : $0 }
+    }
+
     /// Adds or updates an entry. A nil value keeps the one already stored.
     func save(_ entry: SecretEntry, value: String?) throws {
         if let value, !value.isEmpty {

@@ -109,6 +109,8 @@ final class ChatSession: Identifiable {
     @ObservationIgnored var skipFinishedAlert = false
     /// Restart Claude Code once this reply ends, so the next message gets new tools.
     @ObservationIgnored var restartForToolsAfterTurn = false
+    /// The Tools settings the running Claude process started with (see ChatSession+Tools).
+    @ObservationIgnored var claudeToolsFingerprint = ""
 
     /// Claude Code's commands and skills (including the project's), or Codex's skills.
     var availableSlashCommands: [SlashCommand] {

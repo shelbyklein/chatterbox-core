@@ -287,6 +287,13 @@ extension ChatSession {
             for (key, value) in computer { config[key] = value }
             params["config"] = .object(config)
         }
+        // The Tools settings for this chat's levels: servers to add, what to turn off.
+        let tools = codexToolsConfig(ToolScopes.effective(for: self), codexServers: ToolDiscovery.codexServerNames())
+        if !tools.isEmpty {
+            var config = params["config"]?.object ?? [:]
+            for (key, value) in tools { config[key] = value }
+            params["config"] = .object(config)
+        }
         // Saved secrets in scope, as variables for the commands this thread runs.
         let secrets = SecretVault.shared.environment(for: self)
         if !secrets.isEmpty {
@@ -299,7 +306,8 @@ extension ChatSession {
 
     /// What the thread was loaded with; a change (the proxy switched on or off) reloads it.
     var codexConfigurationKey: String {
-        let secrets = "|secrets:" + SecretVault.shared.fingerprint(for: self)
+        let tools = ToolScopes.fingerprint(for: self)
+        let secrets = "|secrets:" + SecretVault.shared.fingerprint(for: self) + (tools.isEmpty ? "" : "|tools:" + tools)
         if isDot { return dotCodexConfigurationKey + secrets }
         let computer = computerConfigurationKey.isEmpty ? "" : "|" + computerConfigurationKey
         return codexConnection.key + secrets + computer
