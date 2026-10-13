@@ -1,0 +1,415 @@
+import AppKit
+import SwiftUI
+
+/// Settings → Tools: what agents can use at a level (ToolScopes). Chatterbox-wide and Studios
+/// here; a project's own from its right-click menu (Tools…). Each level lists what it adds,
+/// what it inherits, and what the agents load on their own, each with a switch.
+struct ToolsSettingsView: View {
+    @AppStorage("toolsSettingsScope") private var scopeName = "chatterbox"
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Picker("Level", selection: $scopeName) {
+                    Text("Chatterbox").tag("chatterbox")
+                    Text("Studios").tag("studios")
+                }
+                .pickerStyle(.segmented).labelsHidden().fixedSize()
+                Text("Projects: right-click a project \u{2192} Tools\u{2026}").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+            }
+            .padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 4)
+            ToolsPanel(scope: scopeName == "studios" ? .studios : .chatterbox)
+                .id(scopeName)
+        }
+    }
+}
+
+/// A project's Tools… sheet.
+struct ProjectToolsSheet: View {
+    let folder: String
+    let name: String
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Tools").font(.title2.weight(.semibold))
+                    Text(name).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
+            }
+            .padding(20)
+            Divider()
+            ToolsPanel(scope: .project(folder), projectFolder: folder)
+        }
+        .frame(width: 680, height: 680)
+    }
+}
+
+/// One level's tools, editable.
+struct ToolsPanel: View {
+    let scope: ToolScope
+    var projectFolder: String?
+    @Environment(AppModel.self) private var model
+    @State private var sets: [String: ToolSet] = [:]
+    @State private var outside: [DiscoveredTool] = []
+    @State private var editing: ToolServer?
+    @State private var problem: String?
+
+    private var set: ToolSet { sets[scope.key] ?? ToolSet() }
+    private var inherited: ToolSet? { scope == .chatterbox ? nil : sets[ToolScope.chatterbox.key] }
+    private var levelName: String {
+        switch scope { case .chatterbox: "every chat"; case .studios: "every Studio chat"; case .project: "this project's chats" }
+    }
+
+    var body: some View {
+        Form {
+            serversSection(kind: .command, title: "MCP servers",
+                           note: "Servers agents run on this Mac. On here applies to \(levelName).")
+            connectorsSection
+            skillsSection
+            if let problem { Text(problem).foregroundStyle(.orange).font(.callout) }
+        }
+        .formStyle(.grouped)
+        .task { reload() }
+        .sheet(item: $editing) { server in
+            ToolServerEditor(server: server, isNew: !set.servers.contains { $0.id == server.id }) { saved in
+                change { s in
+                    if let i = s.servers.firstIndex(where: { $0.id == saved.id }) { s.servers[i] = saved } else { s.servers.append(saved) }
+                }
+            } onDelete: {
+                change { $0.servers.removeAll { $0.id == server.id } }
+            }
+        }
+    }
+
+    // MARK: Sections
+
+    @ViewBuilder
+    private func serversSection(kind: ToolServer.Kind, title: String, note: String) -> some View {
+        Section {
+            ForEach(set.servers.filter { $0.kind == kind }) { server in
+                ownRow(server)
+            }
+            if let inherited {
+                ForEach(inherited.servers.filter { $0.kind == kind && $0.enabled }) { server in
+                    toggleRow(server.name, detail: detail(server), source: "Chatterbox-wide", agents: server.agents, key: ToolKey.server(server.name))
+                }
+            }
+            ForEach(outside.filter { $0.kind == .server && ((kind == .url) == $0.detail.hasPrefix("http")) }) { item in
+                outsideRow(item)
+            }
+        } header: {
+            HStack {
+                Text(title)
+                Spacer()
+                Button(kind == .url ? "Add Remote Server" : "Add Server", systemImage: "plus") {
+                    editing = ToolServer(name: "", kind: kind)
+                }
+                .buttonStyle(.borderless)
+            }
+        } footer: {
+            Text(note).font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private var connectorsSection: some View {
+        Group {
+            serversSection(kind: .url, title: "Connectors and remote servers",
+                           note: "Remote MCP servers by URL, and your claude.ai and ChatGPT account connectors (added on claude.ai or chatgpt.com; here you can only allow or block them).")
+            let accounts = outside.filter { $0.kind == .connector }
+            if !accounts.isEmpty {
+                Section("Account connectors") {
+                    ForEach(accounts) { item in
+                        toggleRow(item.name, detail: item.detail, source: item.source == .codex ? "ChatGPT" : "claude.ai", agents: item.agents, key: item.offKey)
+                    }
+                }
+            }
+        }
+    }
+
+    private var skillsSection: some View {
+        Section {
+            ForEach(set.skillFolders, id: \.self) { folder in
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(URL(fileURLWithPath: folder).lastPathComponent)
+                        Text(folder).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                    }
+                    Spacer()
+                    badge("Added here")
+                    Button { change { $0.skillFolders.removeAll { $0 == folder } } } label: { Image(systemName: "minus.circle") }
+                        .buttonStyle(.borderless).help("Remove this skill folder")
+                }
+            }
+            ForEach(outside.filter { $0.kind == .skill }) { item in
+                toggleRow(item.name, detail: item.detail, source: "From \(item.source.rawValue)", agents: item.agents, key: item.offKey,
+                          offThere: !item.enabledThere)
+            }
+        } header: {
+            HStack {
+                Text("Skills")
+                Spacer()
+                Button("Add Skill Folder", systemImage: "plus") { addSkillFolder() }.buttonStyle(.borderless)
+            }
+        } footer: {
+            Text("A folder holding SKILL.md, or a folder of them. Switching a skill off blocks it in \(levelName).")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: Rows
+
+    private func ownRow(_ server: ToolServer) -> some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(server.name)
+                Text(detail(server)).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+            }
+            Spacer()
+            agentBadges(server.agents)
+            badge("Added here")
+            Button("Edit") { editing = server }.buttonStyle(.borderless)
+            Toggle("", isOn: Binding(get: { server.enabled }, set: { on in
+                change { s in if let i = s.servers.firstIndex(where: { $0.id == server.id }) { s.servers[i].enabled = on } }
+            })).labelsHidden().toggleStyle(.switch)
+        }
+    }
+
+    private func outsideRow(_ item: DiscoveredTool) -> some View {
+        let imported = (sets[scope.key]?.servers ?? []).contains { $0.name == ToolServer.cleanName(item.name) }
+        return HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.name)
+                Text(item.detail).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+            }
+            Spacer()
+            agentBadges(item.agents)
+            badge("From \(item.source.rawValue)")
+            if let server = item.importable, !imported {
+                Button("Import") { importServer(server) }.buttonStyle(.borderless)
+                    .help("Copy it into Chatterbox at this level. Your own config file isn't changed.")
+            }
+            offSwitch(item.offKey, offThere: !item.enabledThere)
+        }
+    }
+
+    private func toggleRow(_ name: String, detail: String, source: String, agents: [Backend], key: String, offThere: Bool = false) -> some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name)
+                Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+            }
+            Spacer()
+            agentBadges(agents)
+            badge(source)
+            offSwitch(key, offThere: offThere)
+        }
+    }
+
+    /// On unless this level (or Chatterbox-wide, for a lower level) turned it off.
+    @ViewBuilder
+    private func offSwitch(_ key: String, offThere: Bool) -> some View {
+        let offAbove = inherited?.off.contains(key) == true
+        if offThere {
+            Text("Off in its own config").font(.caption).foregroundStyle(.secondary)
+        } else if offAbove {
+            Text("Off everywhere").font(.caption).foregroundStyle(.secondary)
+                .help("Turned off Chatterbox-wide; turn it on there first")
+        } else {
+            Toggle("", isOn: Binding(get: { !set.off.contains(key) }, set: { on in
+                change { s in if on { s.off.removeAll { $0 == key } } else if !s.off.contains(key) { s.off.append(key) } }
+            })).labelsHidden().toggleStyle(.switch)
+        }
+    }
+
+    private func agentBadges(_ agents: [Backend]) -> some View {
+        HStack(spacing: 3) {
+            ForEach(agents) { agent in
+                Image(agent.iconName).resizable().scaledToFit().frame(width: 12, height: 12).foregroundStyle(.secondary)
+                    .help(agent.label)
+            }
+        }
+    }
+
+    private func badge(_ text: String) -> some View {
+        Text(text).font(.caption2).foregroundStyle(.secondary)
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .background(Capsule().fill(Color.primary.opacity(0.08)))
+    }
+
+    private func detail(_ server: ToolServer) -> String {
+        server.kind == .url ? server.url : ([server.command] + server.args).joined(separator: " ")
+    }
+
+    // MARK: Changes
+
+    private func reload() {
+        sets = ToolScopes.load()
+        let folder = projectFolder
+        Task.detached(priority: .userInitiated) {
+            let found = ToolDiscovery.discover(projectFolder: folder)
+            await MainActor.run { outside = found }
+        }
+    }
+
+    private func change(_ edit: (inout ToolSet) -> Void) {
+        var next = sets[scope.key] ?? ToolSet()
+        edit(&next)
+        sets[scope.key] = next
+        do {
+            try ToolScopes.save(sets)
+            problem = nil
+            // Claude Code reads its tools at launch: idle chats at this level restart into them
+            // (Codex threads reload on their own, from the configuration key).
+            for session in model.sessions where session.record.backend == .claude && ToolScopes.scopes(for: session).contains(scope) {
+                session.restartClaudeForNewTools()
+            }
+        } catch {
+            problem = "Couldn't save: \(error.localizedDescription)"
+        }
+    }
+
+    private func importServer(_ server: ToolServer) {
+        var copy = server
+        copy.id = UUID()
+        change { $0.servers.append(copy) }
+        editing = copy
+    }
+
+    private func addSkillFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.prompt = "Add"
+        panel.message = "A skill folder (with SKILL.md), or a folder of skills"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        change { if !$0.skillFolders.contains(url.path) { $0.skillFolders.append(url.path) } }
+    }
+}
+
+/// Adding or editing a server: a command or a URL, keys from Secrets, which agents get it.
+struct ToolServerEditor: View {
+    @State var server: ToolServer
+    let isNew: Bool
+    let save: (ToolServer) -> Void
+    let onDelete: () -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var argsText = ""
+    @State private var keyName = ""
+    @State private var keySecret = ""
+
+    private var secrets: [SecretEntry] { SecretVault.shared.entries }
+    private var valid: Bool {
+        !ToolServer.cleanName(server.name).isEmpty && (server.kind == .url ? URL(string: server.url)?.scheme?.hasPrefix("http") == true : !server.command.isEmpty)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Form {
+                TextField("Name", text: $server.name, prompt: Text("linear"))
+                Picker("Kind", selection: $server.kind) {
+                    Text("Command").tag(ToolServer.Kind.command)
+                    Text("URL").tag(ToolServer.Kind.url)
+                }.pickerStyle(.segmented)
+                if server.kind == .command {
+                    TextField("Command", text: $server.command, prompt: Text("/usr/local/bin/my-mcp"))
+                    TextField("Arguments", text: $argsText, prompt: Text("--stdio"))
+                    Section("Keys from Secrets") {
+                        ForEach(server.secretEnv.sorted(by: { $0.key < $1.key }), id: \.key) { name, variable in
+                            HStack {
+                                Text(name).font(.body.monospaced())
+                                Text("\u{2190} \(variable)").foregroundStyle(.secondary)
+                                Spacer()
+                                Button { server.secretEnv[name] = nil } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
+                            }
+                        }
+                        HStack {
+                            TextField("Variable", text: $keyName, prompt: Text("API_KEY")).frame(width: 140)
+                            Picker("from", selection: $keySecret) {
+                                Text("Choose a secret").tag("")
+                                ForEach(secrets) { Text($0.name).tag($0.variable) }
+                            }
+                            Button("Add") { server.secretEnv[keyName] = keySecret; keyName = ""; keySecret = "" }
+                                .disabled(keyName.isEmpty || keySecret.isEmpty)
+                        }
+                        if secrets.isEmpty { Text("Add keys in Settings \u{2192} Secrets first.").font(.caption).foregroundStyle(.secondary) }
+                    }
+                } else {
+                    TextField("URL", text: $server.url, prompt: Text("https://mcp.example.com/mcp"))
+                    Picker("Token", selection: Binding(get: { server.bearerSecret ?? "" }, set: { server.bearerSecret = $0.isEmpty ? nil : $0 })) {
+                        Text("None").tag("")
+                        ForEach(secrets) { Text($0.name).tag($0.variable) }
+                    }
+                    .help("Sent as a bearer token. Servers that need a browser sign-in: sign in from the agent's own settings.")
+                }
+                Section("Agents") {
+                    ForEach(Backend.allCases) { agent in
+                        Toggle(agent.label, isOn: Binding(get: { server.agents.contains(agent) }, set: { on in
+                            if on { server.agents.append(agent) } else { server.agents.removeAll { $0 == agent } }
+                        }))
+                    }
+                }
+            }
+            .formStyle(.grouped)
+            HStack {
+                if !isNew { Button("Delete Server", role: .destructive) { onDelete(); dismiss() } }
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button(isNew ? "Add" : "Save") {
+                    server.name = ToolServer.cleanName(server.name)
+                    server.args = argsText.split(separator: " ").map(String.init)
+                    save(server)
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(!valid || server.agents.isEmpty)
+            }
+            .padding(16)
+        }
+        .frame(width: 520, height: 560)
+        .onAppear { argsText = server.args.joined(separator: " ") }
+    }
+}
+
+/// In a chat's Session tools: what this chat gets, and where to change it.
+struct SessionToolsSummary: View {
+    let session: ChatSession
+    @Environment(AppModel.self) private var model
+    @State private var editingProject = false
+
+    var body: some View {
+        let tools = ToolScopes.effective(for: session)
+        let servers = tools.servers(for: session.record.backend)
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Tools").font(.subheadline.weight(.semibold))
+            if tools.isEmpty {
+                Text("The agent's own tools; nothing set in Chatterbox.").font(.caption).foregroundStyle(.secondary)
+            } else {
+                if !servers.isEmpty { Text("Adds " + servers.map(\.name).joined(separator: ", ")).font(.caption) }
+                if !tools.off.isEmpty {
+                    Text("Off: " + tools.off.sorted().map { $0.split(separator: ":", maxSplits: 1).last.map(String.init) ?? $0 }.joined(separator: ", "))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            HStack {
+                if let folder = ToolScopes.projectFolder(of: session) {
+                    Button("Edit for \(session.projectName)\u{2026}") { editingProject = true }
+                        .sheet(isPresented: $editingProject) {
+                            ProjectToolsSheet(folder: folder, name: session.projectName).environment(model)
+                        }
+                }
+                Button(session.record.studioID != nil ? "Edit for Studios\u{2026}" : "Edit\u{2026}") {
+                    AppPreferences.defaults.set("tools", forKey: "settingsPage")
+                    AppPreferences.defaults.set(session.record.studioID != nil ? "studios" : "chatterbox", forKey: "toolsSettingsScope")
+                    model.showingSettings = true
+                }
+            }
+            .buttonStyle(.link).font(.caption)
+        }
+        .accessibilityElement(children: .contain)
+    }
+}

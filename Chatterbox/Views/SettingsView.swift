@@ -31,7 +31,7 @@ struct SettingsView: View {
 
     /// Settings' pages, listed down the left of the window.
     enum Page: String, CaseIterable, Identifiable {
-        case notifications, pins, models, newChats, behavior, golem, appearance, instructions, secrets, plugins, iPhone, proxy, diagnostics, agents
+        case notifications, pins, models, newChats, behavior, golem, appearance, instructions, secrets, tools, plugins, iPhone, proxy, diagnostics, agents
         var id: String { rawValue }
         var title: String {
             switch self {
@@ -44,6 +44,7 @@ struct SettingsView: View {
             case .appearance: "Appearance"
             case .instructions: "Instructions"
             case .secrets: "Secrets"
+            case .tools: "Tools"
             case .plugins: "Plugins"
             case .iPhone: "iPhone"
             case .proxy: "Proxy"
@@ -62,6 +63,7 @@ struct SettingsView: View {
             case .appearance: "textformat.size"
             case .instructions: "text.book.closed"
             case .secrets: "key"
+            case .tools: "wrench.and.screwdriver"
             case .plugins: "puzzlepiece.extension"
             case .iPhone: "iphone"
             case .proxy: "network"
@@ -76,7 +78,7 @@ struct SettingsView: View {
             #else
             let everyday: [Page] = [.notifications, .models, .newChats, .behavior, .appearance, .instructions]
             #endif
-            return [(nil, everyday), ("Connections", [.secrets, .plugins, .iPhone]), ("Advanced", [.proxy, .agents, .diagnostics])]
+            return [(nil, everyday), ("Connections", [.secrets, .tools, .plugins, .iPhone]), ("Advanced", [.proxy, .agents, .diagnostics])]
         }
     }
     @AppStorage("settingsPage") private var pageName = Page.notifications.rawValue
@@ -126,6 +128,7 @@ struct SettingsView: View {
     @ViewBuilder private var pageView: some View {
         switch page {
         case .pins: PinsSettingsView()
+        case .tools: ToolsSettingsView()
         case .notifications: notificationsPane
         case .models: modelsPane
         case .newChats: newChatsPane

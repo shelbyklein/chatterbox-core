@@ -151,6 +151,10 @@ struct SessionToolsPanel: View {
             ToneSlot(bridge: bridge)
             PlaceSlot(bridge: bridge)
             RepoSlot(bridge: bridge)
+            if let session = bridge.session, !session.isDot {
+                Divider()
+                SessionToolsSummary(session: session)
+            }
         }
     }
 }

@@ -24,6 +24,7 @@ struct ContentView: View {
     @State private var renamingProject: ChatSession?
     /// The project whose Automations window is open.
     @State private var automationsFor: ChatSession?
+    @State private var toolsFor: ChatSession?
     @State private var sidequestFrom: ChatSession?
     @State private var sidequestTask = ""
     @State private var worktreeParent: ChatSession?
@@ -201,6 +202,11 @@ struct ContentView: View {
             SidequestForm(agent: parent.record.backend == .claude ? "Codex" : "Claude", from: parent.record.backend.label, task: $sidequestTask) {
                 model.newSidequest(of: parent, task: sidequestTask)
                 sidequestFrom = nil
+            }
+        }
+        .sheet(item: $toolsFor) { project in
+            if let folder = project.record.projectFolder {
+                ProjectToolsSheet(folder: folder, name: project.projectName).environment(model)
             }
         }
         .sheet(item: $automationsFor) { project in
@@ -637,6 +643,7 @@ extension ContentView {
             }
             if session.record.worktreeOf == nil, session.record.sidechatOf == nil {
                 Button("Automations\u{2026}") { automationsFor = session }
+                Button("Tools\u{2026}") { toolsFor = session }
             }
             Button("Rename Project\u{2026}") {
                 projectNickname = session.projectName
