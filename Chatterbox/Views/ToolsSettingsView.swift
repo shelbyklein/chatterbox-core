@@ -146,8 +146,7 @@ struct ToolsPanel: View {
                 }
             }
             ForEach(outside.filter { $0.kind == .skill }) { item in
-                toggleRow(item.name, detail: item.detail, source: "From \(item.source.rawValue)", agents: item.agents, key: item.offKey,
-                          offThere: !item.enabledThere)
+                skillRow(item)
             }
         } header: {
             HStack {
@@ -192,6 +191,42 @@ struct ToolsPanel: View {
             if let server = item.importable, !imported {
                 Button("Import") { importServer(server) }.buttonStyle(.borderless)
                     .help("Copy it into Chatterbox at this level. Your own config file isn't changed.")
+            }
+            offSwitch(item.offKey, offThere: !item.enabledThere)
+        }
+    }
+
+    /// A skill the agents have: which agents, Share with the other one, and a note when the
+    /// two agents' copies differ.
+    private func skillRow(_ item: DiscoveredTool) -> some View {
+        let shared = sets[scope.key]?.skillFolders.contains(item.detail) == true
+        let other: Backend? = item.agents.count == 1 ? (item.agents[0] == .claude ? .codex : .claude) : nil
+        return HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(item.name)
+                    if item.drift {
+                        Text("Different versions").font(.caption2).foregroundStyle(.orange)
+                            .help("Claude and Codex each have their own copy of this skill, and they differ. Keep one in a shared folder (for example ~/.agents/skills) to use the same version in both.")
+                    }
+                }
+                Text(item.detail).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+            }
+            Spacer()
+            agentBadges(item.agents + (shared ? [other].compactMap { $0 } : []))
+            badge("From \(item.source.rawValue)")
+            if let other, !item.drift {
+                if shared {
+                    Button("Stop Sharing") {
+                        change { $0.skillFolders.removeAll { $0 == item.detail }; $0.skillFolderAgents[item.detail] = nil }
+                    }.buttonStyle(.borderless)
+                } else {
+                    Button("Share with \(other.label)") {
+                        change { $0.skillFolders.append(item.detail); $0.skillFolderAgents[item.detail] = [other] }
+                    }
+                    .buttonStyle(.borderless)
+                    .help("\(other.label) chats get this skill too, from the same folder")
+                }
             }
             offSwitch(item.offKey, offThere: !item.enabledThere)
         }

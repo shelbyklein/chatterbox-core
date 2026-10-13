@@ -20,6 +20,8 @@ struct DiscoveredTool: Identifiable, Hashable {
     var offKey: String
     /// What Import copies into a level (servers only).
     var importable: ToolServer?
+    /// A skill both agents have under one name, but in copies that differ.
+    var drift = false
     var id: String { "\(kind.rawValue):\(source.rawValue):\(name)" }
 }
 
@@ -33,16 +35,30 @@ enum ToolDiscovery {
     static func discover(projectFolder: String?) -> [DiscoveredTool] {
         var found = claudeServers(projectFolder: projectFolder) + codexServers() + claudeSkills(projectFolder: projectFolder) + codexSkills()
         found += connectors()
-        // Same server in both agents' configs: one row for both.
+        // Same server in both agents' configs, or the same skill (one folder, or identical
+        // copies): one row for both. A skill whose copies differ is marked.
         var merged: [DiscoveredTool] = []
         for item in found {
-            if item.kind != .skill, let i = merged.firstIndex(where: { $0.kind == item.kind && $0.name == item.name && $0.source != item.source }) {
+            if let i = merged.firstIndex(where: { $0.kind == item.kind && $0.name == item.name && $0.agents != item.agents }) {
+                if item.kind == .skill, !sameSkill(merged[i].detail, item.detail) {
+                    merged[i].drift = true
+                    var copy = item; copy.drift = true
+                    merged.append(copy)
+                    continue
+                }
                 merged[i].agents = Array(Set(merged[i].agents + item.agents)).sorted { $0.rawValue < $1.rawValue }
                 continue
             }
             merged.append(item)
         }
         return merged
+    }
+
+    /// One folder (through links), or the same SKILL.md.
+    static func sameSkill(_ a: String, _ b: String) -> Bool {
+        let ra = URL(fileURLWithPath: a).resolvingSymlinksInPath().path, rb = URL(fileURLWithPath: b).resolvingSymlinksInPath().path
+        if ra == rb { return true }
+        return FileManager.default.contentsEqual(atPath: a + "/SKILL.md", andPath: b + "/SKILL.md")
     }
 
     // MARK: Claude

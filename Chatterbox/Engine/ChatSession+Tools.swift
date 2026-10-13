@@ -62,7 +62,7 @@ extension ChatSession {
 
     /// Added skill folders, as a plugin Claude Code loads: its skills/ links to each skill.
     func claudeToolsPluginDir(_ tools: EffectiveTools) -> String? {
-        let skills = Self.skillPaths(tools.skillFolders)
+        let skills = Self.skillPaths(tools.skillFolders(for: .claude))
         guard !skills.isEmpty else { return nil }
         let key = SHA256.hash(data: Data(skills.map(\.1).joined(separator: "\n").utf8)).prefix(6).map { String(format: "%02x", $0) }.joined()
         let root = Self.toolFilesFolder.appendingPathComponent("skills-\(key)", isDirectory: true)
@@ -136,7 +136,7 @@ extension ChatSession {
                 config["features.apps"] = false
             }
         }
-        for (_, path) in Self.skillPaths(tools.skillFolders) { skills.append(["path": .string(path + "/SKILL.md"), "enabled": true]) }
+        for (_, path) in Self.skillPaths(tools.skillFolders(for: .codex)) { skills.append(["path": .string(path + "/SKILL.md"), "enabled": true]) }
         if !skills.isEmpty { config["skills.config"] = .array(skills) }
         return config
     }

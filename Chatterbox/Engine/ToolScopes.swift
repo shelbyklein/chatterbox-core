@@ -41,8 +41,22 @@ struct ToolSet: Codable, Equatable {
     var off: [String] = []
     /// Skill folders this level adds (each holds <name>/SKILL.md).
     var skillFolders: [String] = []
+    /// A folder only some agents get ("Share with Codex" on a Claude-only skill); missing: both.
+    var skillFolderAgents: [String: [Backend]] = [:]
 
     var isEmpty: Bool { servers.isEmpty && off.isEmpty && skillFolders.isEmpty }
+
+    init(servers: [ToolServer] = [], off: [String] = [], skillFolders: [String] = [], skillFolderAgents: [String: [Backend]] = [:]) {
+        self.servers = servers; self.off = off; self.skillFolders = skillFolders; self.skillFolderAgents = skillFolderAgents
+    }
+    // Older files have no skillFolderAgents.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        servers = try c.decodeIfPresent([ToolServer].self, forKey: .servers) ?? []
+        off = try c.decodeIfPresent([String].self, forKey: .off) ?? []
+        skillFolders = try c.decodeIfPresent([String].self, forKey: .skillFolders) ?? []
+        skillFolderAgents = try c.decodeIfPresent([String: [Backend]].self, forKey: .skillFolderAgents) ?? [:]
+    }
 }
 
 /// The keys `ToolSet.off` uses.
@@ -70,8 +84,10 @@ struct EffectiveTools: Equatable {
     var servers: [ToolServer] = []
     var off: Set<String> = []
     var skillFolders: [String] = []
+    var skillFolderAgents: [String: [Backend]] = [:]
 
     var isEmpty: Bool { servers.isEmpty && off.isEmpty && skillFolders.isEmpty }
+    func skillFolders(for backend: Backend) -> [String] { skillFolders.filter { skillFolderAgents[$0]?.contains(backend) ?? true } }
     func servers(for backend: Backend) -> [ToolServer] { servers.filter { $0.agents.contains(backend) } }
     func isOff(_ key: String) -> Bool { off.contains(key) }
 }
@@ -116,6 +132,7 @@ enum ToolScopes {
                 result.servers.append(server)
             }
             result.skillFolders += set.skillFolders.filter { !result.skillFolders.contains($0) }
+            result.skillFolderAgents.merge(set.skillFolderAgents) { $1 }
         }
         result.servers.removeAll { result.off.contains(ToolKey.server($0.name)) }
         return result
@@ -137,6 +154,7 @@ enum ToolScopes {
         var servers: [ToolServer]
         var off: [String]
         var skillFolders: [String]
-        init(_ t: EffectiveTools) { servers = t.servers; off = t.off.sorted(); skillFolders = t.skillFolders }
+        var skillFolderAgents: [String: [Backend]]
+        init(_ t: EffectiveTools) { servers = t.servers; off = t.off.sorted(); skillFolders = t.skillFolders; skillFolderAgents = t.skillFolderAgents }
     }
 }
