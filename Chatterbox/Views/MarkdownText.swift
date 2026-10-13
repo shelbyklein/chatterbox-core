@@ -223,14 +223,28 @@ struct MarkdownText: View {
         let key = text as NSString
         if cached, let hit = inlineCache.object(forKey: key) { return hit.value }
         let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        let parsed = (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
+        let parsed = (try? AttributedString(markdown: angleBracketPaths(text), options: options)) ?? AttributedString(text)
         if cached { inlineCache.setObject(Cached(parsed), forKey: key) }
         return parsed
+    }
+
+    /// `[name](/a path/with spaces.pdf)`: Markdown ends a link at its first space, so agents'
+    /// links to such files showed as raw text. Wrapped in <…>, which Markdown allows.
+    static func angleBracketPaths(_ text: String) -> String {
+        guard text.contains("]("), let regex = try? NSRegularExpression(pattern: #"(\]\()((?:/|~/)[^)<>\n]*\s[^)<>\n]*)(\))"#) else { return text }
+        return regex.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text), withTemplate: "$1<$2>$3")
     }
 
     static func inline(_ text: String, style: ReaderStyle, paths: PathLinks?, cached: Bool) -> AttributedString {
         var result = parsedInline(text, cached: cached)
         for run in result.runs {
+            // A link to a file on this Mac (`[name](/path)`) opens like a path in code does:
+            // beside the chat for PDFs and images, else shown in Finder.
+            if let link = run.link, link.scheme == nil || link.scheme == "file" {
+                let path = (link.scheme == "file" ? link.path : (link.absoluteString.removingPercentEncoding ?? link.absoluteString))
+                if let paths, let url = paths.url(for: path) { result[run.range].link = url }
+                else if path.hasPrefix("/") || path.hasPrefix("~") { result[run.range].link = PathLinks(bases: []).url(for: path) ?? link }
+            }
             if let intent = run.inlinePresentationIntent, intent.contains(.code) {
                 result[run.range].font = style.code
                 result[run.range].backgroundColor = Color.primary.opacity(0.09)
