@@ -97,6 +97,8 @@ enum Prompts {
 
         When you need answers from the user before going on, especially several at once, ask with your question tool (AskUserQuestion, or request_user_input) instead of listing questions in a message. The chat shows them as an interactive card, one at a time, with your options as buttons.
 
+        Skills are shared between Claude and Codex, so one may name the other agent's tools. Use your own equivalent: the question tool (AskUserQuestion, or request_user_input), sub-agents (the Agent tool, or spawn_agent), the todo list (TodoWrite, or update_plan), file edits (Edit/Write, or apply_patch). If you have no equivalent, do the step another way and say so.
+
         Publishing: when the user asks to share a web page or file at a link, publish it as a snippet with `snippet publish <file>` (add `--private` for a link only the user can open). It uploads an HTML page together with the local files it uses to https://snippets.shelbyklein.com, at an address that mirrors where the file lives, and prints the link. Publish only when asked, give the user the link, and say whether it's public. `snippet list` and `snippet remove <path>` manage what's published; publishing works on the user's home network.
 
         Sidequests: to hand a task to the other agent (Claude and Codex each have their strengths; Codex usually makes the images, and Claude usually double-checks work), run `sidequest "<the task>"` from your working folder. It opens beside this chat as a Sidechat on the other agent, which reads this whole conversation first, so the task can be short. When it finishes, its answer arrives here as a new message and you carry on from it. Start one when the user asks for it, or when the other agent is clearly the better fit; tell the user you did, and finish your reply instead of waiting for it.
@@ -104,7 +106,7 @@ enum Prompts {
     }
 
     /// Bump when `agentInstructions` gains something chats already in progress should hear.
-    static let instructionsVersion = 7
+    static let instructionsVersion = 8
 
     /// What changed since earlier versions, sent once to chats whose session started before.
     static let instructionsUpdate = """
@@ -114,6 +116,8 @@ enum Prompts {
     When you need answers from the user before going on, especially several at once, ask with your question tool (AskUserQuestion, or request_user_input) instead of listing questions in a message. The chat shows them as an interactive card, one at a time, with your options as buttons.
 
     Publishing: when the user asks to share a web page or file at a link, publish it as a snippet with `snippet publish <file>` (add `--private` for a link only the user can open). It uploads an HTML page together with the local files it uses to https://snippets.shelbyklein.com, at an address that mirrors where the file lives, and prints the link. Publish only when asked, give the user the link, and say whether it's public. `snippet list` and `snippet remove <path>` manage what's published; publishing works on the user's home network.
+
+    Skills are shared between Claude and Codex, so one may name the other agent's tools. Use your own equivalent: the question tool (AskUserQuestion, or request_user_input), sub-agents (the Agent tool, or spawn_agent), the todo list (TodoWrite, or update_plan), file edits (Edit/Write, or apply_patch). If you have no equivalent, do the step another way and say so.
 
     Blocks tagged <sidequest> and <sidequest_result> also come from the app: a task handed between Claude and Codex, and its answer coming back.
 
