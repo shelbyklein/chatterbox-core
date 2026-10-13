@@ -82,6 +82,7 @@ final class ClaudeCodeProcess {
     private var pending: [String: CheckedContinuation<JSON, Error>] = [:]
 
     var isRunning: Bool { running }
+    var canReleaseIdleProcess: Bool { pending.isEmpty }
 
     static func locateBinary() -> String? { BinaryLocator.find("claude", customPathKey: "claudePath") }
 

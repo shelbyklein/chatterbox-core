@@ -156,6 +156,13 @@ final class ChatSession: Identifiable {
         }
     }
     /// The chat's page on claude.ai while Remote Control is on (see ChatSession+Remote).
+    /// A completed turn can still own approvals, background tasks or remote-control work.
+    var canReleaseIdleAgent: Bool {
+        !awaitingHostResume && !isRunning && !hasBackgroundWork && !wantsRemoteControl && remoteURL == nil
+        && claudeAwaitingEcho.isEmpty && codexRunningCommands.isEmpty
+        && (claudeProcess?.canReleaseIdleProcess ?? true)
+        && !items.contains(where: { $0.approvalState == .pending || $0.queued == true })
+    }
     var remoteURL: URL?
     /// Messages sent from here that Claude Code hasn't echoed yet, to tell them apart from
     /// ones typed on claude.ai or the Claude app.

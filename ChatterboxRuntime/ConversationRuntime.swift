@@ -64,6 +64,11 @@ struct CommandReceipt: Codable {
     private let root: URL
     private var dirty: Set<UUID> = []
     private var saveScheduled = false
+    private var agentIdleSince: [UUID: Date] = [:]
+    private var codexIdleSince: Date?
+    /// Keep warm briefly for follow-up messages, then release tool servers even for attached chats.
+    private let agentIdleTimeout: TimeInterval = 120
+    private var idleSweepStarted = false
     private var wasRunning: [UUID:Bool] = [:]
     /// Each chat's approval and question cards still waiting on the user.
     private var pendingByChat: [UUID: Set<UUID>] = [:]
@@ -106,6 +111,54 @@ struct CommandReceipt: Codable {
         }
         CodexAppServer.shared.resume(processes)
         try? flush()
+        if !idleSweepStarted {
+            idleSweepStarted = true
+            scheduleIdleSweep()
+        }
+    }
+
+    private func scheduleIdleSweep() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in
+            guard let self else { return }
+            self.releaseIdleAgents()
+            self.scheduleIdleSweep()
+        }
+    }
+
+    /// All checks and retirement happen on the runtime's main actor, alongside message dispatch.
+    func releaseIdleAgents(now: Date = Date()) {
+        for session in sessions {
+            guard session.canReleaseIdleAgent, session.claudeProcess?.isRunning == true else {
+                agentIdleSince[session.id] = nil
+                continue
+            }
+            let since = agentIdleSince[session.id] ?? now
+            agentIdleSince[session.id] = since
+            guard now.timeIntervalSince(since) >= agentIdleTimeout else { continue }
+            session.restartClaudeForNewTools()
+            session.record.claudeHost = nil
+            agentIdleSince[session.id] = nil
+            dirty.insert(session.id)
+            RuntimeHooks.note("Released idle Claude tool process")
+        }
+        let codex = CodexAppServer.shared
+        let codexChats = sessions.filter { $0.record.codex?.threadId != nil || $0.record.backend == .codex }
+        if codex.isRunning, codex.canReleaseIdleProcess, codexChats.allSatisfy({ $0.canReleaseIdleAgent }) {
+            let since = codexIdleSince ?? now
+            codexIdleSince = since
+            if now.timeIntervalSince(since) >= agentIdleTimeout {
+                codex.terminate()
+                for session in codexChats {
+                    session.record.codexHost = nil
+                    dirty.insert(session.id)
+                }
+                codexIdleSince = nil
+                RuntimeHooks.note("Released idle Codex tool process")
+            }
+        } else {
+            codexIdleSince = nil
+        }
+        if !dirty.isEmpty { flushNow() }
     }
     func session(_ id: UUID) -> ChatSession? { sessions.first { $0.id == id } }
     var assistant: ChatSession? { sessions.first { $0.isDot } }
@@ -257,6 +310,8 @@ struct CommandReceipt: Codable {
         session.onStreamed = { [weak self] s in self?.changed(s,streamed:true) }
     }
     private func changed(_ s: ChatSession, streamed: Bool) {
+        agentIdleSince[s.id] = nil
+        if s.record.codex?.threadId != nil || s.record.backend == .codex { codexIdleSince = nil }
         dirty.insert(s.id)
         let before=wasRunning[s.id] ?? false
         if before != s.isRunning { publish(s,kind:s.isRunning ? "turn.started":"turn.finished") }

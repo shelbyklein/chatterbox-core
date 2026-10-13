@@ -52,6 +52,8 @@ final class CodexAppServer {
     @ObservationIgnored private var replayedThrough = 0
 
     var isRunning: Bool { running }
+    /// Never end initialization, an outstanding request or a server awaiting host reattachment.
+    var canReleaseIdleProcess: Bool { resumeChecked && startTask == nil && pending.isEmpty }
 
     // MARK: - Lifecycle
 
