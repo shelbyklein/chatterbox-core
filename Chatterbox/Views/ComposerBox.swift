@@ -19,14 +19,12 @@ struct ComposerBox: View {
     /// taken sends the message, Shift- or Option-Return always starts a new line.
     var onKey: (Key, NSEvent.ModifierFlags) -> Bool = { _, _ in false }
     var onSubmit: () -> Void
-    @State private var contentHeight: CGFloat = 0
-
-    private var lineHeight: CGFloat { font.ascender - font.descender + font.leading }
 
     var body: some View {
+        // Sizes itself from the width it's offered, in one step (see sizeThatFits). Measuring
+        // after layout and resizing again could chase its own width and shake.
         ComposerTextView(text: $text, placeholder: placeholder, isFocused: $isFocused, font: font,
-                         contentHeight: $contentHeight, onKey: onKey, onSubmit: onSubmit)
-            .frame(height: min(max(contentHeight, ceil(lineHeight)), maxHeight))
+                         maxHeight: maxHeight, onKey: onKey, onSubmit: onSubmit)
             .accessibilityLabel("Message")
     }
 }
@@ -36,7 +34,7 @@ private struct ComposerTextView: NSViewRepresentable {
     var placeholder: String
     @Binding var isFocused: Bool
     var font: NSFont
-    @Binding var contentHeight: CGFloat
+    var maxHeight: CGFloat
     var onKey: (ComposerBox.Key, NSEvent.ModifierFlags) -> Bool
     var onSubmit: () -> Void
 
@@ -75,13 +73,16 @@ private struct ComposerTextView: NSViewRepresentable {
         view.setAccessibilityLabel("Message")
         scroll.documentView = view
         context.coordinator.view = view
-        // The width is only known after layout; measure then, and on every change of it.
-        view.postsFrameChangedNotifications = true
-        context.coordinator.frameObserver = NotificationCenter.default.addObserver(
-            forName: NSView.frameDidChangeNotification, object: view, queue: .main) { [weak coordinator = context.coordinator] _ in
-            MainActor.assumeIsolated { coordinator?.measure() }
-        }
         return scroll
+    }
+
+    /// The text's height at the offered width, up to `maxHeight` (then it scrolls); one line
+    /// at least. Worked out from the width alone, so the same width always gets the same height.
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSScrollView, context: Context) -> CGSize? {
+        guard let width = proposal.width, width.isFinite, width > 0 else { return nil }
+        let line = ceil(font.ascender - font.descender + font.leading)
+        let height = context.coordinator.textHeight(text, font: font, width: width)
+        return CGSize(width: width, height: min(max(height, line), maxHeight))
     }
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
@@ -93,10 +94,9 @@ private struct ComposerTextView: NSViewRepresentable {
             // undo sane and put the caret at the end.
             view.string = text
             view.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
-            coordinator.measure()
         }
         if view.placeholder != placeholder { view.placeholder = placeholder; view.needsDisplay = true }
-        if view.font != font { view.font = font; coordinator.measure() }
+        if view.font != font { view.font = font }
         if isFocused, view.window != nil, view.window?.firstResponder !== view {
             // Asked for focus from SwiftUI (a chat opened, a file was added): take it once the
             // view is in its window. Doing it during an update can re-enter layout.
@@ -110,37 +110,43 @@ private struct ComposerTextView: NSViewRepresentable {
 
     static func dismantleNSView(_ scroll: NSScrollView, coordinator: Coordinator) {
         coordinator.active = false
-        if let observer = coordinator.frameObserver { NotificationCenter.default.removeObserver(observer) }
-        coordinator.frameObserver = nil
     }
 
     @MainActor
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: ComposerTextView
         weak var view: TextView?
-        var frameObserver: NSObjectProtocol?
         var active = true
+        /// Its own text system for measuring, so measuring never touches what's on screen.
+        private let measureStorage = NSTextStorage()
+        private let measureLayout = NSLayoutManager()
+        private let measureContainer = NSTextContainer()
+        private var measured: (text: String, font: NSFont, width: CGFloat, height: CGFloat)?
 
-        init(_ parent: ComposerTextView) { self.parent = parent }
+        init(_ parent: ComposerTextView) {
+            self.parent = parent
+            super.init()
+            measureContainer.lineFragmentPadding = 0
+            measureLayout.addTextContainer(measureContainer)
+            measureStorage.addLayoutManager(measureLayout)
+        }
 
         func textDidChange(_ notification: Notification) {
             guard active, let view else { return }
+            // The new text re-renders the box, which asks sizeThatFits for its new height.
             if parent.text != view.string { parent.text = view.string }
-            measure()
         }
 
-        /// The height of the laid-out text, so the box grows and shrinks with it.
-        func measure() {
-            guard let view, let layout = view.layoutManager, let container = view.textContainer else { return }
-            layout.ensureLayout(for: container)
-            let height = ceil(layout.usedRect(for: container).height + view.textContainerInset.height * 2)
-            if abs(parent.contentHeight - height) >= 0.5 {
-                // Outside the current layout pass, or SwiftUI complains.
-                DispatchQueue.main.async { [weak self] in
-                    guard let self, self.active else { return }
-                    self.parent.contentHeight = height
-                }
-            }
+        /// How tall `text` lays out at `width`, as the text view lays it out (a trailing new
+        /// line counts). The last answer is kept: layout asks the same question often.
+        func textHeight(_ text: String, font: NSFont, width: CGFloat) -> CGFloat {
+            if let measured, measured.text == text, measured.font == font, abs(measured.width - width) < 0.5 { return measured.height }
+            measureContainer.size = NSSize(width: width, height: .greatestFiniteMagnitude)
+            measureStorage.setAttributedString(NSAttributedString(string: text, attributes: [.font: font]))
+            measureLayout.ensureLayout(for: measureContainer)
+            let height = ceil(measureLayout.usedRect(for: measureContainer).height)
+            measured = (text, font, width, height)
+            return height
         }
 
         func focusChanged(_ focused: Bool) {
