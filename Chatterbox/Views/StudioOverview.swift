@@ -80,6 +80,8 @@ struct ChatHomeView: View {
     @AppStorage("macStudioSelection") private var savedSelection = "pinned"
     /// Each Studio's inspected session, as "studio=session" pairs.
     @AppStorage("macStudioInspected") private var savedInspected = ""
+    /// A Studio shown as its sessions, or as a grid of all their images.
+    @AppStorage("macStudioLayout") private var layout = "sessions"
 
     /// A Studio that no longer exists falls back to Pinned.
     private var selection: StudioSelection {
@@ -101,7 +103,11 @@ struct ChatHomeView: View {
                 header.padding(.horizontal, 28).padding(.top, 24).padding(.bottom, 16)
                 Divider()
                 if let studio = selectedStudio {
-                    StudioInspector(studio: studio, sessions: sessions(in: studio), inspected: inspectedBinding(studio), menu: menu)
+                    if layout == "images" {
+                        StudioImageGrid(sessions: sessions(in: studio))
+                    } else {
+                        StudioInspector(studio: studio, sessions: sessions(in: studio), inspected: inspectedBinding(studio), menu: menu)
+                    }
                 } else {
                     PinnedSheet(groups: pinnedGroups, filtering: isFiltering, menu: menu) { session in
                         guard let id = session.record.studioID else { return }
@@ -137,8 +143,8 @@ struct ChatHomeView: View {
                 }
             }
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: 16) { searchField; filterPicker.frame(width: 300) }
-                VStack(alignment: .leading, spacing: 10) { searchField; filterPicker }
+                HStack(spacing: 16) { searchField; filterPicker.frame(width: 300); layoutPicker }
+                VStack(alignment: .leading, spacing: 10) { searchField; HStack { filterPicker; layoutPicker } }
             }
         }
     }
@@ -149,6 +155,18 @@ struct ChatHomeView: View {
             TextField(selectedStudio.map { "Search \($0.name)" } ?? "Search pinned sessions", text: $search).textFieldStyle(.plain)
         }.padding(9).background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 8))
     }
+    /// Sessions or Images, for a Studio (Pinned is always sessions).
+    @ViewBuilder private var layoutPicker: some View {
+        if selectedStudio != nil {
+            Picker("View", selection: $layout) {
+                Image(systemName: "list.bullet.rectangle").tag("sessions").accessibilityLabel("Sessions")
+                Image(systemName: "square.grid.3x3").tag("images").accessibilityLabel("Images")
+            }
+            .pickerStyle(.segmented).labelsHidden().fixedSize()
+            .help(layout == "images" ? "Show the Studio's sessions" : "Show every image the Studio's sessions made or shared")
+        }
+    }
+
     private var filterPicker: some View {
         Picker("Threads", selection: $filter) {
             ForEach(HomeThreadFilter.allCases) { Text($0.rawValue).tag($0) }

@@ -174,7 +174,7 @@ extension ChatImageGallery {
 }
 
 /// A downsized thumbnail, loaded off the main thread.
-private struct GalleryThumbnail: View {
+struct GalleryThumbnail: View {
     let url: URL
     @State private var image: NSImage?
 
