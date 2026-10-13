@@ -65,6 +65,8 @@ struct CommandReceipt: Codable {
     private var dirty: Set<UUID> = []
     private var saveScheduled = false
     private var agentIdleSince: [UUID: Date] = [:]
+    private var codexThreadIdleSince: [String: Date] = [:]
+    private var codexThreadCleanup: Set<String> = []
     private var codexIdleSince: Date?
     /// Keep warm briefly for follow-up messages, then release tool servers even for attached chats.
     private let agentIdleTimeout: TimeInterval = 120
@@ -143,6 +145,26 @@ struct CommandReceipt: Codable {
         }
         let codex = CodexAppServer.shared
         let codexChats = sessions.filter { $0.record.codex?.threadId != nil || $0.record.backend == .codex }
+        let threads = Dictionary(grouping: codexChats.compactMap { chat in
+            chat.record.codex?.threadId.map { ($0, chat) }
+        }, by: { $0.0 })
+        for (thread, owners) in threads {
+            guard codex.isRunning, codex.canUnsubscribeThread(thread), owners.allSatisfy({ $0.1.canReleaseIdleAgent }) else {
+                codexThreadIdleSince[thread] = nil
+                continue
+            }
+            let since = codexThreadIdleSince[thread] ?? now
+            codexThreadIdleSince[thread] = since
+            guard now.timeIntervalSince(since) >= agentIdleTimeout, !codexThreadCleanup.contains(thread) else { continue }
+            codexThreadCleanup.insert(thread)
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                defer { self.codexThreadCleanup.remove(thread) }
+                // Recheck after scheduling: a message may have arrived before this task runs.
+                guard self.sessions.filter({ $0.record.codex?.threadId == thread }).allSatisfy({ $0.canReleaseIdleAgent }) else { return }
+                await codex.unsubscribeIdleThread(thread)
+            }
+        }
         if codex.isRunning, codex.canReleaseIdleProcess, codexChats.allSatisfy({ $0.canReleaseIdleAgent }) {
             let since = codexIdleSince ?? now
             codexIdleSince = since
@@ -311,6 +333,7 @@ struct CommandReceipt: Codable {
     }
     private func changed(_ s: ChatSession, streamed: Bool) {
         agentIdleSince[s.id] = nil
+        if let thread = s.record.codex?.threadId { codexThreadIdleSince[thread] = nil }
         if s.record.codex?.threadId != nil || s.record.backend == .codex { codexIdleSince = nil }
         dirty.insert(s.id)
         let before=wasRunning[s.id] ?? false

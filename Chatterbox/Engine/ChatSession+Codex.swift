@@ -228,8 +228,9 @@ extension ChatSession {
         }
 
         if let existing = settings.threadId {
+            await server.waitForThreadUnsubscribe(existing)
             codexRegisterHandler(existing)
-            if server.loadedThreads.contains(existing), codexDotConfiguration == codexConfigurationKey { return existing }
+            if server.isThreadSubscribed(existing), codexDotConfiguration == codexConfigurationKey { return existing }
             do {
                 var params: [String: JSON] = [
                     "threadId": .string(existing), "cwd": .string(settings.folder), "excludeTurns": true,

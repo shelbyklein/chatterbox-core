@@ -38,8 +38,11 @@ final class CodexAppServer {
     /// Request ids continue from the clock, so replies to an earlier app run's requests
     /// (replayed after a relaunch) never match a new request.
     @ObservationIgnored private var nextID = Int(Date().timeIntervalSince1970 * 1000)
+    @ObservationIgnored private var pendingThreads: [Int: String] = [:]
     @ObservationIgnored private var pending: [Int: CheckedContinuation<JSON, Error>] = [:]
     @ObservationIgnored private var threadHandlers: [String: (_ method: String, _ params: JSON, _ requestID: JSON?) -> Void] = [:]
+    @ObservationIgnored private(set) var unsubscribedThreads: Set<String> = []
+    @ObservationIgnored private var threadUnsubscribes: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private var startTask: Task<Void, Error>?
     /// Threads loaded into the current process. A fresh process must resume a thread before using it.
     @ObservationIgnored private(set) var loadedThreads: Set<String> = []
@@ -53,7 +56,7 @@ final class CodexAppServer {
 
     var isRunning: Bool { running }
     /// Never end initialization, an outstanding request or a server awaiting host reattachment.
-    var canReleaseIdleProcess: Bool { resumeChecked && startTask == nil && pending.isEmpty }
+    var canReleaseIdleProcess: Bool { resumeChecked && startTask == nil && pending.isEmpty && threadUnsubscribes.isEmpty }
 
     // MARK: - Lifecycle
 
@@ -86,6 +89,7 @@ final class CodexAppServer {
                                     environment: BinaryLocator.environment, kind: "codex")
         try follow(id, from: 0)
         loadedThreads = []
+        unsubscribedThreads = []
         replayedThrough = 0
 
         _ = try await rawRequest("initialize", [
@@ -117,8 +121,10 @@ final class CodexAppServer {
         running = false
         hostID = nil
         loadedThreads = []
+        unsubscribedThreads = []
         for (_, continuation) in pending { continuation.resume(throwing: error) }
         pending = [:]
+        pendingThreads = [:]
         for (_, handler) in threadHandlers { handler("chatterbox/processExited", ["message": .string(error.message)], nil) }
         statusMessage = error.message
         saveResumeState()
@@ -131,6 +137,7 @@ final class CodexAppServer {
         running = false
         self.hostID = nil
         loadedThreads = []
+        unsubscribedThreads = []
         saveResumeState()
     }
 
@@ -140,6 +147,7 @@ final class CodexAppServer {
         var processID: String?
         var offset: Int
         var loadedThreads: [String]
+        var unsubscribedThreads: [String]?
     }
 
     private static var resumeFile: URL { HostPaths.directory.appendingPathComponent("codex-resume.json") }
@@ -147,7 +155,7 @@ final class CodexAppServer {
     /// Remembers which process is ours and how far its output was handled. Saved after the
     /// chats themselves, so every chat's saved state is at least this far along.
     func saveResumeState() {
-        let state = ResumeState(processID: hostID, offset: offset, loadedThreads: loadedThreads.sorted())
+        let state = ResumeState(processID: hostID, offset: offset, loadedThreads: loadedThreads.sorted(), unsubscribedThreads: unsubscribedThreads.sorted())
         try? FileManager.default.createDirectory(at: HostPaths.directory, withIntermediateDirectories: true)
         try? JSONEncoder().encode(state).write(to: Self.resumeFile, options: .atomic)
         if let hostID, HostClient.shared.isConnected { HostClient.shared.ack(id: hostID, offset: offset) }
@@ -181,6 +189,7 @@ final class CodexAppServer {
               let state = try? JSONDecoder().decode(ResumeState.self, from: data),
               let id = state.processID, processes.contains(where: { $0.id == id }) else { return }
         loadedThreads = Set(state.loadedThreads)
+        unsubscribedThreads = Set(state.unsubscribedThreads ?? [])
         replayedThrough = state.offset
         do {
             try follow(id, from: state.offset)
@@ -232,12 +241,14 @@ final class CodexAppServer {
         let timer = timeout.map { timeout in
             Task { @MainActor [weak self] in
                 do { try await Task.sleep(for: timeout) } catch { return }
+                self?.pendingThreads[id] = nil
                 self?.pending.removeValue(forKey: id)?.resume(throwing: CodexError(message: "Codex \(method) timed out."))
             }
         }
         defer { timer?.cancel() }
         return try await withCheckedThrowingContinuation { continuation in
             pending[id] = continuation
+            pendingThreads[id] = params["threadId"]?.string
             write(["id": .number(Double(id)), "method": .string(method), "params": params])
         }
     }
@@ -256,6 +267,50 @@ final class CodexAppServer {
 
     func markLoaded(_ thread: String) {
         loadedThreads.insert(thread)
+        unsubscribedThreads.remove(thread)
+        saveResumeState()
+    }
+
+    func isThreadSubscribed(_ thread: String) -> Bool {
+        loadedThreads.contains(thread) && !unsubscribedThreads.contains(thread)
+    }
+
+    func canUnsubscribeThread(_ thread: String) -> Bool {
+        isThreadSubscribed(thread) && !pendingThreads.values.contains(thread)
+    }
+
+    /// A returning message waits for unsubscribe to finish before resuming its thread.
+    func waitForThreadUnsubscribe(_ thread: String) async {
+        if let task = threadUnsubscribes[thread] { await task.value }
+    }
+
+    /// Does not launch a server just to clean up a thread. The caller checks protected chat work.
+    func unsubscribeIdleThread(_ thread: String) async {
+        if let task = threadUnsubscribes[thread] { await task.value; return }
+        guard running, canUnsubscribeThread(thread) else { return }
+        let process = hostID
+        let task = Task { @MainActor in
+            do {
+                let result = try await self.rawRequest("thread/unsubscribe", ["threadId": .string(thread)], timeout: .seconds(5))
+                guard self.hostID == process else { return }
+                switch result["status"]?.string {
+                case "notLoaded": self.loadedThreads.remove(thread)
+                case "unsubscribed", "notSubscribed": break
+                default: throw CodexError(message: "Unknown thread unsubscribe status")
+                }
+                self.unsubscribedThreads.insert(thread)
+                RuntimeHooks.note("Unsubscribed idle Codex thread; server controls unload timing")
+            } catch {
+                guard self.hostID == process else { return }
+                // Delivery can be uncertain: force thread/resume before the next turn.
+                self.unsubscribedThreads.insert(thread)
+                RuntimeHooks.note("Codex thread cleanup unconfirmed; next message will resume the thread")
+            }
+            self.saveResumeState()
+        }
+        threadUnsubscribes[thread] = task
+        await task.value
+        threadUnsubscribes[thread] = nil
     }
 
     func refreshSkills(for folder: String) async {
@@ -312,6 +367,7 @@ final class CodexAppServer {
 
         // Response to one of our requests.
         if method == nil, let id = id?.int {
+            pendingThreads[id] = nil
             guard let continuation = pending.removeValue(forKey: id) else { return }
             if let error = message["error"] {
                 continuation.resume(throwing: CodexError(message: error["message"]?.string ?? "Codex returned an error."))
@@ -323,6 +379,12 @@ final class CodexAppServer {
         guard let method else { return }
         let params = message["params"] ?? .null
 
+        if let thread = params["threadId"]?.string,
+           method == "thread/closed" || (method == "thread/status/changed" && params["status"]?["type"]?.string == "notLoaded") {
+            loadedThreads.remove(thread)
+            unsubscribedThreads.remove(thread)
+            saveResumeState()
+        }
         // Account-wide, so it belongs to no one thread.
         if method == "account/rateLimits/updated" {
             UsageLimits.shared.updateCodex(params["rateLimits"])
