@@ -104,6 +104,8 @@ struct CommandReceipt: Codable {
         for session in sessions { attach(session);wasRunning[session.id]=session.isRunning;pendingByChat[session.id]=Set(session.items.filter { $0.approvalState == .pending }.map(\.id)) }
         try encoder.encode(["schema":1,"owner":"chatterboxd"] as JSON).write(to: root.appendingPathComponent("runtime-owner.json"), options: .atomic)
         try persistState()
+        // Save chat records before acknowledging the shared stream's replay offset.
+        CodexAppServer.shared.onThreadLifecycleChange = { [weak self] in self?.flushNow() }
     }
     func resume() async {
         let processes = (try? await HostClient.shared.list()) ?? []

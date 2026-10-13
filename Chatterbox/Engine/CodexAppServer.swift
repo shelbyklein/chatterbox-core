@@ -26,6 +26,7 @@ struct CodexModelInfo: Identifiable, Hashable {
 @Observable
 final class CodexAppServer {
     static let shared = CodexAppServer()
+    @ObservationIgnored var onThreadLifecycleChange: (() -> Void)?
 
     private(set) var models: [CodexModelInfo] = []
     /// Skills per working folder, from `skills/list`.
@@ -268,7 +269,6 @@ final class CodexAppServer {
     func markLoaded(_ thread: String) {
         loadedThreads.insert(thread)
         unsubscribedThreads.remove(thread)
-        saveResumeState()
     }
 
     func isThreadSubscribed(_ thread: String) -> Bool {
@@ -306,7 +306,7 @@ final class CodexAppServer {
                 self.unsubscribedThreads.insert(thread)
                 RuntimeHooks.note("Codex thread cleanup unconfirmed; next message will resume the thread")
             }
-            self.saveResumeState()
+            self.onThreadLifecycleChange?()
         }
         threadUnsubscribes[thread] = task
         await task.value
@@ -383,7 +383,7 @@ final class CodexAppServer {
            method == "thread/closed" || (method == "thread/status/changed" && params["status"]?["type"]?.string == "notLoaded") {
             loadedThreads.remove(thread)
             unsubscribedThreads.remove(thread)
-            saveResumeState()
+            onThreadLifecycleChange?()
         }
         // Account-wide, so it belongs to no one thread.
         if method == "account/rateLimits/updated" {
