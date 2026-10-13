@@ -319,7 +319,7 @@ private struct PinnedSheet: View {
                             Text(group.title).font(.title2.weight(.semibold))
                             Text(counts(group.threads)).font(.subheadline).foregroundStyle(.secondary)
                         }
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 210, maximum: 320), spacing: 18, alignment: .top)], alignment: .leading, spacing: 22) {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 210, maximum: 320), spacing: 24, alignment: .top)], alignment: .leading, spacing: 24) {
                             ForEach(group.threads) { session in
                                 StudioPreviewCard(session: session, inspect: { inspect(session) }, open: { model.selectedID = session.id })
                                     .contextMenu { menu(session) }
@@ -367,21 +367,27 @@ private struct StudioPreviewCard: View {
                 Spacer(minLength: 6)
                 SessionActivityIndicator(session: session)
             }
-            StudioPreviewImage(session: session, cornerRadius: 12)
+            StudioPreviewImage(session: session, cornerRadius: 8)
                 .aspectRatio(4 / 3, contentMode: .fit)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 12)
-                        .strokeBorder(summary.status == .needsYou ? Color.orange : Color.primary.opacity(hovered ? 0.3 : 0.1), lineWidth: summary.status == .needsYou ? 2 : 1)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(session.title).font(.headline).lineLimit(1)
+                    Spacer(minLength: 6)
+                    Text(ShortAge.string(since: summary.lastActivity)).font(.caption).foregroundStyle(.secondary)
                 }
-            HStack(alignment: .firstTextBaseline) {
-                Text(session.title).font(.headline).lineLimit(1)
-                Spacer(minLength: 6)
-                Text(ShortAge.string(since: summary.lastActivity)).font(.caption).foregroundStyle(.secondary)
+                StudioAttentionLabel(status: summary.status)
+                Text(summary.note).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
             }
-            StudioAttentionLabel(status: summary.status)
-            Text(summary.note).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
+            .padding(.horizontal, 2)
         }
-        .contentShape(Rectangle()) }
+        // A card: the image and its text together inside one panel.
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 14).fill(Color.primary.opacity(hovered ? 0.08 : 0.055)))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14)
+                .strokeBorder(summary.status == .needsYou ? Color.orange : Color.primary.opacity(hovered ? 0.28 : 0.1), lineWidth: summary.status == .needsYou ? 2 : 1)
+        }
+        .contentShape(RoundedRectangle(cornerRadius: 14)) }
         .buttonStyle(.plain)
         .onHover { hovered = $0 }
         .help("\(session.title) — \(summary.status.rawValue). Click to inspect, double-click to open.")
@@ -407,14 +413,14 @@ private struct StudioCards: View {
 
     var body: some View {
         ScrollView {
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 18, alignment: .top), count: max(2, min(6, columns))),
-                      alignment: .leading, spacing: 22) {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 24, alignment: .top), count: max(2, min(6, columns))),
+                      alignment: .leading, spacing: 24) {
                 ForEach(sessions) { session in
                     StudioPreviewCard(session: session, inspect: { inspect(session) }, open: { model.selectedID = session.id })
                         .contextMenu { menu(session) }
                 }
             }
-            .padding(28)
+            .padding(32)
             .animation(.smooth(duration: 0.2), value: columns)
         }
         .overlay {
