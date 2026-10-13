@@ -28,20 +28,24 @@ struct ChatColumns: View {
     }
     @AppStorage(Theme.backgroundKey) private var themeBackground = "standard"
     @State private var sidebarOverlay = false
+    /// A Studio's sidebar has the Studios down its left as well (see ContentView.sidebarColumn).
+    static let studioRailWidth: CGFloat = 160
+    private var sidebarExtra: CGFloat { model.studioSidebarID != nil ? Self.studioRailWidth + 1 : 0 }
 
     var body: some View {
         GeometryReader { geometry in
             let width = geometry.size.width
             let rightWidth = inspectorWidth > 0 ? inspectorWidth : inspectorIdeal
             let sizes = ChatColumnWidths(window: width, sidebarOpen: sidebar != nil && sidebarOpen,
-                sidebarDesired: sidebarWidth, inspectorOpen: inspector != nil,
-                inspectorDesired: min(rightWidth, inspectorMaximum), inspectorMinimum: inspectorMinimum)
+                sidebarDesired: sidebarWidth + sidebarExtra, inspectorOpen: inspector != nil,
+                inspectorDesired: min(rightWidth, inspectorMaximum), inspectorMinimum: inspectorMinimum,
+                sidebarMinimum: 230 + sidebarExtra)
             ZStack(alignment: .topLeading) {
                 pane(AnyView(ChatSwitchSurface(content: chat)), role: "chat", width: sizes.chat, height: geometry.size.height)
                     .offset(x: sizes.chatX)
                 if let sidebar, sizes.sidebar > 0 {
                     pane(sidebar, role: "sidebar", width: sizes.sidebar, height: geometry.size.height)
-                    handle { delta in sidebarWidth = min(420, max(230, sizes.sidebar + delta)) }
+                    handle { delta in sidebarWidth = min(420, max(230, sizes.sidebar - sidebarExtra + delta)) }
                         .offset(x: sizes.sidebar)
                 }
                 if let inspector, sizes.inspector > 0 {
@@ -52,7 +56,7 @@ struct ChatColumns: View {
                 }
                 if sidebarOverlay, let sidebar {
                     Color.black.opacity(0.22).onTapGesture { sidebarOverlay = false }
-                    pane(sidebar, role: "sidebar-overlay", width: min(300, width - 24), height: geometry.size.height)
+                    pane(sidebar, role: "sidebar-overlay", width: min(300 + sidebarExtra, width - 24), height: geometry.size.height)
                         .shadow(radius: 10)
                         .overlay(alignment: .topTrailing) { closeButton { sidebarOverlay = false }.padding(8) }
                 } else if sizes.inspectorOverlay, let inspector {
@@ -73,7 +77,7 @@ struct ChatColumns: View {
             .frame(width: width, height: geometry.size.height, alignment: .topLeading)
             .clipped()
             .onChange(of: model.sidebarToggleRequest) {
-                if width < 636 + (inspector != nil ? inspectorMinimum + 6 : 0) { sidebarOverlay.toggle() }
+                if width < 636 + sidebarExtra + (inspector != nil ? inspectorMinimum + 6 : 0) { sidebarOverlay.toggle() }
                 else { sidebarOverlay = false }
             }
             .onChange(of: sizes.sidebar) { _, value in if value > 0 { sidebarOverlay = false } }

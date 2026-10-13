@@ -1138,7 +1138,21 @@ extension ContentView {
     /// a third each to start, each scrolling on its own, resized by dragging the dividers
     /// between them. A collapsed Studios or Chats moves to the dock at the bottom, beside
     /// Archived. Projects always stays expanded.
-    var sidebarColumn: some View {
+    /// In a Studio: the Studios down the left, then the open Studio's sessions. Elsewhere,
+    /// one column.
+    @ViewBuilder var sidebarColumn: some View {
+        if model.studioSidebarID != nil {
+            HStack(spacing: 0) {
+                StudioRail().frame(width: ChatColumns.studioRailWidth)
+                Divider()
+                sidebarSessions
+            }
+        } else {
+            sidebarSessions
+        }
+    }
+
+    private var sidebarSessions: some View {
         VStack(spacing: 0) {
             DesktopOverviewControls().padding(.horizontal, 12).padding(.vertical, 8)
             if !isFiltering && model.studioSidebarID == nil {
@@ -1667,5 +1681,49 @@ struct LinkedStudioShortcut: View {
             .help("Open a chat in \(studio.name)")
             .accessibilityLabel("Open linked Studio: \(studio.name)")
         }
+    }
+}
+
+/// The first level of a Studio's sidebar: every Studio, with a badge for what needs you.
+/// Picking one opens its newest session.
+private struct StudioRail: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("STUDIOS").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                    .padding(.horizontal, 8).padding(.bottom, 4)
+                ForEach(model.activeStudios) { studio in row(studio) }
+            }
+            .padding(.horizontal, 8).padding(.vertical, 12)
+        }
+        .background(Color.primary.opacity(0.03))
+        .accessibilityLabel("Studios")
+    }
+
+    private func row(_ studio: Studio) -> some View {
+        let selected = model.studioSidebarID == studio.id
+        let attention = model.activeSessions.filter { $0.record.studioID == studio.id && !$0.isDot && Attention.shared.needsAttention($0) }.count
+        return Button {
+            if let latest = model.chats(in: studio).first { model.selectedID = latest.id } else { model.studioSidebarID = studio.id }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "paintpalette").font(.caption).foregroundStyle(.secondary).frame(width: 14)
+                Text(studio.name).font(.callout).lineLimit(1)
+                Spacer(minLength: 2)
+                if attention > 0 {
+                    Text("\(attention)").font(.caption2.weight(.bold).monospacedDigit()).foregroundStyle(.white)
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(Capsule().fill(Color.orange))
+                }
+            }
+            .padding(.horizontal, 8).padding(.vertical, 6)
+            .background(selected ? Color.primary.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 6))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(studio.name)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
