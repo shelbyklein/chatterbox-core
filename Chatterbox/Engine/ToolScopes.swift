@@ -14,6 +14,8 @@ struct ToolServer: Codable, Identifiable, Equatable, Hashable {
     var kind: Kind
     var command = ""
     var args: [String] = []
+    /// The folder a command server runs in (Codex only); nil: the chat's own.
+    var cwd: String?
     var url = ""
     /// Plain environment values.
     var env: [String: String] = [:]

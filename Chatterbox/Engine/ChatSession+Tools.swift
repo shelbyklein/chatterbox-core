@@ -113,6 +113,7 @@ extension ChatSession {
             switch server.kind {
             case .command:
                 var spec: [String: JSON] = ["command": .string(server.command), "args": .array(server.args.map { .string($0) }), "enabled": true]
+                if let cwd = server.cwd { spec["cwd"] = .string(cwd) }
                 let env = Self.serverEnvironment(server)
                 if !env.isEmpty { spec["env"] = .object(env.mapValues { .string($0) }) }
                 config["mcp_servers.\(server.name)"] = .object(spec)

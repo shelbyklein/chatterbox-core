@@ -128,7 +128,9 @@ enum ToolDiscovery {
             if let command = values["command"] as? String { spec["command"] = command }
             if let args = values["args"] as? [String] { spec["args"] = args }
             if let url = values["url"] as? String { spec["url"] = url }
+            if let cwd = values["cwd"] as? String { spec["cwd"] = cwd }
             var item = server(name, spec, source: .codex, agents: [.codex])
+            item.importable = item.importable.map { resolveRelative($0, configFolder: home.appendingPathComponent(".codex").path) }
             item.enabledThere = (values["enabled"] as? Bool) ?? true
             return item
         }
@@ -175,12 +177,38 @@ enum ToolDiscovery {
         let url = (spec["url"] as? String) ?? ""
         let command = (spec["command"] as? String) ?? ""
         let args = (spec["args"] as? [String]) ?? []
-        var importable = ToolServer(name: ToolServer.cleanName(name), kind: url.isEmpty ? .command : .url, command: command, args: args, url: url)
+        var importable = ToolServer(name: ToolServer.cleanName(name), kind: url.isEmpty ? .command : .url, command: command, args: args,
+                                    cwd: spec["cwd"] as? String, url: url)
         // Plain env values come along; anything that looks like a key is left for Secrets.
         for (key, value) in (spec["env"] as? [String: String]) ?? [:] where !looksSecret(key) { importable.env[key] = value }
         importable.agents = agents
         return DiscoveredTool(kind: .server, source: source, name: name, detail: url.isEmpty ? ([command] + args).joined(separator: " ") : url,
                               agents: agents, offKey: ToolKey.server(name), importable: importable)
+    }
+
+    /// A server written with relative paths (Codex's computer-use: `./Codex Computer Use.app/…`,
+    /// cwd ".") made absolute, as its agent finds it: under its working folder, the config's
+    /// folder, or a folder named for the server beside the config. Imported, it runs from any chat.
+    static func resolveRelative(_ server: ToolServer, configFolder: String) -> ToolServer {
+        var server = server
+        let fm = FileManager.default
+        let cwd = server.cwd.map { ($0 as NSString).expandingTildeInPath }
+        var bases: [String] = []
+        if let cwd, cwd.hasPrefix("/") { bases.append(cwd) }
+        bases += [configFolder + "/" + server.name, configFolder]
+        if let cwd, !cwd.hasPrefix("/") { bases = bases.map { ($0 as NSString).appendingPathComponent(cwd) } + bases }
+        if server.kind == .command, !server.command.hasPrefix("/"), server.command.contains("/") {
+            for base in bases {
+                let found = ((base as NSString).appendingPathComponent(server.command) as NSString).standardizingPath
+                guard fm.isExecutableFile(atPath: found) else { continue }
+                server.command = found
+                // The folder it resolved from is the one it runs in.
+                if let cwd, !cwd.hasPrefix("/") { server.cwd = (base as NSString).standardizingPath }
+                break
+            }
+        }
+        if let dir = server.cwd, !dir.hasPrefix("/") { server.cwd = nil }
+        return server
     }
 
     /// Env names an import moves into Secrets instead of copying.
