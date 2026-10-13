@@ -12,7 +12,8 @@ struct ChatColumns: View {
     var inspectorMaximum: CGFloat = 460
     var closeInspector: () -> Void = {}
     @Environment(AppModel.self) private var model
-    @AppStorage("mainSidebarVisible") private var sidebarOpen = true
+    /// The sidebar can't be hidden; only a window too narrow for it shows it as a slide-over.
+    private let sidebarOpen = true
     @AppStorage("mainSidebarWidth") private var sidebarWidth = 260.0
     @AppStorage("golemInspectorWidth") private var golemWidth = 0.0
     @AppStorage("issuesInspectorWidth") private var issuesWidth = 0.0
@@ -73,7 +74,7 @@ struct ChatColumns: View {
             .clipped()
             .onChange(of: model.sidebarToggleRequest) {
                 if width < 636 + (inspector != nil ? inspectorMinimum + 6 : 0) { sidebarOverlay.toggle() }
-                else { sidebarOpen.toggle(); sidebarOverlay = false }
+                else { sidebarOverlay = false }
             }
             .onChange(of: sizes.sidebar) { _, value in if value > 0 { sidebarOverlay = false } }
         }

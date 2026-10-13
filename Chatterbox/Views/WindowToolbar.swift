@@ -353,7 +353,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         apply()
     }
 
-    /// To the chat view; already there, it shows or hides the sidebar.
+    /// To the chat view; already there in a window too narrow for the sidebar, it slides it over.
     @objc private func showChats() {
         let wasChats = model.showingChatsSidebar || model.studioSidebarID != nil
         model.studioSidebarID = nil
