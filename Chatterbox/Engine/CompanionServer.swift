@@ -480,8 +480,16 @@ final class CompanionServer {
                 guard let preset = ModelPresets.shared.presets.first(where: { $0.id == id }) else { return .error(404, "That preset is gone.") }
                 ModelPresets.shared.apply(preset, to: session)
             }
+            if let settings = body.settings { CompanionMapper.apply(settings, to: session) }
             if let shown, model.sessions.contains(where: { $0.id == shown }) { model.selectedID = shown }
             return .json(CompanionMapper.detail(session, model: model))
+        case ("GET", 2) where parts[1] == "new-chat-options":
+            // What a new chat would start with, given the picks so far: nothing is created.
+            let picks = Companion.SettingsRequest(backend: request.query["backend"], model: request.query["model"],
+                                                  effort: request.query["effort"], mode: request.query["mode"],
+                                                  preset: request.query["preset"].flatMap(UUID.init(uuidString:)),
+                                                  fastMode: request.query["fastMode"].map { $0 == "true" })
+            return .json(CompanionMapper.options(CompanionMapper.draftChat(picks, studio: request.query["studio"].flatMap(UUID.init(uuidString:)).flatMap(model.studio))))
         case ("GET", 2) where parts[1] == "presets":
             return .json(ModelPresets.shared.presets.map {
                 Companion.PresetInfo(id: $0.id, nickname: nil, title: $0.title, backend: $0.backend.rawValue, summary: ModelPresets.summary($0))
@@ -903,6 +911,26 @@ enum CompanionMapper {
                      effort: isCodex ? (session.record.codex?.effort ?? "") : session.record.effort,
                      claudeModels: claude, codexModels: codex, modes: modes, mode: session.mode.id, presets: presets,
                      fastMode: session.supportsFastMode ? session.fastMode : nil)
+    }
+
+    /// A chat that's never saved, set up as a new one would be, then with `picks` applied:
+    /// the phone shows its options while you choose, before anything is created.
+    static func draftChat(_ picks: Companion.SettingsRequest, studio: Studio?) -> ChatSession {
+        let defaults = AppPreferences.defaults
+        var record = ConversationRecord(model: defaults.string(forKey: "defaultModel") ?? "default",
+                                        effort: defaults.string(forKey: "defaultEffort") ?? "", personality: .friendly)
+        record.activeBackend = Backend(rawValue: defaults.string(forKey: "defaultBackend") ?? "") ?? .claude
+        record.claudeMode = PermissionModes.defaultClaude
+        record.studioID = studio?.id
+        record.studioFolder = studio?.folder
+        let draft = ChatSession(record: record)
+        if let id = picks.preset, let preset = ModelPresets.shared.presets.first(where: { $0.id == id }) {
+            ModelPresets.shared.apply(preset, to: draft)
+        }
+        var rest = picks
+        rest.preset = nil
+        apply(rest, to: draft)
+        return draft
     }
 
     /// Changes a chat's settings the way the Mac's controls do.

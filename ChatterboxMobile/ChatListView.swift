@@ -37,6 +37,8 @@ struct ChatListView: View {
     @State private var appearance = false
     @State private var notificationSettings = false
     @State private var showingActivity = false
+    @State private var startingNewChat = false
+    @State private var newChatStudio: UUID?
     @State private var activityPick: UUID?
     @State private var selection: UUID?
     /// The chat that's open, kept if it drops out of the list (archived on the Mac).
@@ -110,6 +112,9 @@ struct ChatListView: View {
             // Opening a chat while the sheet is still closing is dropped; wait until it's gone.
             if let id = activityPick { activityPick = nil; MobilePushNotifications.shared.pendingChat = id }
         }) { MobileActivityView { activityPick = $0 }.environment(store) }
+        .sheet(isPresented: $startingNewChat) {
+            MobileNewChatSheet(studios: newChatStudios, start: { open($0.summary) }, studio: newChatStudio).environment(store)
+        }
         .sheet(isPresented: $notificationSettings) {
             NavigationStack {
                 MobileNotificationSettings().environment(store)
@@ -513,30 +518,18 @@ struct ChatListView: View {
     }
 
     /// New chats: on their own, or in a Studio.
+    /// Opens New Chat, where the agent, model, effort and permissions are picked first.
+    /// On the Studios page it starts in the first Studio.
     private var newChatMenu: some View {
-        Menu {
-            Button { newChat(studio: nil, backend: "claude") } label: { Label("New Claude Chat", systemImage: "sparkle") }
-            Button { newChat(studio: nil, backend: "codex") } label: { Label("New Codex Chat", systemImage: "terminal") }
-            let studios = (store.chatList?.groups ?? []).filter { $0.kind == .studio }
-            if !studios.isEmpty {
-                Section("In a Studio") {
-                    ForEach(studios) { group in
-                        Button { newChat(studio: UUID(uuidString: String(group.id.dropFirst("studio-".count))), backend: nil) } label: {
-                            Label(group.title, systemImage: "paintpalette")
-                        }
-                    }
-                }
-            }
-        } label: {
+        Button { newChatStudio = page == .studios ? newChatStudios.first?.id : nil; startingNewChat = true } label: {
             Image(systemName: "square.and.pencil")
         }
         .accessibilityLabel("New Chat")
     }
 
-    private func newChat(studio: UUID?, backend: String?) {
-        Task {
-            if let detail = try? await store.newChat(in: studio, backend: backend) { open(detail.summary) }
-            await store.loadChats()
+    private var newChatStudios: [MobileNewChatSheet.Studio] {
+        (store.chatList?.groups ?? []).filter { $0.kind == .studio }.compactMap { group in
+            (group.studioID ?? UUID(uuidString: String(group.id.dropFirst("studio-".count)))).map { .init(id: $0, name: group.title) }
         }
     }
 

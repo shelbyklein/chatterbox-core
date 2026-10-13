@@ -211,9 +211,19 @@ final class MobileStore {
 
     // MARK: Chat settings and management
 
-    func newChat(in studio: UUID?, backend: String?) async throws -> Companion.ChatDetail {
-        let body = try JSONEncoder().encode(Companion.NewChatRequest(studio: studio, backend: backend))
+    func newChat(in studio: UUID?, backend: String?, preset: UUID? = nil, settings: Companion.SettingsRequest? = nil) async throws -> Companion.ChatDetail {
+        let body = try JSONEncoder().encode(Companion.NewChatRequest(studio: studio, backend: backend, preset: preset, settings: settings))
         return try await call("/v1/chats", method: "POST", body: body)
+    }
+
+    /// What a new chat would start with, given the choices so far (nothing is created).
+    func newChatOptions(_ picks: Companion.SettingsRequest, studio: UUID?) async throws -> Companion.ChatOptions {
+        var query = URLComponents()
+        query.queryItems = [("backend", picks.backend), ("model", picks.model), ("effort", picks.effort), ("mode", picks.mode),
+                            ("preset", picks.preset?.uuidString), ("fastMode", picks.fastMode.map { $0 ? "true" : "false" }),
+                            ("studio", studio?.uuidString)]
+            .compactMap { name, value in value.map { URLQueryItem(name: name, value: $0) } }
+        return try await call("/v1/new-chat-options" + (query.percentEncodedQuery.map { "?" + $0 } ?? ""))
     }
 
     func change(_ settings: Companion.SettingsRequest, in chat: UUID) async throws -> Companion.ChatDetail {

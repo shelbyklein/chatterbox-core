@@ -7,13 +7,30 @@ struct ChatSettingsSheet: View {
     let apply: (Companion.SettingsRequest) -> Void
     @Environment(\.dismiss) private var dismiss
 
+    var body: some View {
+        NavigationStack {
+            ChatSettingsForm(options: options, apply: apply)
+                .navigationTitle("Chat Settings")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+        }
+    }
+}
+
+/// The settings themselves, for a chat (Chat Settings) or one about to start (New Chat);
+/// `leading` goes above them (New Chat's "Start in").
+struct ChatSettingsForm<Leading: View>: View {
+    let options: Companion.ChatOptions
+    let apply: (Companion.SettingsRequest) -> Void
+    @ViewBuilder var leading: () -> Leading
+
     private var isCodex: Bool { options.backend == "codex" }
     private var models: [Companion.ModelOption] { isCodex ? options.codexModels : options.claudeModels }
     private var currentModel: Companion.ModelOption? { models.first { $0.id == options.model } }
 
     var body: some View {
-        NavigationStack {
             Form {
+                leading()
                 if !options.presets.isEmpty {
                     Section("Presets") {
                         // Four to a row: small tiles, so effort and permissions fit below at half height.
@@ -74,10 +91,6 @@ struct ChatSettingsSheet: View {
                     }
                 }
             }
-            .navigationTitle("Chat Settings")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-        }
     }
 
     private func row(_ title: String, detail: String, isOn: Bool) -> some View {
@@ -91,8 +104,17 @@ struct ChatSettingsSheet: View {
         }
     }
 
+}
+
+extension ChatSettingsForm where Leading == EmptyView {
+    init(options: Companion.ChatOptions, apply: @escaping (Companion.SettingsRequest) -> Void) {
+        self.init(options: options, apply: apply) { EmptyView() }
+    }
+}
+
+enum ChatSettingsLabels {
     /// "xhigh" → "Extra High", the way the Mac names them.
-    static func label(_ effort: String) -> String {
+    static func effort(_ effort: String) -> String {
         effort == "xhigh" ? "Extra High" : effort.capitalized
     }
 }
@@ -164,7 +186,7 @@ private struct EffortSlider: View {
     private var isDefault: Bool { position == nil && effort.isEmpty }
 
     private func label(_ index: Int) -> String {
-        let name = ChatSettingsSheet.label(efforts[index])
+        let name = ChatSettingsLabels.effort(efforts[index])
         return isDefault && efforts[index] == defaultEffort ? "\(name) (default)" : name
     }
 
@@ -195,7 +217,7 @@ private struct EffortSlider: View {
                 .accessibilityValue(label(shown))
                 HStack {
                     ForEach(efforts.indices, id: \.self) { index in
-                        Text(efforts[index] == "xhigh" ? "X-High" : ChatSettingsSheet.label(efforts[index]))
+                        Text(efforts[index] == "xhigh" ? "X-High" : ChatSettingsLabels.effort(efforts[index]))
                             .font(.caption2)
                             .lineLimit(1)
                             .minimumScaleFactor(0.6)

@@ -266,6 +266,8 @@ enum Companion {
         var project: UUID? = nil
         /// A preset to start with (its agent, model and effort).
         var preset: UUID? = nil
+        /// Settings chosen before starting (model, effort, permissions), applied after the preset.
+        var settings: SettingsRequest? = nil
     }
 
     /// A model preset, for agents: its nickname and what it switches to.
