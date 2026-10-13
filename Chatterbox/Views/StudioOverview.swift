@@ -124,6 +124,8 @@ struct ChatHomeView: View {
         }
         // The window's theme (Settings → Appearance), else the system's window color.
         .background(Theme.currentBackground ?? Color(nsColor: .windowBackgroundColor))
+        // Studios returns here, not to a session, until one is opened again.
+        .onAppear { model.rememberStudiosOverview() }
         .accessibilityLabel(selectedStudio.map { "Studio \($0.name)" } ?? "Pinned Studio sessions")
     }
 

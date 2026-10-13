@@ -333,21 +333,23 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
     @objc private func pickView(_ sender: NSToolbarItemGroup) {
         switch sender.selectedIndex {
         case 1:
-            model.showingCommandCenter = false; model.showingSettings = false
-            showStudios()
+            model.showView(.studios)
         case 2:
             model.showingHome = false; model.showingSettings = false
             model.showingCommandCenter = true
         case 3:
             model.showingAutomations = true
         case 4:
-            model.studioSidebarID = nil
-            model.showingChatsSidebar = true
             AppPreferences.defaults.set(false, forKey: "sidebarChatsCollapsed")
-            model.showingAutomations = false; model.showingHome = false
-            model.showingCommandCenter = false; model.showingSettings = false
+            model.showView(.chats)
         default:
-            showChats()
+            // Already in Projects (a narrow window): the sidebar slides over instead.
+            if !model.showingHome, !model.showingCommandCenter, !model.showingAutomations, !model.showingSettings,
+               !model.showingChatsSidebar, model.studioSidebarID == nil {
+                showChats()
+            } else {
+                model.showView(.projects)
+            }
         }
         apply()
     }

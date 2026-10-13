@@ -17,6 +17,8 @@ final class AppModel {
             showingAutomations = false
             showingCommandCenter = false
             if let session = sessions.first(where: { $0.id == selectedID }) {
+                // Each view keeps the session it was last in (see showView).
+                rememberSession(session)
                 studioSidebarID = session.record.studioID
                 showingChatsSidebar = studioSidebarID == nil && session.record.projectFolder == nil
                 if studioSidebarID != nil { AppPreferences.defaults.set(false, forKey: "sidebarStudiosCollapsed") }
@@ -29,6 +31,54 @@ final class AppModel {
             }}
         }
     }
+    /// The main views, each returning to where it was left.
+    enum MainView: String { case projects, studios, chats }
+
+    /// The view a session belongs to: its Studio's, its project's (worktrees and Sidechats
+    /// too), or Chats.
+    static func view(of session: ChatSession) -> MainView {
+        if session.record.studioID != nil { return .studios }
+        if session.record.projectFolder != nil || session.record.worktreeOf != nil || session.record.sidechatProjectFolder != nil { return .projects }
+        return .chats
+    }
+
+    /// Each view's last session (or "overview" for the Studios page), by view.
+    @ObservationIgnored private var lastInView: [String: String] = AppPreferences.defaults.dictionary(forKey: "lastSessionInView") as? [String: String] ?? [:]
+
+    private func rememberSession(_ session: ChatSession) {
+        guard !session.isDot else { return }
+        lastInView[Self.view(of: session).rawValue] = session.id.uuidString
+        AppPreferences.defaults.set(lastInView, forKey: "lastSessionInView")
+    }
+
+    /// The Studios overview page, rather than a Studio session, was the last place in Studios.
+    func rememberStudiosOverview() {
+        lastInView[MainView.studios.rawValue] = "overview"
+        AppPreferences.defaults.set(lastInView, forKey: "lastSessionInView")
+    }
+
+    /// Switches to a main view, back to the session it was last in. With none (or it's gone):
+    /// Projects and Chats open their newest; Studios opens its overview page.
+    func showView(_ view: MainView) {
+        showingSettings = false; showingCommandCenter = false; showingAutomations = false
+        let last = lastInView[view.rawValue].flatMap(UUID.init(uuidString:))
+            .flatMap { id in activeSessions.first { $0.id == id && Self.view(of: $0) == view && !$0.isDot } }
+        switch view {
+        case .studios:
+            if let last { selectedID = last.id; return }
+            AppPreferences.defaults.set("Studios", forKey: "macHomePage")
+            showingHome = true
+        case .projects, .chats:
+            showingHome = false
+            if let session = last ?? (view == .projects ? sidebarProjects.first : sidebarChats.first) {
+                selectedID = session.id
+            } else {
+                studioSidebarID = nil
+                showingChatsSidebar = view == .chats
+            }
+        }
+    }
+
     var showingCloneFromGitHub = false
     var showingNewProject = false
     /// Projects and standalone chats have separate sidebar pages in the Mac UI.
