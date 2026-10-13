@@ -31,7 +31,8 @@ struct MobileNewChatSheet: View {
                         }
                         if let problem { Text(problem).font(.footnote).foregroundStyle(.orange) }
                     }
-                    .tint(MobileConversationStyle.accent(for: options.backend))
+                    // As in Chat Settings: the app's blue, whichever agent is picked.
+                    .tint(.blue)
                 } else if let problem {
                     ContentUnavailableView("Can't reach the Mac", systemImage: "wifi.exclamationmark", description: Text(problem))
                 } else {
@@ -49,6 +50,7 @@ struct MobileNewChatSheet: View {
             }
             .task(id: studio) { await load() }
         }
+        .tint(.blue)
     }
 
     /// One change: switching agent or preset starts that part over; the rest add up.

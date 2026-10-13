@@ -244,7 +244,9 @@ struct ChatDetailView: View {
         .sheet(isPresented: $showingSettings) {
             if let options = detail?.options {
                 ChatSettingsSheet(options: options) { change in perform { try await store.change(change, in: chat.id) } }
-                    .tint(agentAccent)
+                    // The app's own blue, whichever agent: the agent's color stays on its
+                    // icons and presets, and orange stays the warning for unrestricted access.
+                    .tint(.blue)
                     .presentationDetents(Self.settingsDetents)
             }
         }
