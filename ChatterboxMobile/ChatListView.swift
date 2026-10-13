@@ -4,11 +4,21 @@ import SwiftUI
 /// On iPad the open chat sits beside them; on iPhone it opens over them.
 struct ChatListView: View {
     enum Page: String, CaseIterable, Identifiable {
-        case projects, studios, chats
+        /// Every session at once: Projects, Studios and Chats, each under its heading.
+        case all, projects, studios, chats
         var id: String { rawValue }
         var title: String { rawValue.capitalized }
-        var icon: String { self == .projects ? "folder" : self == .studios ? "paintpalette" : "bubble.left.and.bubble.right" }
+        var icon: String {
+            switch self {
+            case .all: "tray.full"
+            case .projects: "folder"
+            case .studios: "paintpalette"
+            case .chats: "bubble.left.and.bubble.right"
+            }
+        }
+        /// The one kind of group the page lists (All lists every kind but Golem's).
         var kind: Companion.ChatGroup.Kind { self == .projects ? .projects : self == .studios ? .studio : .chats }
+        func includes(_ kind: Companion.ChatGroup.Kind) -> Bool { self == .all ? kind != .dot : kind == self.kind }
     }
     /// On iPhone Golem has his own tab, so the list leaves him out.
     var hidesAssistant = true
@@ -126,7 +136,7 @@ struct ChatListView: View {
             await store.loadChats()
             if let fixedPage {
                 let kind = store.chatList?.groups.first { $0.chats.contains { $0.id == id } }?.kind
-                guard kind == fixedPage.kind || (kind == nil && fixedPage == .chats) else { return }
+                guard kind.map(fixedPage.includes) ?? (fixedPage == .chats), fixedPage != .all || kind == nil else { return }
             }
             if let chat = allChats.first(where: { $0.id == id }) {
                 open(chat); MobilePushNotifications.shared.pendingChat = nil
@@ -208,7 +218,7 @@ struct ChatListView: View {
             group.chats = group.chats.filter { !MobileSidequests.listedWithParent($0, in: everyChat) }
             return group
         }
-        return sorted(filtered(search.isEmpty || fixedPage != nil ? lists.filter { $0.kind == page.kind } : lists.filter { $0.kind != .dot }))
+        return sorted(filtered(search.isEmpty || fixedPage != nil ? lists.filter { page.includes($0.kind) } : lists.filter { $0.kind != .dot }))
     }
 
     /// The groups in the chosen order. A project's worktrees and sidechats, listed right after
@@ -264,11 +274,11 @@ struct ChatListView: View {
 
     /// Each Studio is named; the Projects and Chats pages are their own heading, except in a search.
     private func showsHeader(_ group: Companion.ChatGroup) -> Bool {
-        group.kind != .dot && (group.kind == .studio || sort == .tag || (!search.isEmpty && fixedPage == nil))
+        group.kind != .dot && (group.kind == .studio || page == .all || sort == .tag || (!search.isEmpty && fixedPage == nil))
     }
 
     private func waiting(on page: Page) -> Int {
-        (store.chatList?.groups ?? []).filter { $0.kind == page.kind }.flatMap(\.chats).filter(\.isWaitingOnYou).count
+        (store.chatList?.groups ?? []).filter { page.includes($0.kind) }.flatMap(\.chats).filter(\.isWaitingOnYou).count
     }
 
     /// Projects · Studios · Chats, with a count of chats waiting on you on each.
@@ -291,8 +301,8 @@ struct ChatListView: View {
     private var emptyPage: some View {
         if store.chatList != nil, groups.isEmpty {
             if search.isEmpty {
-                ContentUnavailableView("No \(page.title)", systemImage: page.icon,
-                                       description: Text(page == .studios ? "Studios you make on the Mac show up here." :
+                ContentUnavailableView(page == .all ? "No Sessions" : "No \(page.title)", systemImage: page.icon,
+                                       description: Text(page == .all ? "Projects, Studios and chats from the Mac show up here." : page == .studios ? "Studios you make on the Mac show up here." :
                                                          page == .projects ? "Projects you open on the Mac show up here." :
                                                          "Chats outside a project or Studio show up here."))
             } else {
@@ -317,7 +327,7 @@ struct ChatListView: View {
                             if showsHeader(group) { header(group).font(.footnote.weight(.semibold)).foregroundStyle(.secondary).textCase(.uppercase) }
                             LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
                                 ForEach(group.chats) { chat in
-                                    ChatCard(chat: chat, showsThumbnail: page == .studios, selected: sizeClass == .regular && selection == chat.id, activity: sort == .active ? Self.activityLine(chat) : nil) { open(chat) }
+                                    ChatCard(chat: chat, showsThumbnail: page == .studios || (page == .all && group.kind == .studio), selected: sizeClass == .regular && selection == chat.id, activity: sort == .active ? Self.activityLine(chat) : nil) { open(chat) }
                                         .contextMenu { chatActions(chat) }
                                 }
                             }
