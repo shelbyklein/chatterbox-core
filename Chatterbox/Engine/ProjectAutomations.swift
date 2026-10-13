@@ -22,8 +22,15 @@ struct ProjectAutomation: Codable, Identifiable, Equatable {
     var hour: Int = 9
     var minute: Int = 0
     var enabled = true
-    /// A model preset the thread switches to before each run (optional).
+    /// A model preset each run starts with (older automations); `backend`/`model`/`effort`,
+    /// when set, are what runs use instead.
     var preset: UUID?
+    /// "claude" or "codex"; nil means the project chat's own agent.
+    var backend: String?
+    /// The agent's model id; nil means its default.
+    var model: String?
+    /// nil means the model's default effort.
+    var effort: String?
     var createdAt = Date()
 }
 
@@ -109,8 +116,8 @@ enum ProjectAutomations {
         \(automation.instructions.trimmingCharacters(in: .whitespacesAndNewlines))
 
         Rules for every automation run:
-        - Report what you found first, and ask before changing anything. Wait for my answer in this thread.
-        - Never change staging or production without my explicit approval in this thread, for that environment.
+        - Report what you found first, and ask before changing anything: ask with your question tool and wait for my answer.
+        - Never change staging or production without my explicit approval, for that environment.
         - Back up before you change anything, and say where the backup is.
         - If there's nothing to do, say so in one line.
         """

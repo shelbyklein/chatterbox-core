@@ -148,6 +148,28 @@ enum Prompts {
         """
     }
 
+    /// An automation run, done as a sidequest of its project's chat: what it's for, without
+    /// the project chat's transcript (it runs on its own schedule, apart from that conversation).
+    static func automationStart(title: String, project: String) -> String {
+        """
+        <sidequest>
+        This is a scheduled run of the automation \u{201C}\(title)\u{201D} for the project \u{201C}\(project)\u{201D}, done as a sidequest of the project's main chat. Its instructions are in the next message. When you finish, your final reply goes to that chat automatically, so end with a short report: what you checked, what you found, what you changed, and anything that needs the user.
+        </sidequest>
+        """
+    }
+
+    /// An automation run's report, sent to its project's chat.
+    static func automationResult(title: String, reply: String) -> String {
+        """
+        <sidequest_result>
+        The automation \u{201C}\(title)\u{201D} ran as a sidequest of this chat. This is its report:
+
+        \(reply)
+        </sidequest_result>
+        Tell the user briefly what the automation found, and anything that needs them. Don't act on it unless they ask.
+        """
+    }
+
     /// A sidequest's answer, sent back to the chat it came from (`from` is the agent that went).
     static func sidequestResult(from agent: Backend, task: String, reply: String) -> String {
         let other = agent.label

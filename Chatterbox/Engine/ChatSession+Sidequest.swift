@@ -32,11 +32,48 @@ extension ChatSession {
         return record
     }
 
+    /// The agent an automation runs on: its own, else its preset's (older ones), else the
+    /// project chat's.
+    static func automationBackend(_ automation: ProjectAutomation, project: ChatSession) -> Backend {
+        let preset = automation.preset.flatMap { id in ModelPresets.shared.presets.first { $0.id == id } }
+        return automation.backend.flatMap(Backend.init(rawValue:)) ?? (automation.model == nil ? preset?.backend : nil) ?? project.record.backend
+    }
+
+    /// An automation's run: a sidequest of its project's chat on the automation's agent, told
+    /// what it is rather than handed the chat's transcript.
+    static func automationRunRecord(_ automation: ProjectAutomation, of project: ChatSession, number: Int, manual: Bool) -> ConversationRecord {
+        var record = sidequestRecord(of: project, anchor: project, number: number, backend: automationBackend(automation, project: project),
+                                     task: ProjectAutomations.message(for: automation, manual: manual))
+        record.automationID = automation.id
+        record.title = "Automation \u{00B7} " + automation.title
+        record.pendingHandoff = Prompts.automationStart(title: automation.title, project: project.projectName)
+        return record
+    }
+
+    /// Once its record is in: the automation's model and effort (or its preset), then its task.
+    func startAutomationRun(_ automation: ProjectAutomation, from project: ChatSession) {
+        let codex = record.backend == .codex
+        if automation.backend == nil, automation.model == nil,
+           let preset = automation.preset.flatMap({ id in ModelPresets.shared.presets.first { $0.id == id } }) {
+            ModelPresets.shared.apply(preset, to: self)
+        }
+        if let model = automation.model { codex ? setCodexModel(model.isEmpty ? nil : model) : setModel(model) }
+        if let effort = automation.effort { codex ? setCodexEffort(effort.isEmpty ? nil : effort) : setEffort(effort) }
+        beginSidequest(from: project, label: "Automation \u{201C}\(automation.title)\u{201D}")
+        if let index = record.items.lastIndex(where: { $0.kind == .user }) {
+            record.items[index].automatic = true
+            record.items[index].detail = "Automation \u{00B7} \(automation.title)"
+        }
+        onChange?(self)
+    }
+
     /// Sends the task once the sidequest exists, and marks it in the chat it came from.
-    func beginSidequest(from parent: ChatSession) {
+    /// `label` names an automation run in place of the task.
+    func beginSidequest(from parent: ChatSession, label: String? = nil) {
         guard let task = record.sidequestTask else { return }
         send(task)
-        parent.record.items.append(DisplayItem(kind: .notice, text: "Sent \(record.backend.label) on a sidequest: \u{201C}\(task)\u{201D}. Its answer comes back here when it's done.",
+        parent.record.items.append(DisplayItem(kind: .notice, text: label.map { "\($0) is running as a sidequest with \(record.backend.label). Its report comes back here when it's done." }
+                                                    ?? "Sent \(record.backend.label) on a sidequest: \u{201C}\(task)\u{201D}. Its answer comes back here when it's done.",
                                                sidequest: id))
         parent.onChange?(parent)
     }
@@ -60,10 +97,12 @@ extension ChatSession {
     func returnSidequest(to parent: ChatSession) {
         guard let reply = unreturnedSidequestReply else { return }
         record.sidequestReturned = reply.id
-        parent.send(Prompts.sidequestResult(from: record.backend, task: record.sidequestTask ?? title, reply: reply.text))
+        let automation = record.automationID != nil
+        parent.send(automation ? Prompts.automationResult(title: title, reply: reply.text)
+                               : Prompts.sidequestResult(from: record.backend, task: record.sidequestTask ?? title, reply: reply.text))
         if let index = parent.record.items.lastIndex(where: { $0.kind == .user }) {
             parent.record.items[index].automatic = true
-            parent.record.items[index].detail = "\(record.backend.label) is back from its sidequest"
+            parent.record.items[index].detail = automation ? "\(title) reported back" : "\(record.backend.label) is back from its sidequest"
             parent.record.items[index].sidequest = id
         }
         parent.onChange?(parent)

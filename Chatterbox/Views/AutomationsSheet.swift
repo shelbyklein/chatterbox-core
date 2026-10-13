@@ -13,6 +13,12 @@ struct AutomationsSheet: View {
     @State private var problem: String?
     @State private var running: UUID?
 
+    init(projectFolder: String, projectName: String, initiallyEditing: UUID? = nil) {
+        self.projectFolder = projectFolder
+        self.projectName = projectName
+        _editing = State(initialValue: initiallyEditing)
+    }
+
     private var mine: [ProjectAutomation] { automations.filter { $0.projectFolder == projectFolder } }
 
     var body: some View {
@@ -37,7 +43,7 @@ struct AutomationsSheet: View {
                 ContentUnavailableView {
                     Label("No automations yet", systemImage: "clock.arrow.circlepath")
                 } description: {
-                    Text("An automation runs on a schedule in this project's own Automation thread, separate from its main chat. Each run reports what it finds and asks before changing anything.")
+                    Text("An automation runs on a schedule as a sidequest of this project's main chat, with the agent and model you pick. Each run reports back to the chat, asks before changing anything, and then archives itself.")
                 } actions: {
                     Button("Keep WordPress Updated") { add(.wordpress) }
                 }
@@ -73,7 +79,8 @@ struct AutomationsSheet: View {
             Button(running == automation.id ? "Starting\u{2026}" : "Run Now") { runNow(automation) }
                 .disabled(running != nil || !RuntimeClient.usesDaemon)
             if let thread = state[automation.id.uuidString]?.threadID, model.sessions.contains(where: { $0.id == thread }) {
-                Button("Open Thread") { model.selectedID = thread; dismiss() }
+                Button("Last Run") { model.selectedID = thread; dismiss() }
+                    .help("Open the last run's sidequest (archived once it reported back)")
             }
             Button(isEditing ? "Done" : "Edit") { editing = isEditing ? nil : automation.id }
         }
@@ -84,18 +91,17 @@ struct AutomationsSheet: View {
             }
             DatePicker("At", selection: Binding(get: { time(automation) }, set: { setTime(automation, $0) }),
                        displayedComponents: .hourAndMinute)
-            Picker("Preset", selection: binding(automation, \.preset)) {
-                Text("The thread's own model").tag(UUID?.none)
-                ForEach(ModelPresets.shared.presets) { preset in
-                    Text(preset.title).tag(UUID?.some(preset.id))
-                }
+            AutomationModelPicker(automation: current(automation), projectBackend: projectBackend) { change in
+                guard let index = automations.firstIndex(where: { $0.id == automation.id }) else { return }
+                change(&automations[index])
+                commit()
             }
             VStack(alignment: .leading, spacing: 6) {
                 Text("What each run does").font(.subheadline)
                 TextEditor(text: binding(automation, \.instructions))
                     .font(.callout)
                     .frame(minHeight: 160)
-                Text("Every run also follows these rules: report first and ask before changing anything, never touch staging or production without your approval in the thread, and back up first.")
+                Text("Every run also follows these rules: report first and ask before changing anything, never touch staging or production without your approval, and back up first. Its report goes to this project's chat, and the run archives itself.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             HStack {
@@ -153,9 +159,20 @@ struct AutomationsSheet: View {
         commit()
     }
 
+    private func current(_ automation: ProjectAutomation) -> ProjectAutomation {
+        automations.first { $0.id == automation.id } ?? automation
+    }
+
+    /// The agent the project's chat uses: a new automation starts on it.
+    private var projectBackend: Backend {
+        model.activeSessions.first { $0.record.projectFolder == projectFolder && $0.record.worktreeOf == nil && $0.record.sidechatOf == nil }?.record.backend ?? .claude
+    }
+
     private func add(_ template: ProjectAutomation.Template) {
-        let automation = ProjectAutomation(projectFolder: projectFolder, title: template.defaultTitle, template: template,
+        var automation = ProjectAutomation(projectFolder: projectFolder, title: template.defaultTitle, template: template,
                                            instructions: template.defaultInstructions)
+        // Opens editing, with the agent and model to pick right away.
+        automation.backend = projectBackend.rawValue
         automations.append(automation)
         editing = automation.id
         commit()
@@ -266,6 +283,65 @@ struct AutomationsCenter: View {
         }
         .task {
             while !Task.isCancelled { reload(); do { try await Task.sleep(for: .seconds(15)) } catch { return } }
+        }
+    }
+}
+
+/// An automation's agent, model and effort, each run's own; a preset fills all three.
+struct AutomationModelPicker: View {
+    let automation: ProjectAutomation
+    let projectBackend: Backend
+    let change: ((inout ProjectAutomation) -> Void) -> Void
+
+    private var backend: Backend {
+        automation.backend.flatMap(Backend.init(rawValue:))
+            ?? (automation.model == nil ? automation.preset.flatMap { id in ModelPresets.shared.presets.first { $0.id == id }?.backend } : nil)
+            ?? projectBackend
+    }
+    private var claudeModels: [ClaudeCodeModel] { ClaudeModels.shared.models }
+    private var codexModels: [CodexModelInfo] { CodexAppServer.shared.models.filter { !$0.hidden || $0.model == automation.model } }
+    private var efforts: [String] {
+        switch backend {
+        case .claude: claudeModels.first { $0.value == (automation.model ?? "default") }?.efforts ?? []
+        case .codex: codexModels.first { $0.model == automation.model }?.efforts ?? codexModels.first(where: \.isDefault)?.efforts ?? []
+        }
+    }
+
+    var body: some View {
+        Picker("Agent", selection: Binding(get: { backend }, set: { new in
+            change { $0.backend = new.rawValue; $0.model = nil; $0.effort = nil; $0.preset = nil }
+        })) {
+            Text("Claude").tag(Backend.claude)
+            Text("Codex").tag(Backend.codex)
+        }
+        .pickerStyle(.segmented)
+        Picker("Model", selection: Binding(get: { automation.model ?? "" }, set: { new in
+            change { $0.backend = backend.rawValue; $0.model = new.isEmpty ? nil : new; $0.effort = nil; $0.preset = nil }
+        })) {
+            Text("Default").tag("")
+            switch backend {
+            case .claude: ForEach(claudeModels.filter { $0.value != "default" }) { Text($0.displayName).tag($0.value) }
+            case .codex: ForEach(codexModels) { Text($0.displayName).tag($0.model) }
+            }
+        }
+        if !efforts.isEmpty {
+            Picker("Effort", selection: Binding(get: { automation.effort ?? "" }, set: { new in
+                change { $0.backend = backend.rawValue; $0.effort = new.isEmpty ? nil : new; $0.preset = nil }
+            })) {
+                Text("Default").tag("")
+                ForEach(efforts, id: \.self) { Text(RuntimePaths.effortLabel($0)).tag($0) }
+            }
+        }
+        if !ModelPresets.shared.presets.isEmpty {
+            Menu("Fill from Preset") {
+                ForEach(ModelPresets.shared.presets) { preset in
+                    Button(preset.title) {
+                        change { $0.backend = preset.backend.rawValue; $0.model = preset.model; $0.effort = preset.effort; $0.preset = nil }
+                    }
+                }
+            }
+            .fixedSize()
+            .help("Set the agent, model and effort from one of your presets")
         }
     }
 }
