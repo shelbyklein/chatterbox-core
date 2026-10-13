@@ -72,9 +72,9 @@ struct SettingsView: View {
         /// Grouped in the list: everyday settings, then integrations, then the technical ones.
         static var groups: [(String?, [Page])] {
             #if GOLEM_APP
-            let everyday: [Page] = [.notifications, .pins, .models, .newChats, .behavior, .golem, .appearance, .instructions]
+            let everyday: [Page] = [.notifications, .models, .newChats, .behavior, .golem, .appearance, .instructions]
             #else
-            let everyday: [Page] = [.notifications, .pins, .models, .newChats, .behavior, .appearance, .instructions]
+            let everyday: [Page] = [.notifications, .models, .newChats, .behavior, .appearance, .instructions]
             #endif
             return [(nil, everyday), ("Connections", [.secrets, .plugins, .iPhone]), ("Advanced", [.proxy, .agents, .diagnostics])]
         }

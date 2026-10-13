@@ -39,7 +39,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         /// middle, its image library included (in the place item, so it shares their pill); usage and the terminal; Settings last.
         /// New chats start from the sidebar, the Studios page and Cmd-N, not the toolbar.
         static let all: [NSToolbarItem.Identifier] = [title, views, .flexibleSpace,
-                                                       pins, tone, place, repo, golem, .flexibleSpace,
+                                                       tone, place, repo, golem, .flexibleSpace,
                                                        usage, terminal, finished, .space, settings, newChat]
         static let chat: [NSToolbarItem.Identifier] = [tone, place, repo, golem, usage, images, terminal]
     }
@@ -74,7 +74,6 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
         toolbar.allowsUserCustomization = false
-        toolbar.centeredItemIdentifiers = [ID.pins]
         #if DEBUG
         Self.made.append(self)
         #endif

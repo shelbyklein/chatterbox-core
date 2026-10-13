@@ -414,13 +414,8 @@ extension ContentView {
                 .buttonStyle(.plain)
             }
         } label: {
-            let place = PinPlace(key: "studio:" + studio.id.uuidString, name: studio.name)
             StudioRow(studio: studio, chats: chats, collapsed: !expanded.wrappedValue,
-                      isDropTarget: dropStudio == studio.id, pins: PinStore.shared.pins(in: place),
-                      onOpenPin: {
-                          // Beside a page, the Studio's own chat (the one open, or its latest).
-                          if model.selected?.record.studioID != studio.id, let latest = chats.first { model.selectedID = latest.id }
-                      },
+                      isDropTarget: dropStudio == studio.id,
                       onNewChat: { model.newChat(in: studio) })
                 .contentShape(Rectangle())
                 .onTapGesture { expanded.wrappedValue.toggle() }
@@ -436,7 +431,6 @@ extension ContentView {
                     Divider()
                     Button("Studio Instructions\u{2026}") { model.editingStudioInstructions = studio.id }
                     Button("Edit design.md") { studio.ensureDesignFile(); openForEditing(studio.designFile) }
-                    Button("Add Pin\u{2026}") { model.pinSheet = PinSheetRequest(place: place, current: place) }
                     Button("Rename Studio\u{2026}") {
                         studioName = studio.name
                         renamingStudio = studio
@@ -588,24 +582,17 @@ extension ContentView {
     }
 
     private func row(_ session: ChatSession, number: Int?, card: Bool = false, expanded: Bool = false, iconOnly: Bool = false, forceList: Bool = false) -> some View {
-        let place = session.record.projectFolder != nil ? model.pinPlace(for: session) : nil
         return Group {
             if !forceList && (card || sidebarCards) {
                 ThreadCard(session: session, expanded: expanded, iconOnly: iconOnly, selected: model.selectedID == session.id, showsThumbnail: model.studioSidebarID != nil || model.showingHome) {
                     model.selectedID = session.id
                 }
             } else {
-                SidebarRow(session: session, shortcut: nil, pins: PinStore.shared.pins(in: place),
-                           onOpenPin: { model.selectedID = session.id })
+                SidebarRow(session: session, shortcut: nil)
                     // Settings → Appearance → Sidebar: room between rows.
                     .padding(.vertical, sidebarRowSpacing / 2 + (model.showingChatsSidebar ? 6 : 0))
             }
         }
-            // Drop a link or file on a project to pin it there.
-            .onDrop(of: [.url, .fileURL], isTargeted: nil) { providers in
-                guard let place else { return false }
-                return PinPills.drop(providers, into: place)
-            }
             .contentShape(Rectangle())
             // The open chat is white with dark text, so it's obvious at a glance; drawn in the
             // light appearance so its secondary text and pills stay readable on white.
@@ -627,7 +614,6 @@ extension ContentView {
 
     /// A thread's right-click menu: the sidebar's, and the Studios page's cards and rows.
     @ViewBuilder func threadMenu(_ session: ChatSession) -> some View {
-        let place = session.record.projectFolder != nil ? model.pinPlace(for: session) : nil
         if model.canPinThread(session), session.record.archivedAt == nil {
             Button(model.isPinnedThread(session) ? "Unpin" : "Pin to Top") { model.togglePinnedThread(session) }
             Divider()
@@ -644,9 +630,6 @@ extension ContentView {
         }
         if let folder = session.record.projectFolder {
             ProjectStudioLinkMenu(folder: folder)
-            if let place {
-                Button("Add Pin\u{2026}") { model.pinSheet = PinSheetRequest(place: place, current: place) }
-            }
             if session.record.worktreeOf == nil {
                 Button("New Worktree\u{2026}") { worktreeName = ""; worktreeParent = session }
             } else {

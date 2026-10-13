@@ -59,8 +59,7 @@ struct QuickSwitcher: View {
         let found = chats.filter { session in
             matches([session.projectName, session.title, session.record.backend.label] + session.tags)
         }
-        let pins = PinStore.shared.visiblePins(in: model.selectedPinPlace).filter { matches([$0.title, $0.target, $0.kind.label, "pin"]) }
-        return found.map(Entry.chat) + pins.map(Entry.pin) + actions.filter { matches([$0.title]) }.map(Entry.action)
+        return found.map(Entry.chat) + actions.filter { matches([$0.title]) }.map(Entry.action)
     }
 
     var body: some View {

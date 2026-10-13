@@ -761,10 +761,9 @@ enum CompanionMapper {
         }
         for studio in model.activeStudios {
             let chats = model.chats(in: studio).flatMap { model.studioFamily(of: $0) }
-            let place = PinPlace(key: "studio:" + studio.id.uuidString, name: studio.name)
             groups.append(.init(id: "studio-" + studio.id.uuidString, kind: .studio, title: studio.name, chats: chats.map(summary),
                                 studioID: studio.id, instructions: studio.instructions,
-                                pins: PinStore.shared.pins(in: place).map(pin)))
+                                pins: nil))
         }
         let chats = model.sidebarChats.filter { !$0.items.isEmpty || $0.record.sidechatOf != nil || !model.sidechats(of: $0).isEmpty }
             .flatMap { [$0] + model.sidechats(of: $0) }
@@ -778,7 +777,7 @@ enum CompanionMapper {
             return a.endedAt > b.endedAt
         }
         return Companion.ChatList(revision: model.companionListRevision, groups: groups,
-                                  pins: PinStore.shared.globalPins.map(pin), activity: Array(activity.prefix(500)))
+                                  pins: nil, activity: Array(activity.prefix(500)))
     }
 
     static func pin(_ pin: Pin) -> Companion.Pin {
@@ -806,7 +805,7 @@ enum CompanionMapper {
                      isRunning: session.isRunning || session.hasBackgroundWork,
                      isWaitingOnYou: session.isWaitingOnYou,
                      updatedAt: session.record.updatedAt,
-                     pins: isProject ? PinStore.shared.pins(in: PinPlace(key: "project:" + (session.record.projectFolder ?? ""), name: session.projectName)).map(pin) : nil,
+                     pins: nil,
                      isDot: session.isDot ? true : nil,
                      unread: session.isDot ? Attention.shared.dotUnreadCount(session) : nil,
                      worktreeBranch: session.record.worktreeOf != nil ? (session.record.worktreeBranch ?? session.projectName) : nil,
