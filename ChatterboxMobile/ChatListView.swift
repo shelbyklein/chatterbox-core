@@ -218,7 +218,27 @@ struct ChatListView: View {
             group.chats = group.chats.filter { !MobileSidequests.listedWithParent($0, in: everyChat) }
             return group
         }
-        return sorted(filtered(search.isEmpty || fixedPage != nil ? lists.filter { page.includes($0.kind) } : lists.filter { $0.kind != .dot }))
+        let shown = filtered(search.isEmpty || fixedPage != nil ? lists.filter { page.includes($0.kind) } : lists.filter { $0.kind != .dot })
+        return sorted(page == .all ? Self.mixed(shown) : shown)
+    }
+
+    /// All's one list: every page's sessions together, newest first, each project's or chat's
+    /// worktrees and sidechats still right after it.
+    static func mixed(_ groups: [Companion.ChatGroup]) -> [Companion.ChatGroup] {
+        var families: [[Companion.ChatSummary]] = []
+        for group in groups {
+            for chat in group.chats {
+                if (chat.worktreeBranch != nil || chat.sidechatOf != nil), group.chats.first?.id != chat.id, !families.isEmpty { families[families.count - 1].append(chat) }
+                else { families.append([chat]) }
+            }
+        }
+        let chats = families.sorted { a, b in a.map(\.updatedAt).max()! > b.map(\.updatedAt).max()! }.flatMap { $0 }
+        return chats.isEmpty ? [] : [Companion.ChatGroup(id: "all", kind: .chats, title: "All Sessions", chats: chats)]
+    }
+
+    /// Studio sessions keep their picture on the All page's cards.
+    private var studioChatIDs: Set<UUID> {
+        Set((store.chatList?.groups ?? []).filter { $0.kind == .studio }.flatMap(\.chats).map(\.id))
     }
 
     /// The groups in the chosen order. A project's worktrees and sidechats, listed right after
@@ -274,7 +294,7 @@ struct ChatListView: View {
 
     /// Each Studio is named; the Projects and Chats pages are their own heading, except in a search.
     private func showsHeader(_ group: Companion.ChatGroup) -> Bool {
-        group.kind != .dot && (group.kind == .studio || page == .all || sort == .tag || (!search.isEmpty && fixedPage == nil))
+        group.kind != .dot && group.id != "all" && (group.kind == .studio || page == .all || sort == .tag || (!search.isEmpty && fixedPage == nil))
     }
 
     private func waiting(on page: Page) -> Int {
@@ -327,7 +347,7 @@ struct ChatListView: View {
                             if showsHeader(group) { header(group).font(.footnote.weight(.semibold)).foregroundStyle(.secondary).textCase(.uppercase) }
                             LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
                                 ForEach(group.chats) { chat in
-                                    ChatCard(chat: chat, showsThumbnail: page == .studios || (page == .all && group.kind == .studio), selected: sizeClass == .regular && selection == chat.id, activity: sort == .active ? Self.activityLine(chat) : nil) { open(chat) }
+                                    ChatCard(chat: chat, showsThumbnail: page == .studios || (page == .all && studioChatIDs.contains(chat.id)), selected: sizeClass == .regular && selection == chat.id, activity: sort == .active ? Self.activityLine(chat) : nil) { open(chat) }
                                         .contextMenu { chatActions(chat) }
                                 }
                             }
