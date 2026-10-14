@@ -188,6 +188,8 @@ final class ChatSession: Identifiable {
 
     nonisolated let id: UUID
     @ObservationIgnored var thumbnailLookupKey: String?
+    /// Where this chat's question and approval rows are (see `pendingRequests`).
+    @ObservationIgnored var requestRowCache = RequestRowCache()
     @ObservationIgnored var thumbnailLookupURL: URL?
     var items: [DisplayItem] { record.items }
     var title: String { record.title }
@@ -745,4 +747,12 @@ extension ChatSession {
         record.codex?.folder = parent.workingFolder
         return record
     }
+}
+
+/// Which transcript rows are questions or approvals, for the first `count` rows.
+struct RequestRowCache {
+    var count = 0
+    var firstID: UUID?
+    var rows: [Int] = []
+    var ids: [UUID] = []
 }

@@ -997,7 +997,7 @@ struct SidebarRow: View {
             Spacer(minLength: 0)
             // Waiting on you, or a finished reply you haven't seen.
             if Attention.shared.unread.contains(session.id)
-                || session.items.contains(where: { ($0.kind == .approval || $0.kind == .questions) && $0.approvalState == .pending }) {
+                || session.isWaitingOnYou {
                 Circle().fill(Color.highlight).frame(width: 7, height: 7)
                     .alignmentGuide(.firstTextBaseline, computeValue: Self.centerOnTextLine)
                     .help("Needs your attention")
@@ -1158,7 +1158,7 @@ extension ContentView {
     @ViewBuilder var sidebarColumn: some View {
         if model.studioSidebarID != nil {
             HStack(spacing: 0) {
-                StudioRail().frame(width: ChatColumns.studioRailWidth)
+                StudioRail(rename: { studio in studioName = studio.name; renamingStudio = studio }).frame(width: ChatColumns.studioRailWidth)
                 Divider()
                 sidebarSessions
             }
@@ -1708,6 +1708,8 @@ struct LinkedStudioShortcut: View {
 /// Picking one opens its newest session.
 private struct StudioRail: View {
     @Environment(AppModel.self) private var model
+    /// Opens ContentView's rename prompt.
+    let rename: (Studio) -> Void
 
     var body: some View {
         ScrollView {
@@ -1745,5 +1747,17 @@ private struct StudioRail: View {
         .buttonStyle(.plain)
         .help(studio.name)
         .accessibilityAddTraits(selected ? .isSelected : [])
+        .contextMenu {
+            Button("New Claude Chat") { model.newChat(in: studio, backend: .claude) }
+            Button("New Codex Chat") { model.newChat(in: studio, backend: .codex) }
+            Divider()
+            Button("Studio Instructions\u{2026}") { model.editingStudioInstructions = studio.id }
+            Button("Edit design.md") { studio.ensureDesignFile(); openForEditing(studio.designFile) }
+            Button("Rename Studio\u{2026}") { rename(studio) }
+            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: studio.folder)]) }
+            Button("Open Terminal Here") { model.openTerminal(at: studio.folder) }
+            Divider()
+            Button("Archive Studio") { model.archiveStudio(studio.id) }
+        }
     }
 }

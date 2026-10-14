@@ -192,7 +192,7 @@ final class Attention: NSObject, UNUserNotificationCenterDelegate {
     }
 
     private func pendingItems(_ session: ChatSession) -> [DisplayItem] {
-        session.items.filter { ($0.kind == .approval || $0.kind == .questions) && $0.approvalState == .pending }
+        session.pendingRequests
     }
 
     /// Called on every change to a chat: notices new requests and finished turns.

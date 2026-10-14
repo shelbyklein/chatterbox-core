@@ -3,8 +3,34 @@ import Foundation
 /// A one-line "what happened last" for a project, shown under its name in the sidebar.
 extension ChatSession {
     /// A question or approval is waiting for you.
-    var isWaitingOnYou: Bool {
-        items.contains { ($0.kind == .approval || $0.kind == .questions) && $0.approvalState == .pending }
+    var isWaitingOnYou: Bool { pendingRequests.first != nil }
+
+    /// Questions and approvals still waiting for you, oldest first. The sidebar asks for every
+    /// chat on each redraw, so this checks only the request rows (see `requestRows`), not every row.
+    var pendingRequests: [DisplayItem] {
+        let items = items
+        return requestRows(in: items).compactMap { index in items[index].approvalState == .pending ? items[index] : nil }
+    }
+
+    /// Where the question and approval rows are. A row keeps its kind, so new rows are only
+    /// looked at once; a transcript that shrank or was replaced is looked through again.
+    private func requestRows(in items: [DisplayItem]) -> [Int] {
+        var cache = requestRowCache
+        // A row added or removed before the end moves the rest: their ids no longer line up.
+        if cache.count > items.count || cache.firstID != (cache.count > 0 ? items.first?.id : nil)
+            || zip(cache.rows, cache.ids).contains(where: { items[$0].id != $1 }) {
+            cache = RequestRowCache()
+        }
+        if cache.count < items.count {
+            for index in cache.count..<items.count where items[index].kind == .approval || items[index].kind == .questions {
+                cache.rows.append(index)
+                cache.ids.append(items[index].id)
+            }
+            cache.count = items.count
+            cache.firstID = items.first?.id
+            requestRowCache = cache
+        }
+        return cache.rows
     }
 
     var lastActionSummary: String? {
