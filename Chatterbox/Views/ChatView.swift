@@ -174,6 +174,8 @@ struct ChatView: View {
     /// How many of the newest rows to draw; "Show earlier" adds a page at a time.
     /// A chat opens with `firstRows` so it appears at once, then fills in to `rowPage`.
     @State private var shownRowCount = ChatView.firstRows
+    /// Scrolling up to the top loads earlier rows, once the chat has settled at its newest.
+    @State private var loadsEarlierOnScroll = false
     /// ⌘F: searching this chat (ChatFind.swift).
     @State private var find = ChatFind()
     /// Messages around a match far back in the history, drawn in place of the latest ones.
@@ -506,6 +508,9 @@ struct ChatView: View {
                             .frame(maxWidth: .infinity)
                             .padding(.bottom, 10)
                             .help("\(earlier) earlier rows in this chat")
+                            // Scrolling up to here loads the next page: a chat opens with only its
+                            // newest rows, so switching to it doesn't build history you may not read.
+                            .modifier(LoadsWhenScrolledTo(enabled: findWindow == nil && loadsEarlierOnScroll) { shownRowCount += Self.rowPage })
                         }
                         ForEach(page.rows) { row in
                             switch row {
@@ -566,6 +571,15 @@ struct ChatView: View {
                 // page arrives just after the chat is on screen. One step: growing in several
                 // re-lays out the rows already there each time.
                 guard !session.isDot, shownRowCount < Self.rowPage else { return }
+                // macOS 15 and later load earlier rows as you scroll up to them (LoadsWhenScrolledTo):
+                // settle at the newest message first, so the top showing while it opens loads nothing.
+                if #available(macOS 15.0, *) {
+                    keepBottom(proxy)
+                    try? await Task.sleep(for: .milliseconds(400))
+                    guard !Task.isCancelled else { return }
+                    loadsEarlierOnScroll = true
+                    return
+                }
                 if sidebar != nil {
                     // Expanding the eager stack during the fade stalls its frames. Let the
                     // first page become interactive, finish the 100ms incoming fade, then
@@ -1619,6 +1633,19 @@ struct SpacedLabelStyle: LabelStyle {
 /// floor and lays out past the window's edges when the window is narrower). Its height is
 /// the content's, measured no narrower than the chat's minimum so a tiny probe doesn't wrap
 /// text into a tall answer.
+/// Runs `load` each time the view scrolls into sight (macOS 15 and later).
+private struct LoadsWhenScrolledTo: ViewModifier {
+    var enabled: Bool
+    let load: () -> Void
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, *), enabled {
+            content.onScrollVisibilityChange(threshold: 0.2) { visible in if visible { load() } }
+        } else {
+            content
+        }
+    }
+}
+
 struct FlexibleWidth: Layout {
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         guard let content = subviews.first else { return .zero }

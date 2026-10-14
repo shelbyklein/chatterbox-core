@@ -23,30 +23,21 @@ final class ChatSwitchTransition {
             opacity = 1; offset = 0; switching = false
             return
         }
+        // No fade: the next chat replaces this one at once (a fade cost about 190 ms a switch).
+        // Old and new transcripts are still never mounted together. Input waits for the new
+        // chat to mount, so a keystroke can't land in the old composer.
         switching = true
-        withAnimation(.easeIn(duration: 0.06)) {
-            opacity = 0
-            offset = reduceMotion ? 0 : -6
-        }
+        mountedID = nil
+        displayedID = id
+        opacity = 1; offset = 0
         do {
-            try await Task.sleep(for: .milliseconds(70))
-            guard ticket == generation, !Task.isCancelled else { return }
-            // No crossfade: old and new composers/transcripts are never mounted together.
-            mountedID = nil
-            displayedID = id
-            offset = reduceMotion ? 0 : 6
             while waitForMount && mountedID != id {
-                try await Task.sleep(for: .milliseconds(10))
+                try await Task.sleep(for: .milliseconds(5))
                 guard ticket == generation, !Task.isCancelled else { return }
             }
-            // One frame after mounting, rather than a fixed transcript-settling pause.
-            // Let the incoming composer accept input as soon as it is visible.
-            try await Task.sleep(for: .milliseconds(16))
-            guard ticket == generation, !Task.isCancelled else { return }
             switching = false
-            withAnimation(.easeOut(duration: 0.10)) { opacity = 1; offset = 0 }
         } catch {
-            // The next task owns presentation. A cancelled older switch must not reveal it.
+            // The next task owns presentation.
         }
     }
 }

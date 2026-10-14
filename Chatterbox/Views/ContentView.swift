@@ -372,6 +372,9 @@ extension ContentView {
     /// Search matches every word against the chat title, project name, and tags.
     private func isShown(_ session: ChatSession) -> Bool {
         if let studioID = model.studioSidebarID, session.record.studioID != studioID { return false }
+        // Nothing searched or picked: everything shows. (The checks below walk every chat, for
+        // each row, on every sidebar redraw.)
+        if searchText.trimmingCharacters(in: .whitespaces).isEmpty, model.studioSidebarID != nil || sidebarTagFilter.isEmpty { return true }
         if session.record.sidechatOf == nil, model.sidechats(of: session).contains(where: isShown) { return true }
         if session.record.convertedProjectFolder != nil, model.worktrees(of: session).contains(where: isShown) { return true }
         if model.studioSidebarID == nil, !activeTags.isEmpty, !session.tags.contains(where: { tag in activeTags.contains { $0.caseInsensitiveCompare(tag) == .orderedSame } }) {
