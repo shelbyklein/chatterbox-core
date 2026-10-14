@@ -52,6 +52,12 @@ extension ChatSession {
             }
             if thumbnailLookupURL != nil { break }
         }
+        // The app holds only the newest part of most chats: with no image in it, keep the one
+        // found before, while its file is still there.
+        if let url = thumbnailLookupURL { ThumbnailMemory.remember(url, for: id) }
+        else if let path = ThumbnailMemory.path(for: id), fm.fileExists(atPath: path), usable(URL(fileURLWithPath: path)) {
+            thumbnailLookupURL = URL(fileURLWithPath: path)
+        }
         return thumbnailLookupURL
     }
 
@@ -62,5 +68,23 @@ extension ChatSession {
         bytes[8] = (bytes[8] & 0x3f) | 0x80
         return UUID(uuid: (bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
                            bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]))
+    }
+}
+
+/// Each chat's last image found, kept on disk (one file per process, so the app and the
+/// background service never overwrite each other's).
+@MainActor
+enum ThumbnailMemory {
+    private static var file: URL {
+        RuntimePaths.data.appendingPathComponent("Thumbnails-\(ProcessInfo.processInfo.processName).json")
+    }
+    private static var paths: [String: String] = (try? JSONDecoder().decode([String: String].self, from: Data(contentsOf: file))) ?? [:]
+
+    static func path(for chat: UUID) -> String? { paths[chat.uuidString] }
+
+    static func remember(_ url: URL, for chat: UUID) {
+        guard paths[chat.uuidString] != url.path else { return }
+        paths[chat.uuidString] = url.path
+        try? JSONEncoder().encode(paths).write(to: file, options: .atomic)
     }
 }
