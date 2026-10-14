@@ -112,7 +112,7 @@ struct AutomationsSheet: View {
     }
 
     private func statusLine(_ automation: ProjectAutomation) -> String {
-        var parts = [ProjectAutomations.scheduleText(automation)]
+        var parts = [ProjectAutomations.scheduleText(automation), AutomationModelPicker.summary(automation, projectBackend: projectBackend)]
         if automation.enabled, let next = ProjectAutomations.nextOccurrence(of: automation) {
             parts.append("next \(next.formatted(date: .abbreviated, time: .shortened))")
         } else if !automation.enabled {
@@ -211,12 +211,25 @@ struct AutomationsCenter: View {
     @State private var routines: [ProjectAutomation] = []
     @State private var runs: [String: AutomationRunState] = [:]
     @State private var editingFolder: String?
+    /// The automation whose agent and model are being picked.
+    @State private var pickingModel: UUID?
     private var folders: [String] { Array(Set(routines.map(\.projectFolder))).sorted { name($0).localizedStandardCompare(name($1)) == .orderedAscending } }
     private var projects: [String] { Array(Set(model.activeSessions.compactMap { $0.record.projectFolder })).sorted { name($0).localizedStandardCompare(name($1)) == .orderedAscending } }
     private func name(_ folder: String) -> String {
         model.activeSessions.first { $0.record.projectFolder == folder }?.projectName ?? URL(fileURLWithPath: folder).lastPathComponent
     }
     private func reload() { routines = ProjectAutomations.load(); runs = ProjectAutomations.loadState() }
+    /// A project's own agent: what an automation uses when it names none.
+    private func projectBackend(_ folder: String) -> Backend {
+        model.activeSessions.first { $0.record.projectFolder == folder && $0.record.worktreeOf == nil && $0.record.sidechatOf == nil }?.record.backend ?? .claude
+    }
+    private func change(_ id: UUID, _ edit: (inout ProjectAutomation) -> Void) {
+        var all = ProjectAutomations.load()
+        guard let index = all.firstIndex(where: { $0.id == id }) else { return }
+        edit(&all[index])
+        try? ProjectAutomations.save(all)
+        reload()
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
@@ -261,6 +274,20 @@ struct AutomationsCenter: View {
                                             }
                                         }
                                         Spacer()
+                                        Button { pickingModel = routine.id } label: {
+                                            Label(AutomationModelPicker.summary(routine, projectBackend: projectBackend(folder)), systemImage: "cpu")
+                                        }
+                                        .help("Choose the agent, model and effort that do this automation's work")
+                                        .accessibilityLabel("Model for \(routine.title)")
+                                        .popover(isPresented: Binding(get: { pickingModel == routine.id }, set: { if !$0 { pickingModel = nil } })) {
+                                            Form {
+                                                AutomationModelPicker(automation: routines.first { $0.id == routine.id } ?? routine,
+                                                                      projectBackend: projectBackend(folder)) { edit in change(routine.id, edit) }
+                                            }
+                                            .formStyle(.grouped)
+                                            .frame(width: 340)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                        }
                                         if let thread = runs[routine.id.uuidString]?.threadID, model.sessions.contains(where: { $0.id == thread }) {
                                             Button("Open Thread") { model.showingAutomations = false; model.selectedID = thread }
                                         }
@@ -293,10 +320,25 @@ struct AutomationModelPicker: View {
     let projectBackend: Backend
     let change: ((inout ProjectAutomation) -> Void) -> Void
 
-    private var backend: Backend {
+    private var backend: Backend { Self.backend(of: automation, projectBackend: projectBackend) }
+
+    static func backend(of automation: ProjectAutomation, projectBackend: Backend) -> Backend {
         automation.backend.flatMap(Backend.init(rawValue:))
             ?? (automation.model == nil ? automation.preset.flatMap { id in ModelPresets.shared.presets.first { $0.id == id }?.backend } : nil)
             ?? projectBackend
+    }
+
+    /// "Codex · GPT-5.5 · High": who does the work, for the automation's row.
+    static func summary(_ automation: ProjectAutomation, projectBackend: Backend) -> String {
+        if automation.model == nil, automation.backend == nil, let id = automation.preset,
+           let preset = ModelPresets.shared.presets.first(where: { $0.id == id }) { return preset.title }
+        let backend = backend(of: automation, projectBackend: projectBackend)
+        let model: String = switch backend {
+        case .claude: automation.model.flatMap { m in ClaudeModels.shared.models.first { $0.value == m }?.displayName } ?? automation.model ?? "Default model"
+        case .codex: automation.model.flatMap { m in CodexAppServer.shared.models.first { $0.model == m }?.displayName } ?? automation.model ?? "Default model"
+        }
+        return ([backend == .claude ? "Claude" : "Codex", model] + [automation.effort.map(RuntimePaths.effortLabel)].compactMap { $0 })
+            .joined(separator: " \u{00B7} ")
     }
     private var claudeModels: [ClaudeCodeModel] { ClaudeModels.shared.models }
     private var codexModels: [CodexModelInfo] { CodexAppServer.shared.models.filter { !$0.hidden || $0.model == automation.model } }
