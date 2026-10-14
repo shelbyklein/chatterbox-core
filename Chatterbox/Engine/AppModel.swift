@@ -19,7 +19,8 @@ final class AppModel {
             if let session = sessions.first(where: { $0.id == selectedID }) {
                 // Each view keeps the session it was last in (see showView).
                 rememberSession(session)
-                studioSidebarID = session.record.studioID
+                // A chat whose Studio is gone is listed under Chats (see sidebarChats).
+                studioSidebarID = session.record.studioID.flatMap { id in activeStudios.contains { $0.id == id } ? id : nil }
                 showingChatsSidebar = studioSidebarID == nil && session.record.projectFolder == nil
                 if studioSidebarID != nil { AppPreferences.defaults.set(false, forKey: "sidebarStudiosCollapsed") }
             }

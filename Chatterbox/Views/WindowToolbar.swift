@@ -35,12 +35,13 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         static let usage = NSToolbarItem.Identifier("chatterbox.usage")
         static let terminal = NSToolbarItem.Identifier("chatterbox.terminal")
         static let finished = NSToolbarItem.Identifier("chatterbox.finished")
+        static let automations = NSToolbarItem.Identifier("chatterbox.automations")
         /// The views on the left (chat, Studios, Command Center); the open chat's details in the
         /// middle, its image library included (in the place item, so it shares their pill); usage and the terminal; Settings last.
         /// New chats start from the sidebar, the Studios page and Cmd-N, not the toolbar.
         static let all: [NSToolbarItem.Identifier] = [title, views, .flexibleSpace,
                                                        tone, place, repo, golem, .flexibleSpace,
-                                                       usage, terminal, finished, .space, settings, newChat]
+                                                       automations, usage, terminal, finished, .space, settings, newChat]
         static let chat: [NSToolbarItem.Identifier] = [tone, place, repo, golem, usage, images, terminal]
     }
 
@@ -126,8 +127,11 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
     private var lastHomePage: String?
     private var recentReinstalls: [Date] = []
     private var lastViewCounts: Attention.ViewCounts?
-    private static let viewSymbols = ["folder", "paintpalette", "rectangle.split.2x2", "clock.arrow.circlepath", "bubble.left"]
-    private static let viewLabels = ["Projects", "Studios", "Command Center", "Automations", "Chats"]
+    /// The view button apply() last highlighted; a click changes one, which tells pickView which.
+    private var viewIndex = 0
+    /// Projects, Studios, Chats, then Command Center. Automations has its own button, on the right.
+    private static let viewSymbols = ["folder", "paintpalette", "bubble.left", "rectangle.split.2x2"]
+    private static let viewLabels = ["Projects", "Studios", "Chats", "Command Center"]
 
     /// Fixed-size icons reserve badge space even when the count is zero.
     private static func viewImage(_ symbol: String, count: Int) -> NSImage {
@@ -184,20 +188,22 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
 
         // Which of the left-hand views is showing; none while Settings is.
         if let views = items[ID.views] as? NSToolbarItemGroup {
-            let index = model.showingSettings ? -1 : model.showingAutomations ? 3 : model.showingCommandCenter ? 2 : (model.showingHome || model.studioSidebarID != nil) ? 1 : model.showingChatsSidebar ? 4 : 0
-            if views.selectedIndex != index { views.selectedIndex = index }
+            let index = model.showingSettings || model.showingAutomations ? -1 : model.showingCommandCenter ? 3 : (model.showingHome || model.studioSidebarID != nil) ? 1 : model.showingChatsSidebar ? 2 : 0
+            // Set here, one or none (Settings, Automations): a select-one group always keeps one.
+            viewIndex = index
+            for i in views.subitems.indices where views.isSelected(at: i) != (i == index) { views.setSelected(i == index, at: i) }
             let counts = Attention.shared.viewCounts(in: model)
             if counts != lastViewCounts {
                 lastViewCounts = counts
-                let values = [counts.projects, counts.studios, 0, 0, counts.chats]
+                let values = [counts.projects, counts.studios, counts.chats, 0]
                 for (i, subitem) in views.subitems.enumerated() {
-                    guard i == 0 || i == 1 || i == 4 else { continue }
+                    guard i < 3 else { continue }
                     subitem.image = Self.viewImage(Self.viewSymbols[i], count: values[i])
                     subitem.toolTip = Self.viewLabels[i] + (values[i] > 0 ? " · \(values[i]) sessions need you (unseen replies or pending requests)" : " · Nothing waiting for you")
                 }
             }
         }
-        let selected = model.showingSettings ? ID.settings : nil
+        let selected = model.showingSettings ? ID.settings : model.showingAutomations ? ID.automations : nil
         if toolbar.selectedItemIdentifier != selected { toolbar.selectedItemIdentifier = selected }
 
         // A chat's own items show only with a chat, and only those that apply to it.
@@ -226,7 +232,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { ID.all }
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { ID.all }
     /// The view buttons mark the view that's showing.
-    func toolbarSelectableItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { [ID.settings] }
+    func toolbarSelectableItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { [ID.settings, ID.automations] }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier,
                  willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
@@ -251,12 +257,11 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         case ID.views:
             let group = NSToolbarItemGroup(itemIdentifier: id,
                                            images: Self.viewSymbols.map { Self.viewImage($0, count: 0) },
-                                           selectionMode: .selectOne, labels: Self.viewLabels,
+                                           selectionMode: .selectAny, labels: Self.viewLabels,
                                            target: self, action: #selector(pickView(_:)))
             group.label = "View"
             group.paletteLabel = "View"
-            let tips = ["Projects and their sessions",
-                        "Your Studios, as thumbnails", "Several live chats in one window", "All project automations", "Standalone chat sessions"]
+            let tips = ["Projects and their sessions", "Your Studios, as thumbnails", "Standalone chat sessions", "Several live chats in one window"]
             for (sub, tip) in zip(group.subitems, tips) { sub.toolTip = tip }
             group.selectedIndex = 0
             item = group
@@ -287,6 +292,8 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
             item.autovalidates = false
         case ID.finished:
             item = hosted(id, "Finished chats", FinishedChatsBell())
+        case ID.automations:
+            item = button(id, "clock.arrow.circlepath", "Automations", "All project automations", #selector(toggleAutomations))
         default:
             return nil
         }
@@ -331,17 +338,18 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
     }
 
     @objc private func pickView(_ sender: NSToolbarItemGroup) {
-        switch sender.selectedIndex {
+        // The clicked button is the one whose highlight no longer matches; clicking the
+        // highlighted one turns it off, so it differs too.
+        let clicked = sender.subitems.indices.first { sender.isSelected(at: $0) != ($0 == viewIndex) } ?? viewIndex
+        switch clicked {
         case 1:
             model.showView(.studios)
         case 2:
-            model.showingHome = false; model.showingSettings = false
-            model.showingCommandCenter = true
-        case 3:
-            model.showingAutomations = true
-        case 4:
             AppPreferences.defaults.set(false, forKey: "sidebarChatsCollapsed")
             model.showView(.chats)
+        case 3:
+            model.showingHome = false; model.showingSettings = false; model.showingAutomations = false
+            model.showingCommandCenter = true
         default:
             // Already in Projects (a narrow window): the sidebar slides over instead.
             if !model.showingHome, !model.showingCommandCenter, !model.showingAutomations, !model.showingSettings,
@@ -379,6 +387,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
     }
     @objc private func toggleCommandCenter() { model.showingCommandCenter.toggle() }
     @objc private func toggleSettings() { model.showingSettings.toggle() }
+    @objc private func toggleAutomations() { model.showingAutomations.toggle(); apply() }
     @objc private func showImages() { bridge.showImages() }
     @objc private func toggleTerminal() { bridge.toggleTerminal() }
 }
