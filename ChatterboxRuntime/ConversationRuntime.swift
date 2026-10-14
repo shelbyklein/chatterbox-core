@@ -91,8 +91,10 @@ struct CommandReceipt: Codable {
             state.commands[key]?.state = "delivery_uncertain"
         }
         let folder=root.appendingPathComponent("Conversations")
+        var adopted=Set<UUID>()
         for file in try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil) where file.pathExtension == "json" {
-            let record = try decoder.decode(ConversationRecord.self, from: Data(contentsOf: file))
+            var record = try decoder.decode(ConversationRecord.self, from: Data(contentsOf: file))
+            if record.adoptAsSidequestIfAutomationRun() { adopted.insert(record.id) }
             let session=ChatSession(record: record)
             session.awaitingHostResume=session.hasHostLinks
             if let draft=state.draftByChat[session.id.uuidString] { session.draft=draft.text;session.draftAttachments=draft.attachments }
@@ -102,6 +104,8 @@ struct CommandReceipt: Codable {
         studios = (try? Data(contentsOf: root.appendingPathComponent("Studios.json"))).flatMap { try? decoder.decode([Studio].self,from:$0) } ?? []
         ChatSession.studioLookup = { [weak self] id in self?.studios.first { $0.id == id } }
         for session in sessions { attach(session);wasRunning[session.id]=session.isRunning;pendingByChat[session.id]=Set(session.items.filter { $0.approvalState == .pending }.map(\.id)) }
+        // Older automation runs, now sidequests, are saved as such.
+        dirty.formUnion(adopted)
         try encoder.encode(["schema":1,"owner":"chatterboxd"] as JSON).write(to: root.appendingPathComponent("runtime-owner.json"), options: .atomic)
         try persistState()
         // Save chat records before acknowledging the shared stream's replay offset.

@@ -828,6 +828,7 @@ final class AppModel {
             .map { record in
                 var record = record
                 for index in record.items.indices { record.items[index].queued = nil }
+                _ = record.adoptAsSidequestIfAutomationRun()
                 return record
             }
             .sorted { $0.updatedAt > $1.updatedAt }

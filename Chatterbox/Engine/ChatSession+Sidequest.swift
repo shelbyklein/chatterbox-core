@@ -112,3 +112,15 @@ extension ChatSession {
         onChange?(self)
     }
 }
+
+extension ConversationRecord {
+    /// An automation run from before runs were sidequests (a Sidechat of its project's chat)
+    /// becomes one: it shows in that chat's card, and its next finished answer goes back and
+    /// archives it. Returns whether it changed.
+    mutating func adoptAsSidequestIfAutomationRun() -> Bool {
+        guard automationID != nil, sidequestOf == nil, let parent = sidechatOf else { return false }
+        sidequestOf = parent
+        sidequestTask = title
+        return true
+    }
+}
