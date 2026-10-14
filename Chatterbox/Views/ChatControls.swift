@@ -161,45 +161,69 @@ struct ChatNotes: View {
     var panelWidth: CGFloat = 280
     @State private var store = PinnedNotesStore.shared
     @Environment(\.colorScheme) private var scheme
+    /// The box for a new note opens and closes as needed; the notes themselves always show.
+    @AppStorage("notesComposerOpen") private var composing = true
     private var entries: [PinnedNote] { store.notes[scope] ?? [] }
+    private var hasDraft: Bool { !(store.drafts[scope] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label(project ? "Project notes" : "Chat notes", systemImage: "note.text").font(.headline)
-            TextEditor(text: Binding(get: { store.drafts[scope] ?? "" }, set: { store.setDraft($0, for: scope) }))
-                .font(.body).scrollContentBackground(.hidden)
-                .padding(6).frame(height: 90)
-                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
-                .accessibilityLabel("Write a note")
             HStack {
-                Text("Notes are saved on this Mac.").font(.caption2).foregroundStyle(.secondary)
+                Label(project ? "Project notes" : "Chat notes", systemImage: "note.text").font(.headline)
                 Spacer()
-                Button("Add Note") { store.add(for: scope) }
-                    .disabled((store.drafts[scope] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) { composing.toggle() }
+                } label: {
+                    Image(systemName: composing ? "chevron.up" : "square.and.pencil")
+                        .frame(width: 22, height: 22).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(hasDraft && !composing ? Color.accentColor : Color.secondary)
+                .help(composing ? "Hide the note box" : hasDraft ? "Show the note box (it has an unsaved note)" : "Write a note")
+                .accessibilityLabel(composing ? "Hide the note box" : "Write a note")
             }
-            if entries.isEmpty { Text("No notes yet").font(.caption).foregroundStyle(.secondary) }
-            else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 10) {
-                        ForEach(entries) { note in
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text(note.text).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-                                HStack {
-                                    Text(note.createdAt, format: .dateTime.month(.abbreviated).day()).font(.caption2).foregroundStyle(.secondary)
-                                    Spacer()
-                                    Button { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(note.text, forType: .string) } label: { Image(systemName: "doc.on.doc") }.help("Copy note")
-                                    Button { store.remove(note.id, for: scope) } label: { Image(systemName: "trash") }.help("Delete note")
-                                }.buttonStyle(.borderless)
-                            }.padding(10).background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 7))
-                        }
-                    }
-                }.frame(maxHeight: 300)
-            }
+            if composing { composer }
+            notesList
         }
         .padding(14)
         .frame(width: panelWidth, alignment: .leading)
         .background(scheme == .dark ? Color(white: 0.10) : Color(white: 0.97), in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12)))
         .fixedSize(horizontal: false, vertical: true)
+    }
+
+    @ViewBuilder private var composer: some View {
+        TextEditor(text: Binding(get: { store.drafts[scope] ?? "" }, set: { store.setDraft($0, for: scope) }))
+            .font(.body).scrollContentBackground(.hidden)
+            .padding(6).frame(height: 90)
+            .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+            .accessibilityLabel("Write a note")
+        HStack {
+            Text("Notes are saved on this Mac.").font(.caption2).foregroundStyle(.secondary)
+            Spacer()
+            Button("Add Note") { store.add(for: scope) }
+                .disabled(!hasDraft)
+        }
+    }
+
+    @ViewBuilder private var notesList: some View {
+        if entries.isEmpty { Text("No notes yet").font(.caption).foregroundStyle(.secondary) }
+        else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(entries) { note in
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(note.text).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                            HStack {
+                                Text(note.createdAt, format: .dateTime.month(.abbreviated).day()).font(.caption2).foregroundStyle(.secondary)
+                                Spacer()
+                                Button { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(note.text, forType: .string) } label: { Image(systemName: "doc.on.doc") }.help("Copy note")
+                                Button { store.remove(note.id, for: scope) } label: { Image(systemName: "trash") }.help("Delete note")
+                            }.buttonStyle(.borderless)
+                        }.padding(10).background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 7))
+                    }
+                }
+            }.frame(maxHeight: 300)
+        }
     }
 }
 
