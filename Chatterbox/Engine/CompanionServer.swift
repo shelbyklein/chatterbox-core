@@ -304,21 +304,32 @@ final class CompanionServer {
         #endif
         let response = respond(to:request,local:local)
         guard let source = response.thumbnailSource else { return response }
-        let data = await Task.detached(priority: .utility) {
-            guard let source = CGImageSourceCreateWithURL(source as CFURL, nil),
-                  let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+        let side = response.thumbnailSize
+        let fallback = response.fallbackFile
+        let resized = await Task.detached(priority: .utility) { () -> (Data, String)? in
+            guard let image = CGImageSourceCreateWithURL(source as CFURL, nil) else { return nil }
+            let properties = CGImageSourceCopyPropertiesAtIndex(image, 0, nil) as? [CFString: Any]
+            let width = properties?[kCGImagePropertyPixelWidth] as? Int ?? 0
+            let height = properties?[kCGImagePropertyPixelHeight] as? Int ?? 0
+            // Already small enough: the original goes as it is.
+            if fallback, width > 0, max(width, height) <= side { return nil }
+            guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(image, 0, [
                     kCGImageSourceCreateThumbnailFromImageAlways: true,
                     kCGImageSourceCreateThumbnailWithTransform: true,
-                    kCGImageSourceThumbnailMaxPixelSize: 320,
-                  ] as CFDictionary) else { return Data?.none }
+                    kCGImageSourceThumbnailMaxPixelSize: side,
+                  ] as CFDictionary) else { return nil }
+            // Transparency (a logo, an icon) stays: PNG. Everything else: JPEG, much smaller.
+            let alpha = properties?[kCGImagePropertyHasAlpha] as? Bool ?? false
+            let type = alpha ? UTType.png : UTType.jpeg
             let data = NSMutableData()
-            guard let destination = CGImageDestinationCreateWithData(data, UTType.jpeg.identifier as CFString, 1, nil) else { return Data?.none }
-            CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.8] as CFDictionary)
-            guard CGImageDestinationFinalize(destination) else { return Data?.none }
-            return data as Data?
+            guard let destination = CGImageDestinationCreateWithData(data, type.identifier as CFString, 1, nil) else { return nil }
+            CGImageDestinationAddImage(destination, thumbnail, alpha ? nil : [kCGImageDestinationLossyCompressionQuality: 0.82] as CFDictionary)
+            guard CGImageDestinationFinalize(destination) else { return nil }
+            return (data as Data, alpha ? "image/png" : "image/jpeg")
         }.value
-        guard let data else { return .error(404, "That image preview is unavailable.") }
-        return HTTPResponse(status: 200, contentType: "image/jpeg", body: data)
+        if let (data, type) = resized { return HTTPResponse(status: 200, contentType: type, body: data) }
+        if fallback { return HTTPResponse(status: 200, contentType: response.contentType, body: Data(), fileURL: source) }
+        return .error(404, "That image preview is unavailable.")
 
     }
 
@@ -631,20 +642,40 @@ final class CompanionServer {
             return HTTPResponse(status: 200, contentType: "image/jpeg", body: Data(), thumbnailSource: url)
         case ("GET", 5) where parts[1] == "chats" && parts[3] == "files":
             guard let session = session(parts[2]), let fileID = UUID(uuidString: parts[4]) else { return .error(404, "That file is gone.") }
-            if let file = session.allAttachments.first(where: { $0.id == fileID }) {
-                return HTTPResponse(status: 200, contentType: file.mediaType, body: Data(), fileURL: file.url)
-            }
-            // An animation a reply points to.
-            for item in session.items where item.kind == .assistant {
-                for url in ChatSession.referencedMedia(in: item.text, folder: session.workingFolder) + ChatSession.referencedImages(in: item.text, folder: session.workingFolder) + CompanionDocuments.referenced(in: item.text, folder: session.workingFolder)
-                where ChatSession.mediaID(url.path) == fileID {
-                    return HTTPResponse(status: 200, contentType: url.pathExtension.lowercased() == "pdf" ? "application/pdf" : "application/octet-stream", body: Data(), fileURL: url)
+            // ?max=1200: a still image at most that many pixels on its longer side, for showing in
+            // the chat; the original comes without it (viewing full screen, marking up, saving).
+            let maxSide = request.query["max"].flatMap(Int.init).map { min(4096, max(200, $0)) }
+            func send(_ url: URL, type: String) -> HTTPResponse {
+                if let maxSide, MediaKind.isStillImage(url.path) {
+                    return HTTPResponse(status: 200, contentType: type, body: Data(), thumbnailSource: url, thumbnailSize: maxSide, fallbackFile: true)
                 }
+                return HTTPResponse(status: 200, contentType: type, body: Data(), fileURL: url)
+            }
+            if let file = session.allAttachments.first(where: { $0.id == fileID }) { return send(file.url, type: file.mediaType) }
+            // A file a reply points to: found once, then remembered (see referencedFile).
+            if let url = referencedFile(fileID, in: session) {
+                return send(url, type: url.pathExtension.lowercased() == "pdf" ? "application/pdf" : "application/octet-stream")
             }
             return .error(404, "That file is gone.")
         default:
             return .error(404, "Not found")
         }
+    }
+
+    /// Each chat's files its replies point to, by the id the phone asks for. Built once per
+    /// change to the chat, not by reading every reply for each image the phone loads.
+    private var referencedFiles: [UUID: (key: String, files: [UUID: URL])] = [:]
+    private func referencedFile(_ id: UUID, in session: ChatSession) -> URL? {
+        let key = "\(session.items.count)|\(session.items.last?.id.uuidString ?? "")|\(session.items.last?.phase.rawValue ?? "")|\(session.workingFolder ?? "")"
+        if let cached = referencedFiles[session.id], cached.key == key { return cached.files[id] }
+        var files: [UUID: URL] = [:]
+        for item in session.items where item.kind == .assistant {
+            for url in ChatSession.referencedMedia(in: item.text, folder: session.workingFolder) + ChatSession.referencedImages(in: item.text, folder: session.workingFolder) + CompanionDocuments.referenced(in: item.text, folder: session.workingFolder) {
+                files[ChatSession.mediaID(url.path)] = url
+            }
+        }
+        referencedFiles[session.id] = (key, files)
+        return files[id]
     }
 
     private func session(_ id: String) -> ChatSession? {
@@ -951,6 +982,12 @@ enum CompanionMapper {
         }
     }
 
+    /// A file's modification time and size, which change when it does.
+    static func fileRevision(_ url: URL) -> String? {
+        guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]) else { return nil }
+        return "\(values.contentModificationDate?.timeIntervalSince1970 ?? 0)|\(values.fileSize ?? 0)"
+    }
+
     static func item(_ item: DisplayItem, folder: String? = nil) -> Companion.Item {
         var mapped = plainItem(item)
         // Animations a final reply points to travel with it, to play on the phone.
@@ -959,8 +996,11 @@ enum CompanionMapper {
                 .init(id: ChatSession.mediaID($0.path), name: $0.lastPathComponent, mediaType: "application/octet-stream", isImage: false)
             }
             // Screenshots and renders it names, as pictures to view.
+            // Their revision changes when the file does (a render redone under the same name),
+            // so the phone's saved copy is replaced.
             mapped.attachments += ChatSession.referencedImages(in: item.text, folder: folder).map {
-                .init(id: ChatSession.mediaID($0.path), name: $0.lastPathComponent, mediaType: "image/" + $0.pathExtension.lowercased(), isImage: true)
+                .init(id: ChatSession.mediaID($0.path), name: $0.lastPathComponent, mediaType: "image/" + $0.pathExtension.lowercased(), isImage: true,
+                      revision: fileRevision($0))
             }
         }
         var documents: [(URL, UUID)] = []
@@ -1072,6 +1112,10 @@ struct HTTPResponse {
     var body: Data
     var fileURL: URL? = nil
     var thumbnailSource: URL? = nil
+    /// The longest side of a resized image, in pixels.
+    var thumbnailSize = 320
+    /// When resizing isn't needed (or fails), send the original file instead of an error.
+    var fallbackFile = false
     var headers: [String: String] = [:]
 
     static func json<T: Encodable>(_ value: T) -> HTTPResponse {

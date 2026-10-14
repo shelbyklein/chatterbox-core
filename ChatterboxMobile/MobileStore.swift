@@ -99,6 +99,7 @@ final class MobileStore {
 
     func forget() {
         MobileTranscriptCache.clear()
+        MobileImageCache.shared.clear()
         prefetched = [:]
         // Capture the authenticated request before erasing pairing. Best effort; removing
         // the device on the Mac always revokes it, even when this phone is offline.
@@ -314,15 +315,25 @@ final class MobileStore {
         try await raw("/v1/avatar/" + (name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? name))
     }
 
-    @ObservationIgnored private let thumbnailCache = NSCache<NSString, UIImage>()
+    /// A chat's newest image, small, for its card (kept on this phone: MobileImageCache).
     func thumbnail(_ file: Companion.File, in chat: UUID) async throws -> UIImage? {
-        let key = "\(chat)|\(file.id)|\(file.revision ?? "")" as NSString
-        if let image = thumbnailCache.object(forKey: key) { return image }
+        let key = MobileImageCache.key(chat: chat, file: file, size: "thumb")
+        if let image = MobileImageCache.shared.image(key) { return image }
         let data = try await raw("/v1/chats/\(chat.uuidString)/thumbnail/\(file.id.uuidString)")
-        guard let image = UIImage(data: data) else { return nil }
-        thumbnailCache.countLimit = 100
-        thumbnailCache.setObject(image, forKey: key)
-        return image
+        return MobileImageCache.shared.store(data, as: key)
+    }
+
+    /// An image in a chat: at most `maxPixels` on its longer side for showing in the chat
+    /// (the Mac sends it resized), or the original (nil) to view, mark up or copy. Kept on
+    /// this phone, so it isn't fetched again.
+    func image(_ file: Companion.File, in chat: UUID, maxPixels: Int? = nil) async throws -> UIImage? {
+        let key = MobileImageCache.key(chat: chat, file: file, size: maxPixels.map(String.init) ?? "full")
+        if let image = MobileImageCache.shared.image(key) { return image }
+        // The original, if it's already here, serves any smaller size too.
+        if maxPixels != nil, let original = MobileImageCache.shared.image(MobileImageCache.key(chat: chat, file: file, size: "full")) { return original }
+        let query = maxPixels.map { "?max=\($0)" } ?? ""
+        let data = try await raw("/v1/chats/\(chat.uuidString)/files/\(file.id.uuidString)" + query)
+        return MobileImageCache.shared.store(data, as: key)
     }
 
     func file(_ file: Companion.File, in chat: UUID) async throws -> Data {
@@ -406,7 +417,8 @@ final class MobileStore {
         request.httpMethod = method
         request.httpBody = body
         // Images take longer to send than a message.
-        request.timeoutInterval = path.hasSuffix("/restart") ? 60 : (body?.count ?? 0) > 200_000 ? 60 : 6
+        // So do files coming back, such as an original image over a slow connection.
+        request.timeoutInterval = path.hasSuffix("/restart") || path.contains("/files/") ? 60 : (body?.count ?? 0) > 200_000 ? 60 : 6
         if let token { request.setValue(token, forHTTPHeaderField: Companion.tokenHeader) }
         #if GOLEM_APP
         request.setValue("golem",forHTTPHeaderField:"X-Chatterbox-Product")

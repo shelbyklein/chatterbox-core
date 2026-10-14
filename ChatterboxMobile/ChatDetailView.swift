@@ -1402,14 +1402,26 @@ private struct ItemRow: View {
     }
 }
 
-/// An image from the chat, fetched from the Mac. Hold it to mark it up or copy it.
+/// An image from the chat, fetched from the Mac at the size it shows here (and kept on this
+/// phone); viewing, marking up or copying it gets the original. Hold it for those.
 private struct RemoteImage: View {
     let file: Companion.File
     let chat: UUID
     let onMarkUp: (UIImage) -> Void
     @Environment(MobileStore.self) private var store
     @State private var image: UIImage?
+    @State private var original: UIImage?
     @State private var viewing = false
+    @State private var failed = false
+    /// 320 points wide on a 3x screen, with room to zoom a little.
+    static let displayPixels = 1200
+
+    /// The original, fetched the first time it's needed; the shown copy until then.
+    private func full() async -> UIImage? {
+        if let original { return original }
+        original = try? await store.image(file, in: chat, maxPixels: nil)
+        return original ?? image
+    }
 
     var body: some View {
         Group {
@@ -1419,24 +1431,35 @@ private struct RemoteImage: View {
             } else {
                 RoundedRectangle(cornerRadius: 10).fill(Color(uiColor: .secondarySystemBackground))
                     .frame(height: 160)
-                    .overlay(ProgressView())
+                    .overlay {
+                        if failed {
+                            Button("Couldn't load \(file.name). Tap to retry.") { failed = false; Task { await load() } }
+                                .font(.caption).foregroundStyle(.secondary).padding(8)
+                        } else { ProgressView() }
+                    }
             }
         }
         .frame(maxWidth: 320)
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .fullScreenCover(isPresented: $viewing) {
-            if let image { ImageViewer(image: image, onMarkUp: onMarkUp) }
+            if let shown = original ?? image { ImageViewer(image: shown, onMarkUp: onMarkUp) }
         }
         .contextMenu {
-            if let image {
+            if image != nil {
                 Button { viewing = true } label: { Label("View", systemImage: "arrow.up.left.and.arrow.down.right") }
-                Button { onMarkUp(image) } label: { Label("Mark Up", systemImage: "pencil.tip.crop.circle") }
-                Button { UIPasteboard.general.image = image } label: { Label("Copy", systemImage: "doc.on.doc") }
+                Button { Task { if let full = await full() { onMarkUp(full) } } } label: { Label("Mark Up", systemImage: "pencil.tip.crop.circle") }
+                Button { Task { if let full = await full() { UIPasteboard.general.image = full } } } label: { Label("Copy", systemImage: "doc.on.doc") }
             }
         }
-        .task {
-            if image == nil, let data = try? await store.file(file, in: chat) { image = UIImage(data: data) }
-        }
+        // The viewer opens on the shown copy and sharpens to the original when it arrives.
+        .onChange(of: viewing) { _, open in if open { Task { _ = await full() } } }
+        .task(id: "\(file.id)|\(file.revision ?? "")") { await load() }
+    }
+
+    private func load() async {
+        guard image == nil else { return }
+        image = try? await store.image(file, in: chat, maxPixels: Self.displayPixels)
+        failed = image == nil
     }
 }
 
