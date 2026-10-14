@@ -42,6 +42,10 @@ struct DocumentViewer: View {
     @State private var revision = 0
     @State private var password = ""
     @State private var unlockFailed = false
+    /// How a PDF with several pages is shown: "pages" (one at a time, flipped), "spreads"
+    /// (two side by side, like an open book) or "scroll" (one long column).
+    @AppStorage("pdfLayout") private var pdfLayout = "pages"
+    @State private var pages = PDFPager()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -59,6 +63,7 @@ struct DocumentViewer: View {
                         NSPasteboard.general.setString(text ?? "", forType: .string)
                     }.disabled(text == nil)
                 }
+                if let pdf, !pdf.isLocked, pdf.pageCount > 1 { pdfControls(pdf) }
                 HStack(spacing: 12) {
                 Button { revision += 1 } label: { Image(systemName: "arrow.clockwise") }.help("Reload file")
                 Menu {
@@ -84,7 +89,7 @@ struct DocumentViewer: View {
                             Button("Unlock") { unlock(pdf) }
                             if unlockFailed { Text("That password didn’t unlock the PDF.").foregroundStyle(.red) }
                         }.frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else { NativePDFView(document: pdf) }
+                    } else { NativePDFView(document: pdf, layout: pdf.pageCount > 1 ? pdfLayout : "scroll", pager: pages) }
                 } else if let text {
                     if source || document.url.pathExtension.lowercased() == "txt" || document.url.pathExtension.lowercased() == "text" {
                         SelectableDocumentText(text: text)
@@ -100,6 +105,30 @@ struct DocumentViewer: View {
         }
         .environment(\.chatFolder, document.url.deletingLastPathComponent().path)
         .task(id: "\(document.id)|\(revision)") { await load() }
+    }
+
+    /// Flip buttons and the page (or spread) you're on, then the layout.
+    private func pdfControls(_ pdf: PDFDocument) -> some View {
+        HStack(spacing: 10) {
+            if pdfLayout != "scroll" {
+                Button { pages.view?.goToPreviousPage(nil) } label: { Image(systemName: "chevron.left") }
+                    .keyboardShortcut(.leftArrow, modifiers: []).help("Previous page (←)")
+                    .disabled(!pages.canGoBack)
+                Text(pages.label(total: pdf.pageCount, spreads: pdfLayout == "spreads"))
+                    .font(.callout.monospacedDigit()).foregroundStyle(.secondary).frame(minWidth: 74)
+                Button { pages.view?.goToNextPage(nil) } label: { Image(systemName: "chevron.right") }
+                    .keyboardShortcut(.rightArrow, modifiers: []).help("Next page (→)")
+                    .disabled(!pages.canGoForward)
+            }
+            Picker("Layout", selection: $pdfLayout) {
+                Image(systemName: "doc").tag("pages").help("One page at a time")
+                Image(systemName: "book").tag("spreads").help("Two pages side by side")
+                Image(systemName: "list.bullet.rectangle.portrait").tag("scroll").help("Scroll through every page")
+            }
+            .pickerStyle(.segmented).labelsHidden().fixedSize()
+            .accessibilityLabel("Page layout")
+        }
+        .buttonStyle(.borderless)
     }
 
     private func unlock(_ pdf: PDFDocument) {
@@ -131,18 +160,68 @@ struct DocumentViewer: View {
     }
 }
 
+/// The PDF view the flip buttons drive, and which page it's on.
+@MainActor @Observable final class PDFPager {
+    @ObservationIgnored weak var view: PDFView?
+    private(set) var page = 0
+    private(set) var canGoBack = false
+    private(set) var canGoForward = false
+
+    func update(_ view: PDFView) {
+        guard let document = view.document, let current = view.currentPage else { return }
+        page = document.index(for: current)
+        canGoBack = view.canGoToPreviousPage
+        canGoForward = view.canGoToNextPage
+    }
+
+    /// "3 of 12", or for spreads the pages showing: "2–3 of 12" (the cover shows alone).
+    func label(total: Int, spreads: Bool) -> String {
+        let first = page + 1
+        guard spreads, first > 1 else { return "\(first) of \(total)" }
+        let left = first % 2 == 0 ? first : first - 1
+        return left + 1 <= total ? "\(left)–\(left + 1) of \(total)" : "\(left) of \(total)"
+    }
+}
+
 struct NativePDFView: NSViewRepresentable {
     let document: PDFDocument
+    var layout = "scroll"
+    var pager: PDFPager? = nil
+    func makeCoordinator() -> Coordinator { Coordinator() }
     func makeNSView(context: Context) -> PDFView {
         let view = PDFView()
         view.autoScales = true
-        view.displayMode = .singlePageContinuous
-        view.displayDirection = .vertical
         view.document = document
+        apply(layout, to: view)
+        pager?.view = view
+        context.coordinator.observe(view, pager: pager)
         return view
     }
     func updateNSView(_ view: PDFView, context: Context) {
         if view.document !== document { view.document = document }
+        if context.coordinator.layout != layout { apply(layout, to: view); context.coordinator.layout = layout; pager?.update(view) }
+    }
+    private func apply(_ layout: String, to view: PDFView) {
+        switch layout {
+        case "pages": view.displayMode = .singlePage; view.displaysAsBook = false
+        case "spreads": view.displayMode = .twoUp; view.displaysAsBook = true
+        default: view.displayMode = .singlePageContinuous; view.displaysAsBook = false
+        }
+        view.displayDirection = .vertical
+        view.autoScales = true
+    }
+
+    final class Coordinator {
+        var layout: String?
+        private var token: NSObjectProtocol?
+        @MainActor func observe(_ view: PDFView, pager: PDFPager?) {
+            guard let pager else { return }
+            pager.update(view)
+            token = NotificationCenter.default.addObserver(forName: .PDFViewPageChanged, object: view, queue: .main) { [weak view] _ in
+                MainActor.assumeIsolated { if let view { pager.update(view) } }
+            }
+        }
+        deinit { if let token { NotificationCenter.default.removeObserver(token) } }
     }
 }
 
