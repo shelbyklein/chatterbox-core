@@ -108,12 +108,13 @@ struct ChatView: View {
                                     }
                                     SessionTools(bridge: windowToolbar ?? ownToolbar)
                                     SessionImages(bridge: windowToolbar ?? ownToolbar)
-                                    ChatNotes(scope: PinnedNotesStore.scope(for: session.record), project: session.record.projectFolder != nil,
-                                              panelWidth: min(280, max(220, (geometry.size.width - appearance.style.contentWidth) / 2 - 32)))
-                                        .id(PinnedNotesStore.scope(for: session.record))
                                     ChatQuickActions(session: session)
                                     if !session.isSidequest { SidequestButton(session: session) }
                                 }
+                                // Always open, under the buttons.
+                                ChatNotes(scope: PinnedNotesStore.scope(for: session.record), project: session.record.projectFolder != nil,
+                                          panelWidth: min(280, max(220, (geometry.size.width - appearance.style.contentWidth) / 2 - 32)))
+                                    .id(PinnedNotesStore.scope(for: session.record))
                                 ChatPins(chat: session.record.id, agentName: session.record.backend == .codex ? "Codex" : "Claude",
                                          panelWidth: min(280, max(220, (geometry.size.width - appearance.style.contentWidth) / 2 - 32))) { pinJump = $0 }
                             }
