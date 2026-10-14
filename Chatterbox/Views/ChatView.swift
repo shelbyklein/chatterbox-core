@@ -22,13 +22,24 @@ struct ChatView: View {
 
     private let sidebar: AnyView?
     private let standaloneWindow: Bool
+    /// In the main window, beside the window's own sidebar (ContentView's mainDetail).
+    private let mainWindow: Bool
+    /// The main window's chat, with its sidebar here or beside it.
+    private var isMainChat: Bool { sidebar != nil || mainWindow }
 
-    init(session: ChatSession, sidebar: AnyView? = nil, standaloneWindow: Bool = false) {
+    init(session: ChatSession, sidebar: AnyView? = nil, standaloneWindow: Bool = false, mainWindow: Bool = false) {
         self.standaloneWindow = standaloneWindow
         self.sidebar = sidebar
+        self.mainWindow = mainWindow
         self.session = session
         _draft = State(initialValue: session.draft)
         _attachments = State(initialValue: session.draftAttachments)
+    }
+    /// The right panel's widths: a page preview, Issues, or Golem's activity.
+    private var inspectorSize: InspectorSize {
+        preview != nil ? InspectorSize(minimum: 360, ideal: 620, maximum: 1400)
+            : session.isDot && !issuesPanel.isOpen ? InspectorSize(minimum: 260, ideal: 320, maximum: 460)
+            : InspectorSize(minimum: 300, ideal: 380, maximum: 640)
     }
     private var inspectorOpen: Bool { issuesPanel.isOpen || preview != nil || (session.isDot && golemPanelOpen) }
     private func closeInspector() {
@@ -199,13 +210,11 @@ struct ChatView: View {
 
     var body: some View {
         Group {
-            if sidebar != nil || standaloneWindow {
+            if sidebar != nil || standaloneWindow || mainWindow {
                 ChatColumns(sidebar: sidebar, chat: AnyView(chatContent),
                     inspector: inspectorOpen ? AnyView(inspectorContent) : nil,
                     floatingGolem: session.isDot ? AnyView(floatingGolem) : nil,
-                    inspectorMinimum: preview != nil ? 360 : (session.isDot && !issuesPanel.isOpen ? 260 : 300),
-                    inspectorIdeal: preview != nil ? 620 : (session.isDot && !issuesPanel.isOpen ? 320 : 380),
-                    inspectorMaximum: preview != nil ? 1400 : (session.isDot && !issuesPanel.isOpen ? 460 : 640),
+                    inspectorMinimum: inspectorSize.minimum, inspectorIdeal: inspectorSize.ideal, inspectorMaximum: inspectorSize.maximum,
                     closeInspector: closeInspector)
             } else if tileContext != nil {
                 ChatColumns(chat: AnyView(chatContent), inspector: preview != nil ? AnyView(inspectorContent) : nil,
@@ -219,9 +228,10 @@ struct ChatView: View {
         .modifier(ChatWindowTitle(title: session.title, embedded: tileContext != nil || windowToolbar != nil))
         .onAppear {
             if standaloneWindow && session.isDot { golemPanelOpen = true }
-            attachToolbar()
-            if Attention.shared.isWatching(session) { Attention.shared.markSeen(session.id) }
+            becameShown()
         }
+        // The window sizes its sidebar around this chat's right panel (see ChatColumns).
+        .preference(key: MainInspectorKey.self, value: mainWindow && inspectorOpen ? inspectorSize : nil)
         .onChange(of: model.showingDot) { _, miniVisible in
             if standaloneWindow && session.isDot && !miniVisible { golemPanelOpen = true }
         }
@@ -471,7 +481,7 @@ struct ChatView: View {
                     if session.isDot {
                         VStack(spacing: 0) {
                             #if GOLEM_APP
-                            DotConversation(session: session, initialRows: sidebar == nil ? 80 : Self.firstRows, showsInlineAvatar: sidebar == nil && !standaloneWindow)
+                            DotConversation(session: session, initialRows: isMainChat ? Self.firstRows : 80, showsInlineAvatar: !isMainChat && !standaloneWindow)
                             #else
                             Text("Open this conversation in Golem.")
                             #endif
@@ -580,7 +590,7 @@ struct ChatView: View {
                     loadsEarlierOnScroll = true
                     return
                 }
-                if sidebar != nil {
+                if isMainChat {
                     // Expanding the eager stack during the fade stalls its frames. Let the
                     // first page become interactive, finish the 100ms incoming fade, then
                     // prepare extra history only if this chat is still mounted.
@@ -1088,7 +1098,7 @@ struct ChatView: View {
 
     /// `now`: ⌘↩ while the agent works stops it and sends this message right away.
     private func submit(now: Bool, requiresActiveTile: Bool = true) {
-        guard canSend, (!requiresActiveTile || tileActive), sidebar == nil || (!switchingChats && model.selectedID == session.id) else { return }
+        guard canSend, (!requiresActiveTile || tileActive), !isMainChat || (!switchingChats && model.selectedID == session.id) else { return }
         let text = draft
         let files = attachments
         draft = ""
@@ -1142,6 +1152,13 @@ struct ChatView: View {
                 if let error { Task { @MainActor in previewOpenError = error.localizedDescription } }
             }
         }
+    }
+
+    /// On screen: this chat owns the toolbar, its replies count as seen, and the switch can finish.
+    private func becameShown() {
+        attachToolbar()
+        if Attention.shared.isWatching(session) { Attention.shared.markSeen(session.id) }
+        if mainWindow { switchCoordinator?.didMount(session.id) }
     }
 
     private func attachToolbar() {
@@ -1633,6 +1650,19 @@ struct SpacedLabelStyle: LabelStyle {
 /// floor and lays out past the window's edges when the window is narrower). Its height is
 /// the content's, measured no narrower than the chat's minimum so a tiny probe doesn't wrap
 /// text into a tall answer.
+/// A right panel's widths.
+struct InspectorSize: Equatable {
+    var minimum: CGFloat
+    var ideal: CGFloat
+    var maximum: CGFloat
+}
+
+/// The main-window chat's right panel, so the window's sidebar makes room for it.
+struct MainInspectorKey: PreferenceKey {
+    static let defaultValue: InspectorSize? = nil
+    static func reduce(value: inout InspectorSize?, nextValue: () -> InspectorSize?) { value = value ?? nextValue() }
+}
+
 /// Runs `load` each time the view scrolls into sight (macOS 15 and later).
 private struct LoadsWhenScrolledTo: ViewModifier {
     var enabled: Bool

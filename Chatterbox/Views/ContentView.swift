@@ -9,6 +9,8 @@ struct ContentView: View {
     @State private var chatToolbar = ChatToolbarBridge()
     @State private var windowToolbarOwner: WindowToolbar?
     @State private var chatSwitch: ChatSwitchTransition
+    /// The showing chat's right panel, so the sidebar makes room for it.
+    @State private var mainInspector: InspectorSize?
     @State private var commandCenter: CommandCenterLayout
     @AppStorage("macProjectsSidebarCards") private var projectsCards = true
     @AppStorage("macChatsSidebarCards") private var chatsCards = false
@@ -147,6 +149,22 @@ struct ContentView: View {
 
     }
 
+    /// The chat showing in the main window, once the switch to it has begun.
+    private var displayedChatID: UUID? {
+        mainChatID == nil ? nil : (chatSwitch.initialized ? chatSwitch.displayedID : model.selectedID)
+    }
+
+    /// The showing chat beside the window's sidebar (the sidebar stays built across switches;
+    /// before, each switch rebuilt it with the chat). Keeping recent chats built as well, hidden,
+    /// measured slower: SwiftUI re-measured and rebuilt them on every switch.
+    @ViewBuilder private var mainDetail: some View {
+        if let id = displayedChatID, let session = model.sessions.first(where: { $0.id == id }) {
+            ChatView(session: session, mainWindow: true).id(session.id)
+        } else {
+            alternateDetail
+        }
+    }
+
     private var mainChatID: UUID? {
         guard !model.showingAutomations, !model.showingCommandCenter, !model.showingHome, !model.showingSettings, model.webPage == nil, let session = model.selected,
               !(session.isDot && model.showingDot) else { return nil }
@@ -164,13 +182,10 @@ struct ContentView: View {
                 CommandCenterView(layout: commandCenter)
             } else if model.showingHome {
                 ChatHomeView(newStudio: { beginNewStudio() }) { AnyView(threadMenu($0)) }
-            } else if mainChatID != nil, let session = model.sessions.first(where: {
-                $0.id == (chatSwitch.initialized ? chatSwitch.displayedID : model.selectedID)
-            }) {
-                ChatView(session: session, sidebar: sidebarPane)
-                    .onAppear { chatSwitch.didMount(session.id) }.id(session.id)
             } else {
-                ChatColumns(sidebar: sidebarPane, chat: AnyView(alternateDetail))
+                // One sidebar for the window, kept across switches.
+                ChatColumns(sidebar: sidebarPane, chat: AnyView(mainDetail), inspectorReserve: mainInspector)
+                    .onPreferenceChange(MainInspectorKey.self) { mainInspector = $0 }
             }
         }
         .environment(\.chatSwitchCoordinator, chatSwitch)

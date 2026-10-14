@@ -11,6 +11,9 @@ struct ChatColumns: View {
     var inspectorIdeal: CGFloat = 320
     var inspectorMaximum: CGFloat = 460
     var closeInspector: () -> Void = {}
+    /// A right panel drawn inside `chat` (the main window's chat draws its own): sized for
+    /// here, so the sidebar makes room for it as it would for one of these columns' own.
+    var inspectorReserve: InspectorSize? = nil
     @Environment(AppModel.self) private var model
     /// The sidebar can't be hidden; only a window too narrow for it shows it as a slide-over.
     private let sidebarOpen = true
@@ -18,11 +21,15 @@ struct ChatColumns: View {
     @AppStorage("golemInspectorWidth") private var golemWidth = 0.0
     @AppStorage("issuesInspectorWidth") private var issuesWidth = 0.0
     @AppStorage("previewInspectorWidth") private var previewWidth = 0.0
+    private var rightMinimum: CGFloat { inspectorReserve?.minimum ?? inspectorMinimum }
+    private var rightIdeal: CGFloat { inspectorReserve?.ideal ?? inspectorIdeal }
+    private var rightMaximum: CGFloat { inspectorReserve?.maximum ?? inspectorMaximum }
+    private var hasRight: Bool { inspector != nil || inspectorReserve != nil }
     private var inspectorWidth: Double {
-        get { inspectorMinimum == 360 ? previewWidth : (inspectorMinimum == 300 ? issuesWidth : golemWidth) }
+        get { rightMinimum == 360 ? previewWidth : (rightMinimum == 300 ? issuesWidth : golemWidth) }
         nonmutating set {
-            if inspectorMinimum == 360 { previewWidth = newValue }
-            else if inspectorMinimum == 300 { issuesWidth = newValue }
+            if rightMinimum == 360 { previewWidth = newValue }
+            else if rightMinimum == 300 { issuesWidth = newValue }
             else { golemWidth = newValue }
         }
     }
@@ -35,13 +42,15 @@ struct ChatColumns: View {
     var body: some View {
         GeometryReader { geometry in
             let width = geometry.size.width
-            let rightWidth = inspectorWidth > 0 ? inspectorWidth : inspectorIdeal
+            let rightWidth = inspectorWidth > 0 ? inspectorWidth : rightIdeal
             let sizes = ChatColumnWidths(window: width, sidebarOpen: sidebar != nil && sidebarOpen,
-                sidebarDesired: sidebarWidth + sidebarExtra, inspectorOpen: inspector != nil,
-                inspectorDesired: min(rightWidth, inspectorMaximum), inspectorMinimum: inspectorMinimum,
+                sidebarDesired: sidebarWidth + sidebarExtra, inspectorOpen: hasRight,
+                inspectorDesired: min(rightWidth, rightMaximum), inspectorMinimum: rightMinimum,
                 sidebarMinimum: 230 + sidebarExtra)
+            // A reserved panel is drawn by the chat itself, in the room after its column.
+            let chatWidth = inspector == nil && inspectorReserve != nil ? width - sizes.chatX : sizes.chat
             ZStack(alignment: .topLeading) {
-                pane(AnyView(ChatSwitchSurface(content: chat)), role: "chat", width: sizes.chat, height: geometry.size.height)
+                pane(AnyView(ChatSwitchSurface(content: chat)), role: "chat", width: chatWidth, height: geometry.size.height)
                     .offset(x: sizes.chatX)
                 if let sidebar, sizes.sidebar > 0 {
                     pane(sidebar, role: "sidebar", width: sizes.sidebar, height: geometry.size.height)
@@ -77,7 +86,7 @@ struct ChatColumns: View {
             .frame(width: width, height: geometry.size.height, alignment: .topLeading)
             .clipped()
             .onChange(of: model.sidebarToggleRequest) {
-                if width < 636 + sidebarExtra + (inspector != nil ? inspectorMinimum + 6 : 0) { sidebarOverlay.toggle() }
+                if width < 636 + sidebarExtra + (hasRight ? rightMinimum + 6 : 0) { sidebarOverlay.toggle() }
                 else { sidebarOverlay = false }
             }
             .onChange(of: sizes.sidebar) { _, value in if value > 0 { sidebarOverlay = false } }
