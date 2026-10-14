@@ -138,8 +138,8 @@ struct SessionImages: View {
         .buttonStyle(.plain)
         .background(scheme == .dark ? Color(white: 0.10) : Color(white: 0.97), in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12)))
-        .help("Image Library")
-        .accessibilityLabel("Image Library")
+        .help("Library: the images and files this chat made or shared")
+        .accessibilityLabel("Library")
     }
 }
 

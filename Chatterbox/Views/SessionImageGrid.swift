@@ -8,14 +8,10 @@ import SwiftUI
 struct SessionImageGrid: View {
     @Environment(AppModel.self) private var model
     let session: ChatSession
-    /// Puts the picked images in the message box; with it, tiles can be picked (as the old
-    /// image library did): a circle on each, ⌘-click, or Select in the menu.
-    var onAdd: (([URL]) -> Void)? = nil
     private var sessions: [ChatSession] { [session] }
     @State private var images: [StudioImage] = []
     @State private var loaded = false
     @State private var reviewing: StudioImage?
-    @State private var selected: [String] = []   // Paths, in the order you picked them.
 
     struct StudioImage: Identifiable, Hashable {
         var id: String { url.path }
@@ -34,14 +30,11 @@ struct SessionImageGrid: View {
                                        description: Text("Images this session makes, and screenshots or renders it shows, collect here."))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                VStack(spacing: 0) {
-                    if onAdd != nil { selectionBar }
-                    ScrollView {
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 170, maximum: 260), spacing: 16)], spacing: 16) {
-                            ForEach(images) { tile($0) }
-                        }
-                        .padding(16)
+                ScrollView {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 170, maximum: 260), spacing: 16)], spacing: 16) {
+                        ForEach(images) { tile($0) }
                     }
+                    .padding(16)
                 }
             }
         }
@@ -74,52 +67,6 @@ struct SessionImageGrid: View {
         Attachment(name: url.lastPathComponent, path: url.path, mediaType: "image/" + url.pathExtension.lowercased(), kind: .image)
     }
 
-    /// How many are picked, and the button that adds them to the chat.
-    private var selectionBar: some View {
-        HStack {
-            if selected.isEmpty {
-                Text("Click the circles to pick images to add to the chat").font(.caption).foregroundStyle(.secondary)
-            } else {
-                Text("\(selected.count) selected").font(.callout)
-                Spacer()
-                Button("Clear") { selected = [] }
-                Button("Add \(selected.count) to Chat") {
-                    onAdd?(selected.map { URL(fileURLWithPath: $0) })
-                    selected = []
-                }
-                .keyboardShortcut(.defaultAction)
-                .buttonStyle(.borderedProminent)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(minHeight: 28)
-        .padding(.horizontal, 16).padding(.top, 8)
-    }
-
-    private func isSelected(_ image: StudioImage) -> Bool { selected.contains(image.url.path) }
-    private func toggle(_ image: StudioImage) {
-        if let index = selected.firstIndex(of: image.url.path) { selected.remove(at: index) } else { selected.append(image.url.path) }
-    }
-
-    /// A circle on the tile: click it to pick the image; it shows its place in the order.
-    private func pickCircle(_ image: StudioImage) -> some View {
-        Button { toggle(image) } label: {
-            ZStack {
-                Circle().fill(isSelected(image) ? Color.accentColor : Color.black.opacity(0.35))
-                Circle().strokeBorder(.white, lineWidth: 1.5)
-                if let index = selected.firstIndex(of: image.url.path) {
-                    Text("\(index + 1)").font(.caption.weight(.bold)).foregroundStyle(.white)
-                }
-            }
-            .frame(width: 24, height: 24)
-            .padding(8)
-            .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .help(isSelected(image) ? "Deselect" : "Select to add to the chat")
-        .accessibilityLabel(isSelected(image) ? "Deselect \(image.url.lastPathComponent)" : "Select \(image.url.lastPathComponent)")
-    }
-
     private func tile(_ image: StudioImage) -> some View {
         Button { reviewing = image } label: {
             // A card: the image with room around it, and its session and age inside.
@@ -128,7 +75,6 @@ struct SessionImageGrid: View {
                     .frame(height: 140)
                     .frame(maxWidth: .infinity)
                     .clipShape(RoundedRectangle(cornerRadius: 6))
-                    .overlay(alignment: .topTrailing) { if onAdd != nil { pickCircle(image) } }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(image.url.lastPathComponent).font(.callout.weight(.medium)).lineLimit(1).truncationMode(.middle)
                     let age = ShortAge.string(since: image.date)
@@ -138,20 +84,12 @@ struct SessionImageGrid: View {
             }
             .padding(12)
             .background(RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(0.055)))
-            .overlay(RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(isSelected(image) ? Color.accentColor : Color.primary.opacity(0.1), lineWidth: isSelected(image) ? 3 : 1))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.primary.opacity(0.1)))
             .contentShape(RoundedRectangle(cornerRadius: 12))
         }
         .buttonStyle(.plain)
         .help(image.url.lastPathComponent)
-        // ⌘-click picks it too, like Finder.
-        .simultaneousGesture(TapGesture().modifiers(.command).onEnded { if onAdd != nil { toggle(image) } })
         .contextMenu {
-            if let onAdd {
-                Button(isSelected(image) ? "Deselect" : "Select") { toggle(image) }
-                Button("Add to Chat") { onAdd([image.url]) }
-                Divider()
-            }
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([image.url]) }
             Button("Copy Image") { ImageClipboard.copy(image.url) }
         }

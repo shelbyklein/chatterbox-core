@@ -3,8 +3,10 @@ import CryptoKit
 import ImageIO
 import SwiftUI
 
-/// Every image made in a chat, newest first: images the agent generated, and screenshots,
-/// renders, and proofs its replies pointed to. Clicking one opens it in the image viewer.
+/// A chat's library of what it made or shared: its images, newest first (images the agent
+/// generated, and screenshots, renders and proofs its replies pointed to), and its other
+/// files. Clicking an image opens it in the image viewer; its circles pick images to add to
+/// the chat.
 struct ChatImageGallery: View {
     let session: ChatSession
     let onOpen: (Attachment) -> Void
@@ -14,6 +16,8 @@ struct ChatImageGallery: View {
     @State private var images: [GalleryImage] = []
     @State private var loaded = false
     @State private var selected: [String] = []   // Paths, in the order you picked them.
+    /// Images or Files.
+    @AppStorage("chatLibraryShows") private var shows = "images"
 
     struct GalleryImage: Identifiable, Hashable {
         var id: String { url.path }
@@ -70,25 +74,34 @@ struct ChatImageGallery: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Images in \u{201C}\(session.title)\u{201D}").font(.headline).lineLimit(1)
-                if loaded { Text("\(images.count)").foregroundStyle(.secondary) }
+                Text("Library \u{00B7} \(session.title)").font(.headline).lineLimit(1)
+                Picker("Show", selection: $shows) {
+                    Text(loaded ? "Images \(images.count)" : "Images").tag("images")
+                    Text("Files").tag("files")
+                }
+                .pickerStyle(.segmented).labelsHidden().fixedSize()
                 Spacer()
-                if selected.isEmpty {
-                    Text("Click the circles to pick images to add to the chat").font(.caption).foregroundStyle(.secondary)
-                } else {
-                    Button("Clear") { selected = [] }
-                    Button("Add \(selected.count) to Chat") {
-                        onAdd(selected.map { URL(fileURLWithPath: $0) })
-                        dismiss()
+                // Picking is for images.
+                if shows != "files" {
+                    if selected.isEmpty {
+                        Text("Click the circles to pick images to add to the chat").font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        Button("Clear") { selected = [] }
+                        Button("Add \(selected.count) to Chat") {
+                            onAdd(selected.map { URL(fileURLWithPath: $0) })
+                            dismiss()
+                        }
+                        .keyboardShortcut(.defaultAction)
+                        .buttonStyle(.borderedProminent)
                     }
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
                 }
                 Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
             }
             .padding(16)
             Divider()
-            if !loaded {
+            if shows == "files" {
+                SessionFileGrid(session: session).frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if !loaded {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if images.isEmpty {
                 ContentUnavailableView("No images yet", systemImage: "photo.on.rectangle",

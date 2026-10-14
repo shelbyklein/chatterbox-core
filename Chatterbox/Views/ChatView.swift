@@ -84,38 +84,15 @@ struct ChatView: View {
             if session.record.backend == .claude, let status = ClaudeModels.shared.statusMessage { claudeBanner(status) }
             if session.record.backend == .codex, let status = CodexAppServer.shared.statusMessage { claudeBanner(status) }
             if find.isOpen { ChatFindBar(find: find) }
-            Group {
-                // A Studio session can show its images in place of the conversation.
-                if isStudioSession, studioShows == "images" {
-                    SessionImageGrid(session: session) { urls in
-                        add(urls.compactMap(importOrReport))
-                        studioShows = "chat"
-                        composerFocused = true
-                    }
-                    .padding(.top, 52)
-                }
-                else if isStudioSession, studioShows == "files" { SessionFileGrid(session: session).padding(.top, 52) }
-                else { transcript }
-            }
+            transcript
                 // Under the banners above (a sidequest's, an archived chat's), never over them.
                 .overlay(alignment: .topTrailing) {
                     if !compact && tileContext == nil && !session.isDot {
                         GeometryReader { geometry in
                             VStack(alignment: .trailing, spacing: 8) {
                                 HStack(alignment: .top, spacing: 8) {
-                                    if isStudioSession {
-                                        Picker("Show", selection: $studioShows) {
-                                            Text("Chat").tag("chat")
-                                            Text("Images").tag("images")
-                                            Text("Files").tag("files")
-                                        }
-                                        .pickerStyle(.segmented).labelsHidden().fixedSize()
-                                        .frame(height: 32)
-                                        .help("The conversation, or every image or file this session made or shared")
-                                    }
                                     SessionTools(bridge: windowToolbar ?? ownToolbar)
-                                    // A Studio session's Images tab has these, with picking.
-                                    if !isStudioSession { SessionImages(bridge: windowToolbar ?? ownToolbar) }
+                                    SessionImages(bridge: windowToolbar ?? ownToolbar)
                                     ChatQuickActions(session: session)
                                     if !session.isSidequest { SidequestButton(session: session) }
                                 }
@@ -149,10 +126,6 @@ struct ChatView: View {
         }
     }
 
-    /// A Studio session in the full chat view: it can switch between the chat and its images.
-    private var isStudioSession: Bool { session.record.studioID != nil && !compact && tileContext == nil && !session.isDot }
-    /// "chat", "images" or "files".
-    @AppStorage("studioChatShows") private var studioShows = "chat"
 
     /// Pinned messages show only in the full chat view, not tiles, compact windows or Dot.
     private var showsPins: Bool { !compact && tileContext == nil && !session.isDot }
