@@ -86,7 +86,14 @@ struct ChatView: View {
             if find.isOpen { ChatFindBar(find: find) }
             Group {
                 // A Studio session can show its images in place of the conversation.
-                if isStudioSession, studioShows == "images" { SessionImageGrid(session: session).padding(.top, 52) }
+                if isStudioSession, studioShows == "images" {
+                    SessionImageGrid(session: session) { urls in
+                        add(urls.compactMap(importOrReport))
+                        studioShows = "chat"
+                        composerFocused = true
+                    }
+                    .padding(.top, 52)
+                }
                 else if isStudioSession, studioShows == "files" { SessionFileGrid(session: session).padding(.top, 52) }
                 else { transcript }
             }
@@ -107,7 +114,8 @@ struct ChatView: View {
                                         .help("The conversation, or every image or file this session made or shared")
                                     }
                                     SessionTools(bridge: windowToolbar ?? ownToolbar)
-                                    SessionImages(bridge: windowToolbar ?? ownToolbar)
+                                    // A Studio session's Images tab has these, with picking.
+                                    if !isStudioSession { SessionImages(bridge: windowToolbar ?? ownToolbar) }
                                     ChatQuickActions(session: session)
                                     if !session.isSidequest { SidequestButton(session: session) }
                                 }
