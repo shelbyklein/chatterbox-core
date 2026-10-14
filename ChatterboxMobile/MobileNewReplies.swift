@@ -297,7 +297,8 @@ private struct MobileActivityRows: UIViewRepresentable {
                 ])
             }
         }
-        func tableView(_ tableView: UITableView, leadingSwipeActionsConfigurationForRowAt indexPath: IndexPath) -> UISwipeActionsConfiguration? {
+        /// Swiping left clears the row from Activity: all the way, or partway and tap Dismiss.
+        func tableView(_ tableView: UITableView, trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath) -> UISwipeActionsConfiguration? {
             let entry = parent.entries[indexPath.row]
             guard !parent.busy.contains(entry.chat.id) else { return nil }
             let dismiss = UIContextualAction(style: .normal, title: "Dismiss") { [weak self] _, _, done in
@@ -307,6 +308,17 @@ private struct MobileActivityRows: UIViewRepresentable {
                 DispatchQueue.main.async { self?.parent.dismiss(entry) }
             }
             dismiss.backgroundColor = .systemBlue
+            dismiss.image = UIImage(systemName: "checkmark")
+            let actions = UISwipeActionsConfiguration(actions: [dismiss])
+            actions.performsFirstActionWithFullSwipe = true
+            return actions
+        }
+
+        /// Swiping right offers Archive and Delete, which change the chat itself, so neither
+        /// runs on a full swipe.
+        func tableView(_ tableView: UITableView, leadingSwipeActionsConfigurationForRowAt indexPath: IndexPath) -> UISwipeActionsConfiguration? {
+            let entry = parent.entries[indexPath.row]
+            guard !parent.busy.contains(entry.chat.id) else { return nil }
             let archive = UIContextualAction(style: .normal, title: "Archive") { [weak self] _, _, done in
                 done(true)
                 tableView.setEditing(false, animated: false)
@@ -319,8 +331,8 @@ private struct MobileActivityRows: UIViewRepresentable {
                 DispatchQueue.main.async { self?.parent.delete(entry.chat) }
             }
             delete.backgroundColor = .systemRed
-            let actions = UISwipeActionsConfiguration(actions: [dismiss, archive, delete])
-            actions.performsFirstActionWithFullSwipe = true
+            let actions = UISwipeActionsConfiguration(actions: [archive, delete])
+            actions.performsFirstActionWithFullSwipe = false
             return actions
         }
     }
@@ -389,7 +401,7 @@ private final class MobileActivityCell: UITableViewCell {
         } else { time.text = "Working" }
         accessibilityLabel = "\(entry.reply == nil ? "Working" : "New reply"): \(chat.title)"
         accessibilityValue = [chat.subtitle, time.text].compactMap { $0 }.joined(separator: ", ")
-        accessibilityHint = "Opens the chat. Swipe right for Activity actions."
+        accessibilityHint = "Opens the chat. Swipe left to clear it from Activity, right to archive or delete."
         accessibilityTraits = busy ? [.button, .notEnabled] : .button
     }
 }
