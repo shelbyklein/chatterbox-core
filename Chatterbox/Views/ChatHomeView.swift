@@ -116,6 +116,15 @@ struct ThreadCard: View {
                     .contentShape(Rectangle())
             } else {
             VStack(alignment: .leading, spacing: expanded ? 12 : 7) {
+                // The newest image first, the card's full width, filling its frame.
+                if showsThumbnail, let thumbnail = ThreadThumbnails.shared.images[session.id] {
+                    Color.clear
+                        .aspectRatio(16 / 10, contentMode: .fit)
+                        .frame(maxWidth: .infinity)
+                        .overlay { Image(nsImage: thumbnail).resizable().scaledToFill() }
+                        .clipShape(RoundedRectangle(cornerRadius: 7))
+                        .accessibilityLabel("Latest image in " + title)
+                }
                 HStack(spacing: 6) {
                     #if GOLEM_APP
                     if session.isDot { GolemHead(size: expanded ? 26 : 18) }
@@ -159,13 +168,6 @@ struct ThreadCard: View {
                     VStack(alignment: .leading, spacing: 3) {
                         ForEach(quests) { quest in SidequestCardRow(quest: quest, scale: scale) }
                     }
-                }
-                if showsThumbnail, let thumbnail = ThreadThumbnails.shared.images[session.id] {
-                    Image(nsImage: thumbnail).resizable().scaledToFit()
-                        .frame(height: (expanded ? 100 : 56) * scale)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .clipShape(RoundedRectangle(cornerRadius: 5))
-                        .accessibilityLabel("Latest image in " + title)
                 }
                 Spacer(minLength: 0)
                 HStack {
@@ -379,7 +381,8 @@ final class ThreadThumbnails {
         guard sources[id] != url else { return }
         sources[id] = url
         Task.detached(priority: .utility) {
-            let image = Self.thumbnail(url, side: 160)
+            // Wide enough for a card's full width on a Retina screen.
+            let image = Self.thumbnail(url, side: 480)
             await MainActor.run {
                 guard self.sources[id] == url else { return }
                 self.images[id] = image
