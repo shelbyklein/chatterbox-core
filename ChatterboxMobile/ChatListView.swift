@@ -4,8 +4,8 @@ import SwiftUI
 /// On iPad the open chat sits beside them; on iPhone it opens over them.
 struct ChatListView: View {
     enum Page: String, CaseIterable, Identifiable {
-        /// Every session at once: Projects, Studios and Chats, each under its heading.
-        case all, projects, studios, chats
+        /// In this order in the tab bar. All: every session at once, newest first.
+        case projects, studios, chats, all
         var id: String { rawValue }
         var title: String { rawValue.capitalized }
         var icon: String {
