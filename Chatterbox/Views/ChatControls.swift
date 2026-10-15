@@ -168,7 +168,7 @@ struct ChatNotes: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Label(project ? "Project notes" : "Chat notes", systemImage: "note.text").font(.headline)
+                Label(project ? "Project notes" : "Session notes", systemImage: "note.text").font(.headline)
                 Spacer()
                 Button {
                     withAnimation(.easeInOut(duration: 0.18)) { composing.toggle() }
@@ -312,7 +312,7 @@ struct QuickPromptList: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .help("Send \u{201C}\(prompt.prompt)\u{201D} to this chat")
+                    .help("Send \u{201C}\(prompt.prompt)\u{201D} to this session")
                 }
             }
             if editing {
@@ -370,8 +370,8 @@ struct FinishedChatsBell: View {
             .padding(.leading, 4).padding(.trailing, 12)
         }
         .buttonStyle(.plain)
-        .help("\(chats.count) unseen finished chats · \(Attention.shared.workingChats(in: model).count) working")
-        .accessibilityLabel("Chat activity, \(chats.count) unseen")
+        .help("\(chats.count) unseen finished sessions · \(Attention.shared.workingChats(in: model).count) working")
+        .accessibilityLabel("Session activity, \(chats.count) unseen")
         .popover(isPresented: $open, arrowEdge: .bottom) {
             FinishedChatsList { open = false }.environment(model)
         }
@@ -387,7 +387,7 @@ struct FinishedChatsList: View {
     private var recent: [ChatSession] { Attention.shared.recentChats(in: model) }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Chat activity").font(.headline)
+            Text("Session activity").font(.headline)
             Text("Finished replies, sessions working now, and the last 12 hours").font(.caption).foregroundStyle(.secondary)
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {

@@ -142,11 +142,11 @@ struct ChatHomeView: View {
                 if let studio = selectedStudio {
                     Button("Instructions", systemImage: "doc.text") { model.editingStudioInstructions = studio.id }
                         .help("Edit \(studio.name)'s instructions")
-                    Button("New Chat", systemImage: "plus") {
+                    Button("New Session", systemImage: "plus") {
                         model.newChat(in: studio)
                         model.showingHome = false
                     }
-                    .help("New chat in \(studio.name)")
+                    .help("New session in \(studio.name)")
                 }
             }
             ViewThatFits(in: .horizontal) {
@@ -397,7 +397,7 @@ private struct StudioPreviewCard: View {
         .accessibilityValue("\(summary.status.rawValue), \(summary.note)")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction(named: "Inspect", inspect)
-        .accessibilityAction(named: "Open chat", open)
+        .accessibilityAction(named: "Open session", open)
         #if DEBUG
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { MacHomeDebug.cards[session.id] = $0 }
         #endif
@@ -449,9 +449,9 @@ private struct StudioInspector: View {
             ContentUnavailableView {
                 Label("No sessions to show", systemImage: "paintpalette")
             } description: {
-                Text(model.chats(in: studio).isEmpty ? "Start a chat in \(studio.name) to see it here." : "Try another search or choose All.")
+                Text(model.chats(in: studio).isEmpty ? "Start a session in \(studio.name) to see it here." : "Try another search or choose All.")
             } actions: {
-                Button("New Chat in \(studio.name)") { model.newChat(in: studio); model.showingHome = false }
+                Button("New Session in \(studio.name)") { model.newChat(in: studio); model.showingHome = false }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
@@ -516,7 +516,7 @@ private struct InspectorRow: View {
         .accessibilityValue("\(summary.status.rawValue), \(summary.note)")
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction(named: "Inspect", inspect)
-        .accessibilityAction(named: "Open chat", open)
+        .accessibilityAction(named: "Open session", open)
         #if DEBUG
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { MacHomeDebug.cards[session.id] = $0 }
         #endif
@@ -584,7 +584,7 @@ private struct InspectorDetail: View {
                     Text("Last active \(summary.lastActivity.formatted(.relative(presentation: .named))) · \(session.record.provider.label)")
                         .font(.callout).foregroundStyle(.secondary)
                     Spacer()
-                    Button("Open Chat") { model.selectedID = session.id }
+                    Button("Open Session") { model.selectedID = session.id }
                         .keyboardShortcut(.defaultAction)
                         #if DEBUG
                         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { MacHomeDebug.openChat = $0 }

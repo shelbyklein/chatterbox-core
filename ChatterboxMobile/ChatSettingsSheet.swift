@@ -10,7 +10,7 @@ struct ChatSettingsSheet: View {
     var body: some View {
         NavigationStack {
             ChatSettingsForm(options: options, apply: apply)
-                .navigationTitle("Chat Settings")
+                .navigationTitle("Session Settings")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }

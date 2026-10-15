@@ -551,7 +551,7 @@ final class AppModel {
     /// (Chatterbox → Chatterbox-<branch>), and a chat that works in it, with the same agent.
     @discardableResult
     func newWorktree(of project: ChatSession, name: String) async throws -> ChatSession {
-        guard let main = project.record.projectFolder else { throw WorktreeError(message: "That chat isn't a project.") }
+        guard let main = project.record.projectFolder else { throw WorktreeError(message: "That session isn't a project.") }
         let branch = name.lowercased()
             .replacingOccurrences(of: "[^a-z0-9._/-]+", with: "-", options: .regularExpression)
             .trimmingCharacters(in: CharacterSet(charactersIn: "-./"))
@@ -662,7 +662,7 @@ final class AppModel {
     }
 
     func chooseAndOpenProject() {
-        if let folder = FolderPicker.choose(startingAt: nil, message: "Choose a project folder. Its chat opens, or a new one starts.") {
+        if let folder = FolderPicker.choose(startingAt: nil, message: "Choose a project folder. Its session opens, or a new one starts.") {
             openProject(folder)
         }
     }
@@ -919,10 +919,10 @@ final class AppModel {
             for state in states {applyProjection(state)}
             for session in sessions { session.resendDraftIfUnsynced() }
             let elapsed=Date().timeIntervalSince(started)
-            if elapsed > 2 { Diagnostics.note("Chat list took \(String(format:"%.1f",elapsed)) s to load from the background service (\(states.count) chats)") }
+            if elapsed > 2 { Diagnostics.note("Session list took \(String(format:"%.1f",elapsed)) s to load from the background service (\(states.count) sessions)") }
             return true
         } catch {
-            Diagnostics.note("Couldn't load the chat list from the background service; retrying: \(error.localizedDescription)")
+            Diagnostics.note("Couldn't load the session list from the background service; retrying: \(error.localizedDescription)")
             return false
         }
     }

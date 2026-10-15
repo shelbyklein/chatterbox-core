@@ -97,7 +97,7 @@ struct StudioInstructionsEditor: View {
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Every chat in this Studio follows these. Open chats get the new version with their next message.")
+                Text("Every session in this Studio follows these. Open sessions get the new version with their next message.")
                     .font(.footnote).foregroundStyle(.secondary)
                 TextEditor(text: $text)
                     .padding(6)

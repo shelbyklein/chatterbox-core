@@ -223,7 +223,7 @@ struct SavedPDFsView: View {
                     } }
                 }
             }
-            .overlay { if entries.isEmpty { ContentUnavailableView("No Saved PDFs", systemImage: "doc.richtext", description: Text("PDFs you open in a chat are kept here for offline review.")) } }
+            .overlay { if entries.isEmpty { ContentUnavailableView("No Saved PDFs", systemImage: "doc.richtext", description: Text("PDFs you open in a session are kept here for offline review.")) } }
             .navigationTitle("Saved PDFs")
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .task { entries = await Task.detached { MobilePDFCache.entries() }.value }

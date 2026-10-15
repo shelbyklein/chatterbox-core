@@ -104,7 +104,7 @@ struct ChatColumns: View {
             .frame(width: ChatColumnWidths.divider)
             .frame(maxHeight: .infinity)
             .background(Color.primary.opacity(0.08))
-            .accessibilityLabel("Resize chat column")
+            .accessibilityLabel("Resize session column")
             .accessibilityAdjustableAction { direction in resize(direction == .increment ? 20 : -20) }
     }
     private func closeButton(action: @escaping () -> Void) -> some View {

@@ -77,7 +77,7 @@ struct MobileSidequestStrip: View {
                      : "Sidequest from \u{201C}\(parent?.title ?? "another chat")\u{201D}. The answer goes back when it finishes.")
                     .font(.caption).lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                if let parent { Button("Open Chat") { open(parent) }.font(.caption.weight(.semibold)) }
+                if let parent { Button("Open Session") { open(parent) }.font(.caption.weight(.semibold)) }
                 Button("End", role: .destructive, action: end).font(.caption.weight(.semibold))
                     .disabled(summary.isRunning)
                     .accessibilityLabel("End Sidequest")

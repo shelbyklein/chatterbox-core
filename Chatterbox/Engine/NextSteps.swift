@@ -86,7 +86,7 @@ final class NextSteps {
     // MARK: - Asking
 
     nonisolated private static let system = """
-    You suggest what a user might type next in a chat with a coding or creative agent. You never use tools. \
+    You suggest what a user might type next in a session with a coding or creative agent. You never use tools. \
     Answer with only a JSON array of up to three short strings, the most likely first, written as the user would type them: \
     concrete follow-ups to the reply (run, check, fix, extend, ship), at most 90 characters each. \
     A suggestion may be a slash command from the list given, as "/name arguments". \
@@ -100,7 +100,7 @@ final class NextSteps {
         var prompt = "The user wrote:\n\(clip(asked, 3000))\n\nThe agent replied:\n\(clip(reply, 6000))\n"
         if !commands.isEmpty {
             let list = commands.prefix(60).map { "/\($0.name)" + ($0.description.isEmpty ? "" : " — " + String($0.description.prefix(80))) }
-            prompt += "\nSlash commands this chat has:\n" + list.joined(separator: "\n") + "\n"
+            prompt += "\nSlash commands this session has:\n" + list.joined(separator: "\n") + "\n"
         }
         return prompt + "\nWhat might the user type next? JSON array only."
     }

@@ -138,7 +138,7 @@ struct SessionImages: View {
         .buttonStyle(.plain)
         .background(scheme == .dark ? Color(white: 0.10) : Color(white: 0.97), in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12)))
-        .help("Library: the images and files this chat made or shared")
+        .help("Library: the images and files this session made or shared")
         .accessibilityLabel("Library")
     }
 }
@@ -193,14 +193,14 @@ struct PlaceSlot: View {
             ToolbarLabel(session.record.projectFolder == nil ? "No Project" : session.projectName,
                          systemImage: session.record.projectFolder == nil ? "folder.badge.plus" : "folder.fill")
         }
-        .help(session.record.projectFolder.map { "This chat is bound to \($0). Claude and Codex work in this folder." }
+        .help(session.record.projectFolder.map { "This session is bound to \($0). Claude and Codex work in this folder." }
               ?? "Bind this chat to a project folder so Claude or Codex can work in it. Each folder gets one chat.")
     }
 
     private func studioButton(_ studio: Studio, _ session: ChatSession) -> some View {
         Menu {
             Button("Studio Instructions\u{2026}") { model.editingStudioInstructions = studio.id }
-            Button("Fork This Chat") { model.fork(session) }
+            Button("Fork This Session") { model.fork(session) }
                 .disabled(!model.canFork(session))
             Divider()
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: studio.folder)]) }
@@ -215,7 +215,7 @@ struct PlaceSlot: View {
         } label: {
             ToolbarLabel(studio.name, systemImage: "paintpalette")
         }
-        .help("This chat is in the \(studio.name) Studio. Its chats share \(studio.folder).")
+        .help("This session is in the \(studio.name) Studio. Its sessions share \(studio.folder).")
     }
 }
 
@@ -284,8 +284,8 @@ struct RemoteSlot: View {
                     .foregroundStyle(session.remoteURL != nil ? Color.green : Color.secondary)
             }
             .help(session.remoteURL != nil
-                  ? "Remote Control is on: this chat is on claude.ai and in the Claude app."
-                  : "Remote Control: open this chat on claude.ai or in the Claude app")
+                  ? "Remote Control is on: this session is on claude.ai and in the Claude app."
+                  : "Remote Control: open this session on claude.ai or in the Claude app")
         }
     }
 }
@@ -294,7 +294,7 @@ struct ImagesSlot: View {
     let bridge: ChatToolbarBridge
     var body: some View {
         Button { bridge.showImages() } label: { Image(systemName: "photo.on.rectangle.angled") }
-            .help("Every image made in this chat").accessibilityLabel("Images")
+            .help("Every image made in this session").accessibilityLabel("Images")
     }
 }
 
@@ -302,7 +302,7 @@ struct TerminalSlot: View {
     let bridge: ChatToolbarBridge
     var body: some View {
         Button { bridge.toggleTerminal() } label: { Image(systemName: "terminal") }
-            .help("A terminal in this chat's folder, at the bottom of the window (\u{2303}`)").accessibilityLabel("Terminal")
+            .help("A terminal in this session's folder, at the bottom of the window (\u{2303}`)").accessibilityLabel("Terminal")
     }
 }
 

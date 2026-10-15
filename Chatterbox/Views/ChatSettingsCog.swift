@@ -27,8 +27,8 @@ struct ChatSettingsCog: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
-        .help("Chat settings: access \u{00B7} \(session.mode.title)")
-        .accessibilityLabel("Chat Settings")
+        .help("Session settings: access \u{00B7} \(session.mode.title)")
+        .accessibilityLabel("Session Settings")
         .accessibilityValue(session.mode.isUnrestricted ? "\(session.mode.title), unrestricted" : session.mode.title)
         .onChange(of: modelRequest) { if handlesKeyboardRequest() { page = .model; isOpen = true } }
         .onChange(of: modeRequest) { if handlesKeyboardRequest() { page = .main; isOpen = true } }

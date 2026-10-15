@@ -133,7 +133,7 @@ struct ContentView: View {
                             #else
                             Button("Open Golem") {GolemIntegration.shared.open()}
                             #endif
-                            Button("Bring Chat Here") { model.openDot() }
+                            Button("Bring Session Here") { model.openDot() }
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -142,7 +142,7 @@ struct ContentView: View {
                         .id(session.id)
                 }
             } else {
-                Text("No chat selected").foregroundStyle(.secondary)
+                Text("No session selected").foregroundStyle(.secondary)
             }
             }
             .modifier(ThemedDetail(background: themeBackground))
@@ -238,7 +238,7 @@ struct ContentView: View {
             }
         }
         .modifier(WorktreeAlerts(parent: $worktreeParent, name: $worktreeName, removing: $removingWorktree, error: $worktreeError))
-        .alert("Rename Chat", isPresented: Binding(get: { renamingChat != nil }, set: { if !$0 { renamingChat = nil } })) {
+        .alert("Rename Session", isPresented: Binding(get: { renamingChat != nil }, set: { if !$0 { renamingChat = nil } })) {
             TextField("Title", text: $chatTitle)
             Button("Rename") {
                 guard let chat = renamingChat else { return }
@@ -288,12 +288,12 @@ struct ContentView: View {
             }
             Button("Cancel", role: .cancel) { newTag = "" }
         } message: {
-            Text("Tags show as pills under the chat or project name.")
+            Text("Tags show as pills under the session or project name.")
         }
         .confirmationDialog("Delete \u{201C}\(pendingDelete?.title ?? "")\u{201D}?",
                             isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
                             presenting: pendingDelete) { session in
-            Button("Delete Chat", role: .destructive) { model.delete(session) }
+            Button("Delete Session", role: .destructive) { model.delete(session) }
             Button("Archive Instead") { model.archive(session) }
         } message: { _ in
             Text("The conversation and its attachments are removed permanently. Archiving keeps them out of the way instead.")
@@ -452,8 +452,8 @@ extension ContentView {
                     if over { dropStudio = studio.id } else if dropStudio == studio.id { dropStudio = nil }
                 }
                 .contextMenu {
-                    Button("New Claude Chat") { model.newChat(in: studio, backend: .claude) }
-                    Button("New Codex Chat") { model.newChat(in: studio, backend: .codex) }
+                    Button("New Claude Session") { model.newChat(in: studio, backend: .claude) }
+                    Button("New Codex Session") { model.newChat(in: studio, backend: .codex) }
                     Divider()
                     Button("Studio Instructions\u{2026}") { model.editingStudioInstructions = studio.id }
                     Button("Edit design.md") { studio.ensureDesignFile(); openForEditing(studio.designFile) }
@@ -493,7 +493,7 @@ extension ContentView {
                     // The newest unread message, in full color, so it reads as news.
                     Text(Self.plainPreview(latest)).font(.caption).foregroundStyle(.primary).lineLimit(2)
                 } else {
-                    Text(dot?.lastActionSummary ?? "Runs your chats for you. \u{2318}J from anywhere.")
+                    Text(dot?.lastActionSummary ?? "Runs your sessions for you. \u{2318}J from anywhere.")
                         .font(.caption).foregroundStyle(.secondary).lineLimit(2)
                 }
             }
@@ -529,7 +529,7 @@ extension ContentView {
             Button("Rename\u{2026}") { dotName = model.dotName; renamingDot = true }
             Button(model.showingDot ? "Hide Mini Window" : "Show Mini Window  \u{2318}J") { model.showingDot.toggle() }
         }
-        .help("\(model.dotName) runs your other chats: ask it to check on a project, hand work to a chat, or start one.")
+        .help("\(model.dotName) runs your other sessions: ask it to check on a project, hand work to a session, or start one.")
         .alert("Rename \(model.dotName)", isPresented: $renamingDot) {
             TextField("Name", text: $dotName)
             Button("Rename") { model.renameDot(dotName) }
@@ -650,14 +650,14 @@ extension ContentView {
             Button(model.isPinnedThread(session) ? "Unpin" : "Pin to Top") { model.togglePinnedThread(session) }
             Divider()
         }
-        Button("Rename Chat\u{2026}") {
+        Button("Rename Session\u{2026}") {
             // Start from the name the row shows.
             chatTitle = session.record.projectFolder != nil ? session.projectName : session.title
             renamingChat = session
         }
         RestartThreadControl(session: session)
         if session.record.projectFolder == nil, !session.items.isEmpty {
-            Button("Fork Chat") { model.fork(session) }
+            Button("Fork Session") { model.fork(session) }
                 .disabled(!model.canFork(session))
         }
         if let folder = session.record.projectFolder {
@@ -717,12 +717,12 @@ extension ContentView {
                     sidequestTask = ""; sidequestFrom = session
                 }
             }
-            Button(session.record.automationID != nil ? "End Automation Thread" : session.record.sidechatOf != nil ? "End Sidechat" : "Archive Chat") { model.archive(session) }
+            Button(session.record.automationID != nil ? "End Automation Thread" : session.record.sidechatOf != nil ? "End Sidechat" : "Archive Session") { model.archive(session) }
         } else {
-            Button("Unarchive Chat") { model.unarchive(session) }
+            Button("Unarchive Session") { model.unarchive(session) }
         }
         Divider()
-        Button("Delete Chat\u{2026}", role: .destructive) { pendingDelete = session }
+        Button("Delete Session\u{2026}", role: .destructive) { pendingDelete = session }
     }
 }
 
@@ -890,9 +890,9 @@ private struct StudioRow: View {
             Spacer(minLength: 0)
             if collapsed {
                 if chats.contains(where: \.isWaitingOnYou) {
-                    Circle().fill(Color.yellow).frame(width: 7, height: 7).help("A chat here is waiting on you")
+                    Circle().fill(Color.yellow).frame(width: 7, height: 7).help("A session here is waiting on you")
                 } else if chats.contains(where: { $0.isRunning || $0.hasBackgroundWork }) {
-                    ActivitySpinner(color: .secondary).frame(width: 10, height: 10).help("A chat here is working")
+                    ActivitySpinner(color: .secondary).frame(width: 10, height: 10).help("A session here is working")
                 } else if !chats.isEmpty {
                     Text("\(chats.count)").font(.caption.monospacedDigit()).foregroundStyle(.tertiary)
                 }
@@ -900,8 +900,8 @@ private struct StudioRow: View {
             Button(action: onNewChat) { Image(systemName: "square.and.pencil") }
                 .buttonStyle(.borderless)
                 .foregroundStyle(.secondary)
-                .help("New chat in \(studio.name)")
-                .accessibilityLabel("New Chat in \(studio.name)")
+                .help("New session in \(studio.name)")
+                .accessibilityLabel("New Session in \(studio.name)")
         }
     }
 }
@@ -1306,7 +1306,7 @@ extension ContentView {
                 tagFilterMenu(.studios)
                 if let studio = model.sidebarStudio {
                     Button { model.newChat(in: studio) } label: { Image(systemName: "plus") }
-                        .buttonStyle(.borderless).help("New chat in \(studio.name)").accessibilityLabel("New Studio Chat")
+                        .buttonStyle(.borderless).help("New session in \(studio.name)").accessibilityLabel("New Studio Session")
                 }
             case .chats:
                 tagFilterMenu(.chats)
@@ -1576,7 +1576,7 @@ extension ContentView {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
-                .help("Archived chats")
+                .help("Archived sessions")
                 .popover(isPresented: $showArchived, arrowEdge: .top) {
                     List {
                         ForEach(archived) { session in row(session, number: nil) }
@@ -1709,14 +1709,14 @@ struct LinkedStudioShortcut: View {
                 ForEach(chats) { chat in
                     Button(chat.title) { model.openLinkedStudioChat(chat.id, for: folder) }
                 }
-                if chats.isEmpty { Text("No open chats in this Studio") }
+                if chats.isEmpty { Text("No open sessions in this Studio") }
             } label: {
                 Image(systemName: "paintpalette").font(.system(size: 14))
                     .frame(width: 24, height: 24).contentShape(Rectangle())
             }
             .menuStyle(.borderlessButton).menuIndicator(.hidden)
             .foregroundStyle(.secondary)
-            .help("Open a chat in \(studio.name)")
+            .help("Open a session in \(studio.name)")
             .accessibilityLabel("Open linked Studio: \(studio.name)")
         }
     }
@@ -1773,8 +1773,8 @@ private struct StudioRail: View {
         .help(studio.name)
         .accessibilityAddTraits(selected ? .isSelected : [])
         .contextMenu {
-            Button("New Claude Chat") { model.newChat(in: studio, backend: .claude) }
-            Button("New Codex Chat") { model.newChat(in: studio, backend: .codex) }
+            Button("New Claude Session") { model.newChat(in: studio, backend: .claude) }
+            Button("New Codex Session") { model.newChat(in: studio, backend: .codex) }
             Divider()
             Button("Studio Instructions\u{2026}") { model.editingStudioInstructions = studio.id }
             Button("Edit design.md") { studio.ensureDesignFile(); openForEditing(studio.designFile) }

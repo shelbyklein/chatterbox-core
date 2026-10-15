@@ -42,9 +42,9 @@ enum ChatPromotion {
 extension ConversationRuntime {
     /// The companion keeps one conversation: promotion changes its location, never its history.
     func promote(_ chat: ChatSession, using request: Companion.PromotionRequest) throws {
-        guard ChatPromotion.eligible(chat) else { throw RuntimeFailure("Only ordinary, unarchived chats can be promoted.") }
+        guard ChatPromotion.eligible(chat) else { throw RuntimeFailure("Only ordinary, unarchived sessions can be promoted.") }
         guard !chat.isRunning, !chat.hasBackgroundWork, !chat.isRestartingThread, !chat.awaitingHostResume else {
-            throw RuntimeFailure("Wait for this chat's reply to finish before promoting it.")
+            throw RuntimeFailure("Wait for this session's reply to finish before promoting it.")
         }
         let before = chat.record
         let previousStudios = studios

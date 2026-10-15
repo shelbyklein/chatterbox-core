@@ -84,10 +84,10 @@ struct ChatImageGallery: View {
                 // Picking is for images.
                 if shows != "files" {
                     if selected.isEmpty {
-                        Text("Click the circles to pick images to add to the chat").font(.caption).foregroundStyle(.secondary)
+                        Text("Click the circles to pick images to add to the session").font(.caption).foregroundStyle(.secondary)
                     } else {
                         Button("Clear") { selected = [] }
-                        Button("Add \(selected.count) to Chat") {
+                        Button("Add \(selected.count) to Session") {
                             onAdd(selected.map { URL(fileURLWithPath: $0) })
                             dismiss()
                         }
@@ -150,7 +150,7 @@ struct ChatImageGallery: View {
         .simultaneousGesture(TapGesture().modifiers(.command).onEnded { toggle(image) })
         .contextMenu {
             Button(isSelected(image) ? "Deselect" : "Select") { toggle(image) }
-            Button("Add to Chat") { onAdd([image.url]); dismiss() }
+            Button("Add to Session") { onAdd([image.url]); dismiss() }
             Divider()
             Button("Copy Image") { ImageClipboard.copy(image.url) }
             Button("Open in Preview") { NSWorkspace.shared.open(image.url) }
@@ -181,7 +181,7 @@ extension ChatImageGallery {
             .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .help(isSelected(image) ? "Deselect" : "Select to add to the chat")
+        .help(isSelected(image) ? "Deselect" : "Select to add to the session")
         .accessibilityLabel(isSelected(image) ? "Deselect \(image.url.lastPathComponent)" : "Select \(image.url.lastPathComponent)")
     }
 }

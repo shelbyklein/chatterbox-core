@@ -235,14 +235,14 @@ private struct ApprovalCard: View {
             case .pending:
                 HStack {
                     Button(isPlan ? "Start Building" : "Allow") { decide(.approved) }
-                    Button(isPlan ? "Start and Accept Edits" : "Allow for This Chat") { decide(.approvedForSession) }
+                    Button(isPlan ? "Start and Accept Edits" : "Allow for This Session") { decide(.approvedForSession) }
                     Button(isPlan ? "Keep Planning" : "Deny", role: .destructive) { decide(.denied) }
                 }
                 .controlSize(.small)
             case .approved:
                 outcome(isPlan ? "Building, asking before edits" : "Allowed", "checkmark.circle", .green)
             case .approvedForSession:
-                outcome(isPlan ? "Building, accepting edits" : "Allowed for this chat", "checkmark.circle", .green)
+                outcome(isPlan ? "Building, accepting edits" : "Allowed for this session", "checkmark.circle", .green)
             case .denied:
                 outcome(isPlan ? "Kept planning" : "Denied", "xmark.circle", .orange)
             case .expired:

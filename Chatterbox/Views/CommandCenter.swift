@@ -96,10 +96,10 @@ struct CommandCenterView: View {
                 if layout.slots.isEmpty {
                     VStack(spacing: 16) {
                         Image(systemName: "rectangle.split.2x2").font(.system(size: 40)).foregroundStyle(.secondary)
-                        Text("Your chats, side by side").font(.title2.weight(.semibold))
+                        Text("Your sessions, side by side").font(.title2.weight(.semibold))
                         Text("Add projects or threads. Each keeps its own conversation and message box.")
                             .foregroundStyle(.secondary).multilineTextAlignment(.center)
-                        Button("Add chat", systemImage: "plus") { choice = ThreadChoice() }.buttonStyle(.borderedProminent)
+                        Button("Add session", systemImage: "plus") { choice = ThreadChoice() }.buttonStyle(.borderedProminent)
                     }.padding(32).frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     GeometryReader { area in
@@ -155,7 +155,7 @@ struct CommandCenterView: View {
     private var heading: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text("Command Center").font(.title.weight(.bold))
-            Text("\(layout.slots.count) chats · Click a message box to focus that thread")
+            Text("\(layout.slots.count) sessions · Click a message box to focus that thread")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }
@@ -177,8 +177,8 @@ struct CommandCenterView: View {
                 }
                 .disabled(layout.singleRow)
             } label: { Label("Layout", systemImage: "rectangle.split.2x2") }
-            Button("Add chat", systemImage: "plus") { choice = ThreadChoice() }
-                .accessibilityLabel("Add Command Center chat")
+            Button("Add session", systemImage: "plus") { choice = ThreadChoice() }
+                .accessibilityLabel("Add Command Center session")
                 #if DEBUG
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { CommandCenterDebug.add = $0 }
                 #endif
@@ -218,16 +218,16 @@ struct CommandCenterTile: View {
                 if session.isWaitingOnYou { Image(systemName: "questionmark.circle.fill").foregroundStyle(.orange).help("Needs you") }
                 else if session.isRunning { ActivitySpinner(color: session.record.backend == .codex ? .green : .orange).frame(width: 12, height: 12) }
                 Button { move(-1) } label: { Image(systemName: "arrow.left") }
-                    .disabled(!canMoveEarlier).help("Move this chat one position earlier")
+                    .disabled(!canMoveEarlier).help("Move this session one position earlier")
                     .accessibilityLabel("Move \(title) earlier")
                     #if DEBUG
                     .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { CommandCenterDebug.moveEarlier[session.id] = $0 }
                     #endif
                 Button { move(1) } label: { Image(systemName: "arrow.right") }
-                    .disabled(!canMoveLater).help("Move this chat one position later")
+                    .disabled(!canMoveLater).help("Move this session one position later")
                     .accessibilityLabel("Move \(title) later")
                 Button { model.selectedID = session.id } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
-                    .help("Open this thread in the full chat view").accessibilityLabel("Expand \(title)")
+                    .help("Open this thread in the full session view").accessibilityLabel("Expand \(title)")
                 Button(action: remove) { Image(systemName: "xmark") }
                     .help("Remove tile; keep the thread and any running reply").accessibilityLabel("Remove \(title) tile")
                     #if DEBUG
@@ -243,7 +243,7 @@ struct CommandCenterTile: View {
                     Image(systemName: "bubble.left").font(.largeTitle)
                     #endif
                     Text("\(model.dotName) is in the mini window")
-                    Button("Bring Chat Here") { model.showingDot = false }
+                    Button("Bring Session Here") { model.showingDot = false }
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ChatView(session: session).id(session.id)
@@ -256,7 +256,7 @@ struct CommandCenterTile: View {
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay { RoundedRectangle(cornerRadius: 12).strokeBorder(active ? Color.accentColor : Color.primary.opacity(0.16), lineWidth: active ? 2 : 1) }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(title) chat tile")
+        .accessibilityLabel("\(title) session tile")
         .accessibilityValue(active ? "Active" : "Inactive")
         #if DEBUG
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { CommandCenterDebug.tiles[session.id] = $0 }
@@ -277,7 +277,7 @@ struct CommandCenterThreadChooser: View {
                 Spacer()
                 Button("Cancel") { dismiss() }.buttonStyle(.plain).keyboardShortcut(.cancelAction)
             }
-            TextField("Search projects, Studios and chats", text: $search).textFieldStyle(.roundedBorder)
+            TextField("Search projects, Studios and sessions", text: $search).textFieldStyle(.roundedBorder)
             List {
                 let groups = HomeThreads.groups(model, search: search)
                 if groups.isEmpty { Text("No matching projects or threads").foregroundStyle(.secondary) }

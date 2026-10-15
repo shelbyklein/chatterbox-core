@@ -27,7 +27,7 @@ struct StudioInstructionsSheet: View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("\(studio.name) Instructions").font(.title3.weight(.semibold))
-                Text("Every chat in this Studio follows these. Say what it's for, and point to the sites, files, and tools to use.")
+                Text("Every session in this Studio follows these. Say what it's for, and point to the sites, files, and tools to use.")
                     .font(.callout).foregroundStyle(.secondary)
             }
             TextEditor(text: $text)
@@ -46,7 +46,7 @@ struct StudioInstructionsSheet: View {
                     }
                 }
             HStack {
-                Text("Open chats get the new version with their next message.")
+                Text("Open sessions get the new version with their next message.")
                     .font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }

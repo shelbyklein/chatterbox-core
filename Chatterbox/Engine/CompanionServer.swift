@@ -265,7 +265,7 @@ final class CompanionServer {
             let product = request.headers["x-chatterbox-product"] ?? "chatterbox"
             guard (device.product ?? "chatterbox") == product else { return .error(403, "This pairing belongs to another app.") }
             guard let model, let id = UUID(uuidString: restartParts[2]), let target = model.sessions.first(where: { $0.id == id && $0.isDot == (product == "golem") }) else {
-                return .error(404, "That chat is gone.")
+                return .error(404, "That session is gone.")
             }
             #if CHATTERBOX_HEADLESS
             if product == "golem", model.runtime.state.integrationEnabled != true { return .error(403, "Golem integration is disabled.") }
@@ -425,14 +425,14 @@ final class CompanionServer {
         case ("GET", 2) where parts[1] == "chats":
             return .json(CompanionMapper.chatList(model,product:currentProduct))
         case ("GET", 3) where parts[1] == "chats":
-            guard let session = session(parts[2]) else { return .error(404, "That chat is gone.") }
+            guard let session = session(parts[2]) else { return .error(404, "That session is gone.") }
             let since = request.query["since"].flatMap(Int.init)
             let revision = model.companionRevision(of: session.id)
             if let since, since == revision { return .json(Companion.Unchanged(revision: revision)) }
             return .json(CompanionMapper.detail(session, model: model))
         case ("DELETE", 3) where parts[1] == "chats":
-            guard !local, currentProduct == "chatterbox" else { return .error(403, "Only the paired Chatterbox app can delete a chat here.") }
-            guard let session = session(parts[2]), !session.isDot else { return .error(404, "That chat is gone.") }
+            guard !local, currentProduct == "chatterbox" else { return .error(403, "Only the paired Chatterbox app can delete a session here.") }
+            guard let session = session(parts[2]), !session.isDot else { return .error(404, "That session is gone.") }
             #if CHATTERBOX_HEADLESS
             do { try model.runtime.remove(session.id) }
             catch { return .error(503, "Couldn't delete the chat. Try again after reconnecting.") }
@@ -441,7 +441,7 @@ final class CompanionServer {
             #endif
             return .json(["ok": true])
         case ("POST", 4) where parts[1] == "chats" && parts[3] == "messages":
-            guard let session = session(parts[2]) else { return .error(404, "That chat is gone.") }
+            guard let session = session(parts[2]) else { return .error(404, "That session is gone.") }
             guard !session.isRestartingThread else { return .error(409, "This thread is reconnecting. Your message wasn't sent; try again when it's ready.") }
             guard let body = try? Companion.decoder.decode(Companion.SendRequest.self, from: request.body) else {
                 return .error(400, "Bad request.")
@@ -466,7 +466,7 @@ final class CompanionServer {
             let session: ChatSession
             if let parentID = body.project {
                 guard let parent = model.sessions.first(where: { $0.id == parentID }), parent.record.archivedAt == nil else {
-                    return .error(404, "That project's chat is gone.")
+                    return .error(404, "That project's session is gone.")
                 }
                 #if CHATTERBOX_HEADLESS
                 do{session=try model.newSidechat(of:parent)}catch{return .error(503,"Could not save the new chat.")}
@@ -506,26 +506,26 @@ final class CompanionServer {
                 Companion.PresetInfo(id: $0.id, nickname: nil, title: $0.title, backend: $0.backend.rawValue, summary: ModelPresets.summary($0))
             })
         case ("POST", 4) where parts[1] == "chats" && parts[3] == "settings":
-            guard let session = session(parts[2]) else { return .error(404, "That chat is gone.") }
+            guard let session = session(parts[2]) else { return .error(404, "That session is gone.") }
             guard !session.isRestartingThread else { return .error(409, "This thread is reconnecting. Try changing its settings when it's ready.") }
             guard let body = try? Companion.decoder.decode(Companion.SettingsRequest.self, from: request.body) else { return .error(400, "Bad settings.") }
             CompanionMapper.apply(body, to: session)
             return .json(CompanionMapper.detail(session, model: model))
         case ("POST", 4) where parts[1] == "chats" && parts[3] == "rename":
-            guard let session = session(parts[2]) else { return .error(404, "That chat is gone.") }
+            guard let session = session(parts[2]) else { return .error(404, "That session is gone.") }
             guard let body = try? Companion.decoder.decode(Companion.RenameRequest.self, from: request.body) else { return .error(400, "Bad name.") }
             if session.isDot { model.renameDot(body.title) } else { session.setTitle(body.title) }
             return .json(CompanionMapper.detail(session, model: model))
         case ("GET", 4) where parts[1] == "chats" && parts[3] == "organization":
-            guard !local, currentProduct == "chatterbox" else { return .error(403, "Only the paired Chatterbox app can promote chats here.") }
-            guard let session = session(parts[2]) else { return .error(404, "That chat is gone.") }
-            guard ChatPromotion.eligible(session) else { return .error(409, "Only ordinary, unarchived chats can be promoted.") }
+            guard !local, currentProduct == "chatterbox" else { return .error(403, "Only the paired Chatterbox app can promote sessions here.") }
+            guard let session = session(parts[2]) else { return .error(404, "That session is gone.") }
+            guard ChatPromotion.eligible(session) else { return .error(409, "Only ordinary, unarchived sessions can be promoted.") }
             return .json(Companion.PromotionOptions(currentFolder: session.workingFolder,
                 studios: model.activeStudios.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
                     .map { .init(id: $0.id, name: $0.name, folder: $0.folder) }))
         case ("POST", 4) where parts[1] == "chats" && parts[3] == "promote":
-            guard !local, currentProduct == "chatterbox" else { return .error(403, "Only the paired Chatterbox app can promote chats here.") }
-            guard let session = session(parts[2]) else { return .error(404, "That chat is gone.") }
+            guard !local, currentProduct == "chatterbox" else { return .error(403, "Only the paired Chatterbox app can promote sessions here.") }
+            guard let session = session(parts[2]) else { return .error(404, "That session is gone.") }
             guard let body = try? Companion.decoder.decode(Companion.PromotionRequest.self, from: request.body) else { return .error(400, "Choose a Studio or Project destination.") }
             #if CHATTERBOX_HEADLESS
             do { try model.runtime.promote(session, using: body) }
@@ -535,14 +535,14 @@ final class CompanionServer {
             return .error(503, "Promotion requires the updated Chatterbox background service.")
             #endif
         case ("POST", 4) where parts[1] == "chats" && (parts[3] == "archive" || parts[3] == "unarchive"):
-            guard let session = session(parts[2]) else { return .error(404, "That chat is gone.") }
+            guard let session = session(parts[2]) else { return .error(404, "That session is gone.") }
             let shown = model.selectedID
             if parts[3] == "archive" { model.archive(session) } else { session.setArchived(false) }
             if let shown, shown != session.id, model.sessions.contains(where: { $0.id == shown }) { model.selectedID = shown }
             return .json(CompanionMapper.detail(session, model: model))
         case ("POST", 4) where parts[1] == "chats" && parts[3] == "sidequest":
             guard !local, currentProduct == "chatterbox" else { return .error(403, "Only the paired Chatterbox app can start a sidequest here.") }
-            guard let session = session(parts[2]), !session.isDot, !session.isSidequest, session.record.archivedAt == nil else { return .error(404, "That chat is gone.") }
+            guard let session = session(parts[2]), !session.isDot, !session.isSidequest, session.record.archivedAt == nil else { return .error(404, "That session is gone.") }
             guard let body = try? Companion.decoder.decode(Companion.SidequestRequest.self, from: request.body),
                   !body.task.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .error(400, "Say what the sidequest should do.") }
             let shown = model.selectedID
@@ -556,9 +556,9 @@ final class CompanionServer {
             if let shown { model.selectedID = shown }
             return .json(CompanionMapper.detail(quest, model: model))
         case ("POST", 4) where parts[1] == "chats" && parts[3] == "fork":
-            guard let session = session(parts[2]) else { return .error(404, "That chat is gone.") }
+            guard let session = session(parts[2]) else { return .error(404, "That session is gone.") }
             let shown = model.selectedID
-            guard let fork = model.fork(session) else { return .error(409, "This chat can't be forked right now.") }
+            guard let fork = model.fork(session) else { return .error(409, "This session can't be forked right now.") }
             if let shown { model.selectedID = shown }
             return .json(CompanionMapper.detail(fork, model: model))
         case ("POST", 4) where parts[1] == "pins" && parts[3] == "open":
@@ -574,14 +574,14 @@ final class CompanionServer {
             model.setInstructions(body.text, forStudio: id)
             return .json(CompanionMapper.chatList(model))
         case ("POST", 4) where parts[1] == "chats" && parts[3] == "stop":
-            guard let session = session(parts[2]) else { return .error(404, "That chat is gone.") }
+            guard let session = session(parts[2]) else { return .error(404, "That session is gone.") }
             if session.canStop { session.interrupt() }
             return .json(CompanionMapper.detail(session, model: model))
         // Approvals and answers are the user's alone: agents on this Mac (Golem) may only suggest.
         case ("POST", 5) where local && parts[1] == "chats" && (parts[3] == "approvals" || parts[3] == "answers"):
             return .error(403, "Only the user can answer approvals and questions. Use suggest_answer to propose an answer for them to send.")
         case ("POST", 5) where local && parts[1] == "chats" && parts[3] == "suggestions":
-            guard let session = session(parts[2]), let itemID = UUID(uuidString: parts[4]) else { return .error(404, "That chat is gone.") }
+            guard let session = session(parts[2]), let itemID = UUID(uuidString: parts[4]) else { return .error(404, "That session is gone.") }
             guard let body = try? Companion.decoder.decode(Companion.SuggestionRequest.self, from: request.body) else { return .error(400, "Bad suggestion.") }
             do {
                 try session.suggestAnswers(itemID, answers: body.answers, reason: body.reason, by: model.dotName)
@@ -600,7 +600,7 @@ final class CompanionServer {
             #endif
             return .json(["ok": true])
         case ("POST", 5) where parts[1] == "chats" && parts[3] == "approvals":
-            guard let session = session(parts[2]), let itemID = UUID(uuidString: parts[4]) else { return .error(404, "That chat is gone.") }
+            guard let session = session(parts[2]), let itemID = UUID(uuidString: parts[4]) else { return .error(404, "That session is gone.") }
             guard let body = try? Companion.decoder.decode(Companion.DecisionRequest.self, from: request.body),
                   let decision = DisplayItem.ApprovalState(rawValue: body.decision),
                   [.approved, .approvedForSession, .denied].contains(decision) else { return .error(400, "Bad decision.") }
@@ -610,7 +610,7 @@ final class CompanionServer {
             session.resolveApproval(itemID, decision)
             return .json(CompanionMapper.detail(session, model: model))
         case ("POST", 5) where parts[1] == "chats" && parts[3] == "answers":
-            guard let session = session(parts[2]), let itemID = UUID(uuidString: parts[4]) else { return .error(404, "That chat is gone.") }
+            guard let session = session(parts[2]), let itemID = UUID(uuidString: parts[4]) else { return .error(404, "That session is gone.") }
             guard let body = try? Companion.decoder.decode(Companion.AnswersRequest.self, from: request.body) else { return .error(400, "Bad answers.") }
             guard session.items.contains(where: { $0.id == itemID && $0.approvalState == .pending }) else {
                 return .error(409, "Those questions were already answered.")
@@ -618,7 +618,7 @@ final class CompanionServer {
             session.answerQuestions(itemID, answers: body.answers)
             return .json(CompanionMapper.detail(session, model: model))
         case ("POST", 6) where parts[1] == "chats" && parts[3] == "queued" && parts[5] == "now":
-            guard let session = session(parts[2]), let itemID = UUID(uuidString: parts[4]) else { return .error(404, "That chat is gone.") }
+            guard let session = session(parts[2]), let itemID = UUID(uuidString: parts[4]) else { return .error(404, "That session is gone.") }
             guard !session.isRestartingThread else { return .error(409, "This thread is reconnecting. That message wasn't sent; try again when it's ready.") }
             session.sendQueuedNow(itemID)
             return .json(CompanionMapper.detail(session, model: model))

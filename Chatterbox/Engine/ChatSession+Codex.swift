@@ -88,7 +88,7 @@ extension ChatSession {
     /// Codex's process is shared. Stop this turn and explicitly resume the same thread;
     /// do not terminate the server, archive it, or fall back to a different conversation.
     func codexRestartThread() async throws {
-        guard let settings = record.codex else { throw CodexError(message: "This chat isn't set up for Codex.") }
+        guard let settings = record.codex else { throw CodexError(message: "This session isn't set up for Codex.") }
         let deadline = Date().addingTimeInterval(10)
         if isRunning, codexTurnID == nil, !codexStartInFlight {
             _ = try await codexReconcileMissingTurn()
@@ -199,7 +199,7 @@ extension ChatSession {
     }
 
     private func codexEnsureThread() async throws -> String {
-        guard let settings = record.codex else { throw CodexError(message: "This chat isn't set up for Codex.") }
+        guard let settings = record.codex else { throw CodexError(message: "This session isn't set up for Codex.") }
         try await server.ensureStarted()
 
         // A forked chat branches its source thread, keeping everything Codex knew.

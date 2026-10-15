@@ -346,7 +346,7 @@ struct PinsSettingsView: View {
                     ForEach(PinSize.allCases, id: \.rawValue) { Text($0.name).tag($0.rawValue) }
                 }
                 Toggle("Open website pins inside Chatterbox", isOn: $openInApp)
-                    .help("The page opens inside Chatterbox with the chat floating beside it. Off: website pins open in your browser.")
+                    .help("The page opens inside Chatterbox with the session floating beside it. Off: website pins open in your browser.")
             }
             Section {
                 if store.globalPins.isEmpty {

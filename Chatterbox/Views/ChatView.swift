@@ -313,11 +313,11 @@ struct ChatView: View {
             ImageReviewView(attachment: image, gallery: ChatImageGallery.collect(session).reversed().map(\.url)) { text, files in session.send(text, attachments: files) }
                 .frame(width: max(900, window.width - 40), height: max(600, window.height - 40))
         }
-        .alert("That folder already has a chat", isPresented: Binding(get: { projectConflict != nil }, set: { if !$0 { projectConflict = nil } }), presenting: projectConflict) { owner in
-            Button("Open That Chat") { model.selectedID = owner.id }
+        .alert("That folder already has a session", isPresented: Binding(get: { projectConflict != nil }, set: { if !$0 { projectConflict = nil } }), presenting: projectConflict) { owner in
+            Button("Open That Session") { model.selectedID = owner.id }
             Button("Cancel", role: .cancel) {}
         } message: { owner in
-            Text("\u{201C}\(owner.title)\u{201D} is bound to \(owner.record.projectFolder ?? "it"). Each project folder has one chat, and you can switch models inside it.")
+            Text("\u{201C}\(owner.title)\u{201D} is bound to \(owner.record.projectFolder ?? "it"). Each project folder has one session, and you can switch models inside it.")
         }
         .overlay {
             if isDropTargeted {
@@ -499,7 +499,7 @@ struct ChatView: View {
                             .buttonStyle(.plain)
                             .frame(maxWidth: .infinity)
                             .padding(.bottom, 10)
-                            .help("\(earlier) earlier rows in this chat")
+                            .help("\(earlier) earlier rows in this session")
                             // Scrolling up to here loads the next page: a chat opens with only its
                             // newest rows, so switching to it doesn't build history you may not read.
                             .modifier(LoadsWhenScrolledTo(enabled: findWindow == nil && loadsEarlierOnScroll) { shownRowCount += Self.rowPage })
@@ -1092,7 +1092,7 @@ struct ChatView: View {
     private var archivedBanner: some View {
         HStack {
             Image(systemName: "archivebox")
-            Text("This chat is archived. Sending a message brings it back.")
+            Text("This session is archived. Sending a message brings it back.")
             Spacer()
             Button("Unarchive") { model.unarchive(session) }
         }
@@ -1153,7 +1153,7 @@ struct ChatView: View {
 
     private func chooseProject() {
         let start = session.record.projectFolder ?? session.record.codex?.folder
-        guard let path = FolderPicker.choose(startingAt: start, message: "Choose the project folder for this chat") else { return }
+        guard let path = FolderPicker.choose(startingAt: start, message: "Choose the project folder for this session") else { return }
         if let owner = model.bind(session, to: path) {
             projectConflict = owner
         }
@@ -1698,7 +1698,7 @@ private struct AgentSwitch: View {
         .padding(2)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.08)))
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Chat with")
+        .accessibilityLabel("Agent")
     }
 }
 

@@ -92,7 +92,7 @@ struct IssuesPanel: View {
             } else {
                 IssuesMessage(systemImage: "folder.badge.questionmark",
                               text: session.record.projectFolder == nil
-                                ? "Bind this chat to a project folder to see its GitHub issues."
+                                ? "Bind this session to a project folder to see its GitHub issues."
                                 : "This project's folder has no GitHub remote, so there are no issues to show.")
             }
         }
@@ -379,7 +379,7 @@ private struct IssueDetailView: View {
                 Button { onWork(issue) } label: { Label("Work on This", systemImage: "hammer") }
                     .buttonStyle(HighlightButtonStyle())
                     .disabled(issue.state != "open")
-                    .help("Send this issue to the chat's agent and make it the chat's current issue")
+                    .help("Send this issue to the session's agent and make it the session's current issue")
                 Button("Open on GitHub") { NSWorkspace.shared.open(issue.url) }
             }
             .controlSize(.small)

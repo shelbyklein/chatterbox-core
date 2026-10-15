@@ -33,8 +33,8 @@ struct Studio: Codable, Identifiable, Equatable, Hashable {
         let template = """
         # \(name) design
 
-        The design guide for this Studio. Every chat in it reads this before visual work.
-        Ask a chat to fill it in or change it; chats edit it only when you ask.
+        The design guide for this Studio. Every session in it reads this before visual work.
+        Ask a session to fill it in or change it; sessions edit it only when you ask.
 
         ## Brand
         ## Color

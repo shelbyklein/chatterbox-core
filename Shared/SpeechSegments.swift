@@ -111,7 +111,7 @@ enum SpeechSegments {
 
     private static let rules: [(NSRegularExpression, String)] = {
         let table: [(String, String, NSRegularExpression.Options)] = [
-            ("```[\\s\\S]*?```", " (code in the chat) ", []),
+            ("```[\\s\\S]*?```", " (code in the session) ", []),
             ("`([^`]+)`", "$1", []),
             ("!\\[[^\\]]*\\]\\([^)]*\\)", "", []),                                  // images
             ("\\[([^\\]]+)\\]\\([^)]*\\)", "$1", []),                               // links → their text

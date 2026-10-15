@@ -35,8 +35,8 @@ struct QuickSwitcher: View {
     private var actions: [Action] {
         [
             Action(title: "New Chat", systemImage: "square.and.pencil", shortcut: "\u{2318}N") { model.newChat() },
-            Action(title: "New Claude Chat", systemImage: "sparkle", shortcut: "\u{2325}\u{2318}N") { model.newChat(backend: .claude) },
-            Action(title: "New Codex Chat", systemImage: "terminal", shortcut: "\u{21E7}\u{2318}N") { model.newChat(backend: .codex) },
+            Action(title: "New Claude Session", systemImage: "sparkle", shortcut: "\u{2325}\u{2318}N") { model.newChat(backend: .claude) },
+            Action(title: "New Codex Session", systemImage: "terminal", shortcut: "\u{21E7}\u{2318}N") { model.newChat(backend: .codex) },
             Action(title: "New Project\u{2026}", systemImage: "folder.badge.plus", shortcut: "\u{2303}\u{2318}N") { model.showingNewProject = true },
             Action(title: "Open Project\u{2026}", systemImage: "folder", shortcut: "\u{2318}O") { model.chooseAndOpenProject() },
             Action(title: "New Project from GitHub\u{2026}", systemImage: "arrow.down.circle", shortcut: "\u{21E7}\u{2318}O") { model.showingCloneFromGitHub = true },
@@ -67,7 +67,7 @@ struct QuickSwitcher: View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("Search chats and projects, or pick an action", text: $query)
+                TextField("Search sessions and projects, or pick an action", text: $query)
                     .textFieldStyle(.plain)
                     .font(.title3)
                     .focused($searchFocused)

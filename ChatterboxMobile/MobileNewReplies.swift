@@ -168,16 +168,16 @@ struct MobileNewReplies: View {
             }
         }
         .onChange(of: chats, initial: true) { _, chats in MobileActivityDismissals.shared.reconcile(chats) }
-        .alert(pending?.deleting == true ? "Delete this chat?" : "Archive this working chat?",
+        .alert(pending?.deleting == true ? "Delete this session?" : "Archive this working session?",
                isPresented: Binding(get: { pending != nil }, set: { if !$0 { pending = nil } }), presenting: pending) { action in
-            Button(action.deleting ? "Delete Chat" : "Archive and Stop Reply", role: .destructive) { perform(action) }
+            Button(action.deleting ? "Delete Session" : "Archive and Stop Reply", role: .destructive) { perform(action) }
             Button("Cancel", role: .cancel) { pending = nil }
         } message: { action in
             Text(action.deleting
                  ? "Deletes \"\(action.chat.title)\" and its conversation history from Chatterbox and stops any reply. Project and Studio files stay in their folders."
-                 : "Archives \"\(action.chat.title)\" and stops its current reply. You can restore the chat from Archive on your Mac.")
+                 : "Archives \"\(action.chat.title)\" and stops its current reply. You can restore the session from Archive on your Mac.")
         }
-        .alert("Couldn't update chat", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
+        .alert("Couldn't update session", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
             Button("OK", role: .cancel) { problem = nil }
         } message: { Text(problem ?? "") }
     }
@@ -275,10 +275,10 @@ private struct MobileActivityRows: UIViewRepresentable {
             let busy = parent.busy.contains(entry.chat.id)
             (cell as? MobileActivityCell)?.configure(entry, busy: busy, now: parent.now)
             cell.accessibilityCustomActions = [
-                UIAccessibilityCustomAction(name: "Rename Chat") { [weak self] _ in self?.parent.rename(entry.chat); return true },
+                UIAccessibilityCustomAction(name: "Rename Session") { [weak self] _ in self?.parent.rename(entry.chat); return true },
                 UIAccessibilityCustomAction(name: "Dismiss from Activity") { [weak self] _ in self?.parent.dismiss(entry); return true },
-                UIAccessibilityCustomAction(name: "Archive Chat") { [weak self] _ in self?.parent.archive(entry.chat); return true },
-                UIAccessibilityCustomAction(name: "Delete Chat") { [weak self] _ in self?.parent.delete(entry.chat); return true }
+                UIAccessibilityCustomAction(name: "Archive Session") { [weak self] _ in self?.parent.archive(entry.chat); return true },
+                UIAccessibilityCustomAction(name: "Delete Session") { [weak self] _ in self?.parent.delete(entry.chat); return true }
             ]
         }
         func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {

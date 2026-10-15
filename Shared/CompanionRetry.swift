@@ -9,7 +9,7 @@ enum CompanionRetry {
     static let versionHeader = "X-Chatterbox-Mutation-Version"
     static let version = "1"
     static let lifetime: TimeInterval = 600
-    static let uncertain = "The Mac may have applied this action, but its reply couldn't be confirmed. Refresh and check the chat before trying again."
+    static let uncertain = "The Mac may have applied this action, but its reply couldn't be confirmed. Refresh and check the session before trying again."
 
     struct Failure: LocalizedError {
         var message: String

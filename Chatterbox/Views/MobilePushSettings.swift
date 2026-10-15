@@ -70,7 +70,7 @@ struct MobilePushSettings: View {
             }
             if let error { Text(error).foregroundStyle(.orange) }
         } header: { Text("Push notifications") } footer: {
-            Text("Apple delivers alerts over Wi-Fi or cellular. This Mac must be awake with Chatterbox open to send them. Opening a chat still needs Wi-Fi or Tailscale. Notification previews pass through Apple; switch them off for generic alerts.")
+            Text("Apple delivers alerts over Wi-Fi or cellular. This Mac must be awake with Chatterbox open to send them. Opening a session still needs Wi-Fi or Tailscale. Notification previews pass through Apple; switch them off for generic alerts.")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }

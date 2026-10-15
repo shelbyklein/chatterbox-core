@@ -243,7 +243,7 @@ struct ImageReviewView: View {
                 .fixedSize()
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Send to Chat") { send() }
+                Button("Send to Session") { send() }
                     .keyboardShortcut(.return, modifiers: .command)
                     .disabled(marks.isEmpty && overall.trimmingCharacters(in: .whitespaces).isEmpty)
             }

@@ -54,7 +54,7 @@ struct ApprovalCard: View {
     private var buttons: some View {
         Button(approval.isPlan ? "Start Building" : "Allow") { decide("approved") }
             .buttonStyle(.borderedProminent)
-        Button(approval.isPlan ? "Start and Accept Edits" : "Allow for This Chat") { decide("approvedForSession") }
+        Button(approval.isPlan ? "Start and Accept Edits" : "Allow for This Session") { decide("approvedForSession") }
             .buttonStyle(.bordered)
         Button(approval.isPlan ? "Keep Planning" : "Deny", role: .destructive) { decide("denied") }
             .buttonStyle(.bordered)
@@ -63,7 +63,7 @@ struct ApprovalCard: View {
     private var outcome: some View {
         let (text, icon, color): (String, String, Color) = switch approval.state {
         case "approved": (approval.isPlan ? "Building, asking before edits" : "Allowed", "checkmark.circle", .green)
-        case "approvedForSession": (approval.isPlan ? "Building, accepting edits" : "Allowed for this chat", "checkmark.circle", .green)
+        case "approvedForSession": (approval.isPlan ? "Building, accepting edits" : "Allowed for this session", "checkmark.circle", .green)
         case "denied": (approval.isPlan ? "Kept planning" : "Denied", "xmark.circle", .red)
         default: ("No longer waiting", "clock", .secondary)
         }

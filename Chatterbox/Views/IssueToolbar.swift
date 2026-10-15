@@ -37,7 +37,7 @@ struct IssueToolbarItems: View {
         } label: {
             ToolbarLabel("#\(issue.number) \u{00B7} \(Self.short(issue.title))", systemImage: "smallcircle.filled.circle")
         }
-        .help("This chat is working on #\(issue.number): \(issue.title)")
+        .help("This session is working on #\(issue.number): \(issue.title)")
     }
 
     private func pullRequestChip(_ pr: GitHubPullRequest) -> some View {

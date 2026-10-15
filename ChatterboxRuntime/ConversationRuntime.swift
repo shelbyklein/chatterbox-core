@@ -266,7 +266,7 @@ struct CommandReceipt: Codable {
         if let prior=state.commands[id] {
             guard prior.operation==operation,prior.fingerprint==fingerprint else { throw RuntimeFailure("Request ID reused for a different command") }
             if let result=prior.result { return result }
-            throw RuntimeFailure("Command delivery is uncertain after interruption; inspect the chat before explicitly retrying with a new request ID")
+            throw RuntimeFailure("Command delivery is uncertain after interruption; inspect the session before explicitly retrying with a new request ID")
         }
         guard state.commands.count<100_000 else{throw RuntimeFailure("Command receipt storage is full; no action was applied")}
         state.commands[id]=CommandReceipt(operation:operation,fingerprint:fingerprint,state:"dispatching")
@@ -284,7 +284,7 @@ struct CommandReceipt: Codable {
         if let prior=state.commands[id] {
             guard prior.operation==operation,prior.fingerprint==fingerprint else { throw RuntimeFailure("Request ID reused for a different command") }
             if let result=prior.result { return result }
-            throw RuntimeFailure("Command delivery is uncertain after interruption; inspect the chat before explicitly retrying with a new request ID")
+            throw RuntimeFailure("Command delivery is uncertain after interruption; inspect the session before explicitly retrying with a new request ID")
         }
         guard state.commands.count<100_000 else{throw RuntimeFailure("Command receipt storage is full; no action was applied")}
         state.commands[id]=CommandReceipt(operation:operation,fingerprint:fingerprint,state:"dispatching")

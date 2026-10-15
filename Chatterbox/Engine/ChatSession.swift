@@ -367,7 +367,7 @@ final class ChatSession: Identifiable {
     func suggestAnswers(_ itemID: UUID, answers: [String: [String]], reason: String, by name: String) throws {
         guard let index = record.items.firstIndex(where: { $0.id == itemID }),
               record.items[index].kind == .questions, record.items[index].approvalState == .pending else {
-            throw SuggestionError(message: "That chat has no pending question card with that id.")
+            throw SuggestionError(message: "That session has no pending question card with that id.")
         }
         let questions = record.items[index].questions ?? []
         var cleaned: [String: [String]] = [:]

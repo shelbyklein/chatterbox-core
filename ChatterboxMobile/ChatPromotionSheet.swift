@@ -54,8 +54,8 @@ struct ChatPromotionSheet: View {
                                     .font(.callout).foregroundStyle(.secondary)
                             }
                         } header: { Text("Working folder") } footer: {
-                            Text(studioID != nil && keepFolder ? "The chat joins the Studio and keeps working in its current folder."
-                                 : "The chat will work in the Studio folder. Changing folders starts a fresh Claude session with your visible history.")
+                            Text(studioID != nil && keepFolder ? "The session joins the Studio and keeps working in its current folder."
+                                 : "The session will work in the Studio folder. Changing folders starts a fresh Claude session with your visible history.")
                         }
                     } else {
                         Section {

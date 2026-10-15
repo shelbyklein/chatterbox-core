@@ -107,7 +107,7 @@ import Darwin
             }
             Task { [weak self] in
                 try? await Task.sleep(for:timeout)
-                if let w=self?.waiters.removeValue(forKey:id){w.resume(throwing:RuntimeFailure("Runtime request timed out; inspect the chat before retrying"))}
+                if let w=self?.waiters.removeValue(forKey:id){w.resume(throwing:RuntimeFailure("Runtime request timed out; inspect the session before retrying"))}
             }
         }
     }

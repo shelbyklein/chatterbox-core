@@ -85,7 +85,7 @@ struct WebPaneView: View {
                 Button { NSWorkspace.shared.open(page.url) } label: { Image(systemName: "safari") }
                     .help("Open in your browser")
                 Button(action: onClose) { Image(systemName: "xmark.circle.fill") }
-                    .help("Close the page and go back to the chat")
+                    .help("Close the page and go back to the session")
                     .keyboardShortcut("w", modifiers: [.command, .shift])
             }
             .buttonStyle(.borderless)
@@ -312,12 +312,12 @@ struct FloatingChat: View {
                     }
                     Spacer()
                     Button { collapsed = true } label: { Image(systemName: "minus") }
-                        .help("Shrink the chat")
+                        .help("Shrink the session")
                     Button(action: onExpand) { Image(systemName: "arrow.up.left.and.arrow.down.right") }
-                        .help(tile == nil ? "Close the page and show the chat full size" : "Open the chat full size")
+                        .help(tile == nil ? "Close the page and show the session full size" : "Open the session full size")
                     if let onClose {
                         Button(action: onClose) { Image(systemName: "xmark") }
-                            .help("Close this window. The chat stays in the sidebar.")
+                            .help("Close this window. The session stays in the sidebar.")
                     }
                 }
                 .buttonStyle(.borderless)
@@ -401,6 +401,6 @@ struct FloatingChat: View {
             .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .help(session.isWaitingOnYou ? "\(session.title) is waiting on you" : "Show the chat: \(session.title)")
+        .help(session.isWaitingOnYou ? "\(session.title) is waiting on you" : "Show the session: \(session.title)")
     }
 }

@@ -58,8 +58,8 @@ private struct NextStepsOptions: View {
             Stepper(value: $minAnswerChars, in: 0...2000, step: 20) {
                 LabeledContent("Skip replies shorter than", value: "\(minAnswerChars) characters")
             }
-            Toggle("Suggest the chat's slash commands and skills", isOn: $suggestCommands)
-            Text("Each suggestion costs one short request after a reply: Claude Haiku for Claude chats, GPT-6-Luna for Codex chats, on your existing sign-ins. Shows in your chats and Golem's on the Mac, and on iPhone and iPad.")
+            Toggle("Suggest the session's slash commands and skills", isOn: $suggestCommands)
+            Text("Each suggestion costs one short request after a reply: Claude Haiku for Claude sessions, GPT-6-Luna for Codex sessions, on your existing sign-ins. Shows in your sessions and Golem's on the Mac, and on iPhone and iPad.")
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }

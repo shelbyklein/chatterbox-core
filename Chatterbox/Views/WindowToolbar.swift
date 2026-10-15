@@ -240,13 +240,13 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         let item: NSToolbarItem
         switch id {
         case ID.sidebar:
-            item = button(id, "sidebar.left", "Chats", "The chat view with its sidebar; from there, shows or hides the sidebar (\u{2303}\u{2318}S)", #selector(showChats))
+            item = button(id, "sidebar.left", "Chats", "The session view with its sidebar; from there, shows or hides the sidebar (\u{2303}\u{2318}S)", #selector(showChats))
         case ID.home:
-            item = button(id, "square.grid.2x2", "Home", "Home: your projects, Studios and chats", #selector(showHome))
+            item = button(id, "square.grid.2x2", "Home", "Home: your projects, Studios and sessions", #selector(showHome))
         case ID.studios:
             item = button(id, "paintpalette", "Studios", "Your Studios, as thumbnails", #selector(showStudios))
         case ID.commandCenter:
-            item = button(id, "rectangle.split.2x2", "Command Center", "Several live chats in one window", #selector(toggleCommandCenter))
+            item = button(id, "rectangle.split.2x2", "Command Center", "Several live sessions in one window", #selector(toggleCommandCenter))
         case ID.settings:
             item = button(id, "gearshape", "Settings", "Settings (\u{2318},)", #selector(toggleSettings))
         case ID.title:
@@ -261,7 +261,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
                                            target: self, action: #selector(pickView(_:)))
             group.label = "View"
             group.paletteLabel = "View"
-            let tips = ["Projects and their sessions", "Your Studios, as thumbnails", "Standalone chat sessions", "Several live chats in one window"]
+            let tips = ["Projects and their sessions", "Your Studios, as thumbnails", "Standalone chat sessions", "Several live sessions in one window"]
             for (sub, tip) in zip(group.subitems, tips) { sub.toolTip = tip }
             group.selectedIndex = 0
             item = group
@@ -284,14 +284,14 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         case ID.usage:
             item = hosted(id, "Account Usage", ProxyQuotaToolbarButton(bridge: bridge))
         case ID.images:
-            item = button(id, "photo.on.rectangle.angled", "Images", "Every image made in this chat", #selector(showImages))
+            item = button(id, "photo.on.rectangle.angled", "Images", "Every image made in this session", #selector(showImages))
         case ID.terminal:
-            item = button(id, "terminal", "Terminal", "A terminal in this chat's folder, at the bottom of the window (\u{2303}`)", #selector(toggleTerminal))
+            item = button(id, "terminal", "Terminal", "A terminal in this session's folder, at the bottom of the window (\u{2303}`)", #selector(toggleTerminal))
             // apply() owns availability; AppKit's action-based validation would
             // re-enable this button on overview pages simply because its target exists.
             item.autovalidates = false
         case ID.finished:
-            item = hosted(id, "Finished chats", FinishedChatsBell())
+            item = hosted(id, "Finished sessions", FinishedChatsBell())
         case ID.automations:
             item = button(id, "clock.arrow.circlepath", "Automations", "All project automations", #selector(toggleAutomations))
         default:

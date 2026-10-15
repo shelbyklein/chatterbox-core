@@ -263,9 +263,9 @@ struct ChatDetailView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("\(summary.otherAgentLabel) reads this chat, does the task in its own sidequest, and its answer comes back here.")
+            Text("\(summary.otherAgentLabel) reads this session, does the task in its own sidequest, and its answer comes back here.")
         }
-        .alert("Rename Chat", isPresented: $renaming) {
+        .alert("Rename Session", isPresented: $renaming) {
             TextField("Title", text: $newTitle)
             Button("Rename") {
                 let title = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -397,7 +397,7 @@ struct ChatDetailView: View {
                     .padding(.bottom, 12)
                     .transition(.scale(scale: 0.6).combined(with: .opacity))
                     .accessibilityLabel("Scroll to newest message")
-                    .accessibilityHint("Jumps to the end of the chat")
+                    .accessibilityHint("Jumps to the end of the session")
                 }
             }
             .animation(.easeOut(duration: 0.18), value: atBottom)
@@ -630,7 +630,7 @@ struct ChatDetailView: View {
                 #endif
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showingSettings = true } label: { Image(systemName: "gearshape") }
-                        .accessibilityLabel("Chat Settings")
+                        .accessibilityLabel("Session Settings")
                         .disabled(detail?.options == nil)
                 }
             } else if let settings = detail?.settings {
@@ -656,7 +656,7 @@ struct ChatDetailView: View {
     private var chatMenu: some View {
         Menu {
             Button { Task { await refresh(force: true) } } label: {
-                Label("Refresh Chat", systemImage: "arrow.clockwise")
+                Label("Refresh Session", systemImage: "arrow.clockwise")
             }
             .disabled(history.refreshing)
             Button { controlSession(restart: false) } label: { Label("Stop Reply", systemImage: "stop.circle") }
@@ -664,7 +664,7 @@ struct ChatDetailView: View {
             Button { confirmingRestart = true } label: { Label("Restart Thread", systemImage: "arrow.triangle.2.circlepath") }
                 .disabled(detail == nil || controllingSession)
             if let sessionControlStatus { Text(sessionControlStatus) }
-            Button { showingSettings = true } label: { Label("Chat Settings", systemImage: "slider.horizontal.3") }
+            Button { showingSettings = true } label: { Label("Session Settings", systemImage: "slider.horizontal.3") }
                 .disabled(detail?.options == nil)
             Button { newTitle = summary.title; renaming = true } label: { Label("Rename", systemImage: "pencil") }
             if !isConversation, !summary.isSidequest, detail?.isArchived != true {
@@ -694,7 +694,7 @@ struct ChatDetailView: View {
         } label: {
             Image(systemName: "ellipsis.circle")
         }
-        .accessibilityLabel("Chat Menu")
+        .accessibilityLabel("Session Menu")
     }
 
     private func forkChat() {

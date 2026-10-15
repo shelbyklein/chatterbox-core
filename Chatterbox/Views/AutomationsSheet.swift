@@ -43,7 +43,7 @@ struct AutomationsSheet: View {
                 ContentUnavailableView {
                     Label("No automations yet", systemImage: "clock.arrow.circlepath")
                 } description: {
-                    Text("An automation runs on a schedule as a sidequest of this project's main chat, with the agent and model you pick. Each run reports back to the chat, asks before changing anything, and then archives itself.")
+                    Text("An automation runs on a schedule as a sidequest of this project's main session, with the agent and model you pick. Each run reports back to the session, asks before changing anything, and then archives itself.")
                 } actions: {
                     Button("Keep WordPress Updated") { add(.wordpress) }
                 }
@@ -101,7 +101,7 @@ struct AutomationsSheet: View {
                 TextEditor(text: binding(automation, \.instructions))
                     .font(.callout)
                     .frame(minHeight: 160)
-                Text("Every run also follows these rules: report first and ask before changing anything, never touch staging or production without your approval, and back up first. Its report goes to this project's chat, and the run archives itself.")
+                Text("Every run also follows these rules: report first and ask before changing anything, never touch staging or production without your approval, and back up first. Its report goes to this project's session, and the run archives itself.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             HStack {

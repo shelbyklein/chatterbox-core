@@ -62,7 +62,7 @@ struct ToolsPanel: View {
     private var set: ToolSet { sets[scope.key] ?? ToolSet() }
     private var inherited: ToolSet? { scope == .chatterbox ? nil : sets[ToolScope.chatterbox.key] }
     private var levelName: String {
-        switch scope { case .chatterbox: "every chat"; case .studios: "every Studio chat"; case .project: "this project's chats" }
+        switch scope { case .chatterbox: "every session"; case .studios: "every Studio session"; case .project: "this project's sessions" }
     }
 
     var body: some View {
@@ -225,7 +225,7 @@ struct ToolsPanel: View {
                         change { $0.skillFolders.append(item.detail); $0.skillFolderAgents[item.detail] = [other] }
                     }
                     .buttonStyle(.borderless)
-                    .help("\(other.label) chats get this skill too, from the same folder")
+                    .help("\(other.label) sessions get this skill too, from the same folder")
                 }
             }
             offSwitch(item.offKey, offThere: !item.enabledThere)

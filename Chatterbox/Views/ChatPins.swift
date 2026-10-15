@@ -93,7 +93,7 @@ struct PinMessageButton: View {
                 Label(pinned ? "Pinned" : "Pin", systemImage: pinned ? "pin.fill" : "pin")
             }
             .buttonStyle(.plain)
-            .help(pinned ? "Unpin this reply" : "Pin this reply to the top of the chat")
+            .help(pinned ? "Unpin this reply" : "Pin this reply to the top of the session")
         }
     }
 }

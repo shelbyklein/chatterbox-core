@@ -39,7 +39,7 @@ struct SidequestForm: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Sidequest to \(agent)").font(.headline)
-            Text("\(agent) reads this chat, does the task in its own Sidechat, and its answer comes back here for \(from) to carry on from.")
+            Text("\(agent) reads this session, does the task in its own Sidechat, and its answer comes back here for \(from) to carry on from.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             TextField("What should \(agent) do?", text: $task, axis: .vertical)
                 .textFieldStyle(.roundedBorder).lineLimit(3...8)
@@ -76,7 +76,7 @@ struct SidequestBanner: View {
                     .help("Send the newest reply back to \u{201C}\(parent?.title ?? "its chat")\u{201D}")
             }
             if let parent {
-                Button("Open Chat") { model.selectedID = parent.id }
+                Button("Open Session") { model.selectedID = parent.id }
             }
             Button("End Sidequest") {
                 if let parent { model.selectedID = parent.id }

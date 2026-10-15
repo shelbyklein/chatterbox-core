@@ -14,7 +14,7 @@ struct MenuBarLabel: View {
         Image(systemName: waiting ? "exclamationmark.bubble.fill"
               : replies ? "bubble.left.and.bubble.right.fill"
               : working ? "ellipsis.bubble" : "bubble.left.and.bubble.right")
-            .accessibilityLabel(waiting ? "Chatterbox: a chat is waiting on you" : replies ? "Chatterbox: new replies" : working ? "Chatterbox: working" : "Chatterbox")
+            .accessibilityLabel(waiting ? "Chatterbox: a session is waiting on you" : replies ? "Chatterbox: new replies" : working ? "Chatterbox: working" : "Chatterbox")
     }
 }
 

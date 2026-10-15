@@ -45,7 +45,7 @@ enum Prompts {
         var parts = [agentInstructions(p)]
         if let studio { parts.append(studioNote(studio)) }
         let user = userInstructions
-        if !user.isEmpty { parts.append("# The user's instructions for every chat\n\n" + user) }
+        if !user.isEmpty { parts.append("# The user's instructions for every session\n\n" + user) }
         let project = crossAgentProjectFile(for: backend, folder: projectFolder)
         if !project.isEmpty { parts.append(project) }
         return parts.joined(separator: "\n\n")
@@ -56,7 +56,7 @@ enum Prompts {
     static func studioNote(_ studio: Studio) -> String {
         var note = """
         # Studio: \(studio.name)
-        This chat is in a Chatterbox Studio: a folder, \(studio.folder), shared by several of the user's chats working on loosely related asks, often creative ones spanning different apps. It isn't a code project and may not be a git repository. Save what you make in this folder. Expect files there from other chats, and don't reorganize or delete work you didn't make unless the user asks.
+        This session is in a Chatterbox Studio: a folder, \(studio.folder), shared by several of the user's sessions working on loosely related asks, often creative ones spanning different apps. It isn't a code project and may not be a git repository. Save what you make in this folder. Expect files there from other sessions, and don't reorganize or delete work you didn't make unless the user asks.
         """
         note += """
 
@@ -66,7 +66,7 @@ enum Prompts {
         """
         let instructions = studio.trimmedInstructions
         if !instructions.isEmpty {
-            note += "\n\n## The user's instructions for this Studio\nEvery chat in the Studio follows these. Use the sites, files, and tools they point to when a request calls for them.\n\n" + instructions
+            note += "\n\n## The user's instructions for this Studio\nEvery session in the Studio follows these. Use the sites, files, and tools they point to when a request calls for them.\n\n" + instructions
         }
         return note
     }
@@ -75,7 +75,7 @@ enum Prompts {
     /// left a Studio.
     static func studioInstructionsUpdate(studio: Studio?) -> String {
         guard let studio else {
-            return "<app_note>\nThis chat is no longer in a Studio. Ignore any earlier Studio instructions.\n</app_note>"
+            return "<app_note>\nThis session is no longer in a Studio. Ignore any earlier Studio instructions.\n</app_note>"
         }
         let instructions = studio.trimmedInstructions
         let body = instructions.isEmpty
@@ -106,14 +106,14 @@ enum Prompts {
     }
 
     /// Bump when `agentInstructions` gains something chats already in progress should hear.
-    static let instructionsVersion = 8
+    static let instructionsVersion = 9
 
     /// What changed since earlier versions, sent once to chats whose session started before.
     static let instructionsUpdate = """
     <app_note>
-    Correction about showing files: a file on disk shows in the chat only when your final reply names its path. Images (PNG, JPG, screenshots, renders, proofs), GIFs, videos, and Lottie files you name appear under the reply; .html, .svg, and .pdf paths open beside the chat when clicked. Reading or viewing a file yourself doesn't show it to the user, so when they ask to see something, name each file's full path, like ![Full page](/path/to/full-page.png), or the folder that holds them. HTML and SVG code blocks still render as live previews. Don't open files in a browser or another app unless the user asks.
+    Correction about showing files: a file on disk shows in the session only when your final reply names its path. Images (PNG, JPG, screenshots, renders, proofs), GIFs, videos, and Lottie files you name appear under the reply; .html, .svg, and .pdf paths open beside the session when clicked. Reading or viewing a file yourself doesn't show it to the user, so when they ask to see something, name each file's full path, like ![Full page](/path/to/full-page.png), or the folder that holds them. HTML and SVG code blocks still render as live previews. Don't open files in a browser or another app unless the user asks.
 
-    When you need answers from the user before going on, especially several at once, ask with your question tool (AskUserQuestion, or request_user_input) instead of listing questions in a message. The chat shows them as an interactive card, one at a time, with your options as buttons.
+    When you need answers from the user before going on, especially several at once, ask with your question tool (AskUserQuestion, or request_user_input) instead of listing questions in a message. The session shows them as an interactive card, one at a time, with your options as buttons.
 
     Publishing: when the user asks to share a web page or file at a link, publish it as a snippet with `snippet publish <file>` (add `--private` for a link only the user can open). It uploads an HTML page together with the local files it uses to https://snippets.shelbyklein.com, at an address that mirrors where the file lives, and prints the link. Publish only when asked, give the user the link, and say whether it's public. `snippet list` and `snippet remove <path>` manage what's published; publishing works on the user's home network.
 
@@ -121,7 +121,7 @@ enum Prompts {
 
     Blocks tagged <sidequest> and <sidequest_result> also come from the app: a task handed between Claude and Codex, and its answer coming back.
 
-    Sidequests: to hand a task to the other agent (Claude and Codex each have their strengths; Codex usually makes the images, and Claude usually double-checks work), run `sidequest "<the task>"` from your working folder. It opens beside this chat as a Sidechat on the other agent, which reads this whole conversation first, so the task can be short. When it finishes, its answer arrives here as a new message and you carry on from it. Start one when the user asks for it, or when the other agent is clearly the better fit; tell the user you did, and finish your reply instead of waiting for it.
+    Sidequests: to hand a task to the other agent (Claude and Codex each have their strengths; Codex usually makes the images, and Claude usually double-checks work), run `sidequest "<the task>"` from your working folder. It opens beside this session as a Sidechat on the other agent, which reads this whole conversation first, so the task can be short. When it finishes, its answer arrives here as a new message and you carry on from it. Start one when the user asks for it, or when the other agent is clearly the better fit; tell the user you did, and finish your reply instead of waiting for it.
     </app_note>
     """
 
@@ -141,7 +141,7 @@ enum Prompts {
             : "Codex sends you on sidequests mostly to double-check its work, so unless the task says otherwise, treat it as a review: read what it did (the files, the changes, the output), check it against what the user asked, and report problems with evidence, such as the file and line or the command that shows it. Change files only if the task asks you to. End with a clear verdict and the issues, most important first."
         return """
         <sidequest>
-        The user sent you on a sidequest from another chat, \u{201C}\(title)\u{201D}, where \(other) is working. Here is that conversation so far, so you have its context. Do the task in the user's next message. When you finish, your final reply goes back to that chat automatically and \(other) carries on from it, so end with what it needs: what you did or found, the files you changed or made, and anything left undone.
+        The user sent you on a sidequest from another session, \u{201C}\(title)\u{201D}, where \(other) is working. Here is that conversation so far, so you have its context. Do the task in the user's next message. When you finish, your final reply goes back to that session automatically and \(other) carries on from it, so end with what it needs: what you did or found, the files you changed or made, and anything left undone.
 
         You can change files in your working folder, and the task decides whether you should. Making something (images, files, fixes) means saving it there. Reviewing, checking, or answering a question means reading only: change nothing unless the task asks you to.
 
@@ -178,11 +178,11 @@ enum Prompts {
     static func sidequestResult(from agent: Backend, task: String, reply: String) -> String {
         let other = agent.label
         let next = agent == .codex
-            ? "If it made images, name each image's full path in your reply so the user sees them here, then carry on where this chat left off."
-            : "Treat it as a review of your work: fix what you agree with, tell the user about anything you disagree with and why, then carry on where this chat left off."
+            ? "If it made images, name each image's full path in your reply so the user sees them here, then carry on where this session left off."
+            : "Treat it as a review of your work: fix what you agree with, tell the user about anything you disagree with and why, then carry on where this session left off."
         return """
         <sidequest_result>
-        The user sent \(other) on a sidequest from this chat: \u{201C}\(task)\u{201D}. It has finished, and this is its final reply:
+        The user sent \(other) on a sidequest from this session: \u{201C}\(task)\u{201D}. It has finished, and this is its final reply:
 
         \(reply)
         </sidequest_result>

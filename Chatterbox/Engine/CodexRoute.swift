@@ -60,7 +60,7 @@ extension ChatSession {
         record.codex?.sentRoute = connection.key
         guard told != nil || codexRoute != nil else { return nil }
         return connection.isDirect
-            ? "<app_note>\nThis chat now connects to Codex directly through the user's ChatGPT sign-in. ChatGPT's hosted tools, such as image generation, are available again: use them instead of asking for an API key.\n</app_note>"
-            : "<app_note>\nThis chat now connects through EasyCLIProxy, not directly. ChatGPT's hosted tools (such as image generation) may be unavailable. If a task needs one, say so and suggest switching this chat's Connection to Direct; don't ask for an API key.\n</app_note>"
+            ? "<app_note>\nThis session now connects to Codex directly through the user's ChatGPT sign-in. ChatGPT's hosted tools, such as image generation, are available again: use them instead of asking for an API key.\n</app_note>"
+            : "<app_note>\nThis session now connects through EasyCLIProxy, not directly. ChatGPT's hosted tools (such as image generation) may be unavailable. If a task needs one, say so and suggest switching this session's Connection to Direct; don't ask for an API key.\n</app_note>"
     }
 }

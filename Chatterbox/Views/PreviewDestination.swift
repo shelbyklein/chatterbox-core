@@ -39,7 +39,7 @@ enum PreviewDestination: String, CaseIterable, Identifiable {
     var available: Bool { bundleID == nil || application != nil }
     var detail: String {
         switch self {
-        case .sidebar: "Beside this chat"
+        case .sidebar: "Beside this session"
         case .fullScreen: "A full-screen preview window"
         case .window: "A separate resizable preview"
         default: available ? "Outside Chatterbox" : "Not installed on this Mac"

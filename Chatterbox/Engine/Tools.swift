@@ -85,12 +85,12 @@ enum Tools {
     private static func dotLabel(_ tool: String, input: JSON?) -> String {
         let chat = input?["chat"]?.string.map { " \u{201C}\($0)\u{201D}" } ?? ""
         switch tool {
-        case "list_chats": return "Looking over your chats"
-        case "read_chat": return "Reading" + (chat.isEmpty ? " a chat" : chat)
-        case "send_message": return "Messaging" + (chat.isEmpty ? " a chat" : chat)
-        case "start_chat": return "Starting a chat" + (input?["studio"]?.string.map { " in \u{201C}\($0)\u{201D}" } ?? "")
-        case "wait_for_reply": return "Waiting on" + (chat.isEmpty ? " a chat" : chat)
-        case "stop_chat": return "Stopping" + (chat.isEmpty ? " a chat" : chat)
+        case "list_chats": return "Looking over your sessions"
+        case "read_chat": return "Reading" + (chat.isEmpty ? " a session" : chat)
+        case "send_message": return "Messaging" + (chat.isEmpty ? " a session" : chat)
+        case "start_chat": return "Starting a session" + (input?["studio"]?.string.map { " in \u{201C}\($0)\u{201D}" } ?? "")
+        case "wait_for_reply": return "Waiting on" + (chat.isEmpty ? " a session" : chat)
+        case "stop_chat": return "Stopping" + (chat.isEmpty ? " a session" : chat)
         default: return "Using Chatterbox"
         }
     }

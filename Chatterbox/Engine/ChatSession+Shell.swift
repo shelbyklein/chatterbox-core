@@ -80,7 +80,7 @@ extension ChatSession {
     func takeShellContext() -> String? {
         guard let context = record.pendingShellContext else { return nil }
         record.pendingShellContext = nil
-        return "The user ran these commands in the chat themselves; here's what they printed:\n\n" + context
+        return "The user ran these commands in the session themselves; here's what they printed:\n\n" + context
     }
 
     /// Blocks the detached task's thread until the pipe reader finishes.

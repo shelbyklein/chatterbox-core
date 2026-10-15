@@ -38,7 +38,7 @@ struct SettingsView: View {
             case .pins: "Pins"
             case .notifications: "Notifications"
             case .models: "Models"
-            case .newChats: "New Chats"
+            case .newChats: "New Sessions"
             case .behavior: "Behavior"
             case .golem: "Golem"
             case .appearance: "Appearance"
@@ -160,7 +160,7 @@ struct SettingsView: View {
             } header: {
                 Text("Notifications")
             } footer: {
-                Text("Only while you're away from the chat: Chatterbox isn't frontmost, or a different chat is open. Approvals can be allowed or denied right from the notification.")
+                Text("Only while you're away from the session: Chatterbox isn't frontmost, or a different session is open. Approvals can be allowed or denied right from the notification.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -186,7 +186,7 @@ struct SettingsView: View {
             } header: {
                 Text("Default models")
             } footer: {
-                Text("What new chats start with. Change a chat's own model from the bar under its message box.")
+                Text("What new sessions start with. Change a session's own model from the bar under its message box.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
@@ -206,7 +206,7 @@ struct SettingsView: View {
             } header: {
                 Text("Quick-switch presets")
             } footer: {
-                Text("Shown under the message box, to switch a chat's agent, model, and effort in one click. You can also save a chat's current setup from its model menu with \u{201C}Save as Preset\u{201D}. Give one a nickname and agents know it: \u{201C}start working on that in Galley with Sol\u{201D}.")
+                Text("Shown under the message box, to switch a session's agent, model, and effort in one click. You can also save a session's current setup from its model menu with \u{201C}Save as Preset\u{201D}. Give one a nickname and agents know it: \u{201C}start working on that in Galley with Sol\u{201D}.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -219,8 +219,8 @@ struct SettingsView: View {
 
     private var newChatsPane: some View {
         Form {
-            Section("New chats") {
-                Picker("Chat with", selection: $defaultBackend) {
+            Section("New sessions") {
+                Picker("Agent", selection: $defaultBackend) {
                     ForEach(Backend.allCases) { Text($0.label).tag($0) }
                 }
                 Picker("Tone", selection: $defaultPersonality) {
@@ -228,10 +228,10 @@ struct SettingsView: View {
                 }
                 LabeledContent("Working folder") {
                     Button((codexFolder as NSString).abbreviatingWithTildeInPath) {
-                        if let path = FolderPicker.choose(startingAt: codexFolder, message: "Choose where chats without a project work") { codexFolder = path }
+                        if let path = FolderPicker.choose(startingAt: codexFolder, message: "Choose where sessions without a project work") { codexFolder = path }
                     }
                 }
-                .help("Where Claude Code and Codex work in chats that aren't bound to a project folder.")
+                .help("Where Claude Code and Codex work in sessions that aren't bound to a project folder.")
                 Picker("Claude mode", selection: $claudeDefaultMode) {
                     ForEach(PermissionModes.claude) { Text($0.title).tag($0.id) }
                 }
@@ -243,7 +243,7 @@ struct SettingsView: View {
                 Picker("Start with", selection: $newStudioPreset) {
                     let maestro = ModelPresets.shared.presets.first { $0.title.caseInsensitiveCompare(ModelPresets.newStudioDefaultNickname) == .orderedSame }
                     Text(maestro.map { "\($0.displayName) (default)" } ?? "Maestro (default, no preset has that name)").tag("")
-                    Text("Same as new chats").tag("none")
+                    Text("Same as new sessions").tag("none")
                     Divider()
                     ForEach(ModelPresets.shared.presets.filter { $0.id != maestro?.id }) { preset in
                         Text(preset.displayName).tag(preset.id.uuidString)
@@ -263,8 +263,8 @@ struct SettingsView: View {
     private var behaviorPane: some View {
         Form {
             Section {
-                Toggle("Remote Control for Claude chats", isOn: $remoteControl)
-                    .help("Claude chats you use can be read and continued on claude.ai and in the Claude app, while Chatterbox is open. Turn it on or off for one chat from its toolbar.")
+                Toggle("Remote Control for Claude sessions", isOn: $remoteControl)
+                    .help("Claude sessions you use can be read and continued on claude.ai and in the Claude app, while Chatterbox is open. Turn it on or off for one session from its toolbar.")
                 Toggle("Keep replies running after Chatterbox quits", isOn: $keepRepliesRunning)
                 Toggle("Show Chatterbox in the menu bar", isOn: $showsMenuBarIcon)
                     .help("An icon at the top right of the screen that shows when a chat waits on you or has a new reply, and lists your chats.")
@@ -641,7 +641,7 @@ private struct AppearanceSettingsView: View {
                 }
                 Section("Layout") {
                     slider("Conversation width", value: settings.$contentWidth, range: 560...1400, step: 20, unit: "pt",
-                           hint: "The widest the chat column gets in a large window")
+                           hint: "The widest the session column gets in a large window")
                 }
                 Section("Sidebar") {
                     slider("Space between lines", value: $sidebarLineSpacing, range: 0...10, step: 1, unit: "pt",
@@ -739,7 +739,7 @@ private struct InstructionsSettingsView: View {
             } header: {
                 Text("Chatterbox instructions")
             } footer: {
-                Text("Added to Claude Code's and Codex's own system prompts in every chat: your tone (shown for the default tone), plus notes about the chat window. Each agent keeps its own base prompt.")
+                Text("Added to Claude Code's and Codex's own system prompts in every session: your tone (shown for the default tone), plus notes about the session window. Each agent keeps its own base prompt.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
@@ -754,9 +754,9 @@ private struct InstructionsSettingsView: View {
                     Button("Show File") { reveal(Prompts.userInstructionsFile) }
                 }
             } header: {
-                Text("Your instructions for every chat")
+                Text("Your instructions for every session")
             } footer: {
-                Text("Sent to both agents. New chats get them in their instructions; ongoing chats get the update with your next message. Stored in \((Prompts.userInstructionsFile.path as NSString).abbreviatingWithTildeInPath).")
+                Text("Sent to both agents. New sessions get them in their instructions; ongoing sessions get the update with your next message. Stored in \((Prompts.userInstructionsFile.path as NSString).abbreviatingWithTildeInPath).")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
@@ -841,11 +841,11 @@ private struct DotActivitySettings: View {
                 }
             }
             Toggle("\(model.dotName) summarizes finished work", isOn: $summarizeFinished)
-            Toggle("\(model.dotName) briefs you when a chat is waiting on you", isOn: $watchWaiting)
+            Toggle("\(model.dotName) briefs you when a session is waiting on you", isOn: $watchWaiting)
         } header: {
             Text(model.dotName)
         } footer: {
-            Text("At each check-in, \(model.dotName) looks over your email, USA Archery in ClickUp, and your chats, and sends you a short briefing only when something needs you; otherwise it leaves a single quiet line. It runs while Chatterbox is open on a Mac that's awake, catching up within three hours if the Mac was asleep.")
+            Text("At each check-in, \(model.dotName) looks over your email, USA Archery in ClickUp, and your sessions, and sends you a short briefing only when something needs you; otherwise it leaves a single quiet line. It runs while Chatterbox is open on a Mac that's awake, catching up within three hours if the Mac was asleep.")
                 .font(.caption).foregroundStyle(.secondary)
         }
         emailSection
@@ -946,7 +946,7 @@ private struct DiagnosticsSection: View {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString((try? String(contentsOf: report.url, encoding: .utf8)) ?? "", forType: .string)
                     }
-                    .help("Copy the whole report, to paste into a chat")
+                    .help("Copy the whole report, to paste into a session")
                     Button("Show") { NSWorkspace.shared.activateFileViewerSelecting([report.url]) }
                 }
             }
@@ -957,7 +957,7 @@ private struct DiagnosticsSection: View {
         } header: {
             Text("Diagnostics")
         } footer: {
-            Text("Reports are plain text in \(Diagnostics.folder.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")). Paste one into a chat, or ask an agent to read the newest, to find what froze.")
+            Text("Reports are plain text in \(Diagnostics.folder.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")). Paste one into a session, or ask an agent to read the newest, to find what froze.")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .onAppear { diagnostics.reload() }
@@ -987,12 +987,12 @@ private struct ProxySection: View {
                     Button("Check") { Task { await proxy.refresh() } }.controlSize(.small)
                 }
             }
-            Toggle("Send Claude chats through it", isOn: $claude)
-            Toggle("Send Codex chats through it", isOn: $codex)
+            Toggle("Send Claude sessions through it", isOn: $claude)
+            Toggle("Send Codex sessions through it", isOn: $codex)
         } header: {
             Text("EasyCLIProxyAPI")
         } footer: {
-            Text("Spreads chats across the accounts you've signed in to EasyCLIProxyAPI. Through it, Claude can't use your claude.ai connectors and Codex can't use ChatGPT apps like Gmail, so \(model.dotName) and the email watch always connect directly. Takes effect with each chat's next message; if the proxy stops answering, chats connect directly.")
+            Text("Spreads sessions across the accounts you've signed in to EasyCLIProxyAPI. Through it, Claude can't use your claude.ai connectors and Codex can't use ChatGPT apps like Gmail, so \(model.dotName) and the email watch always connect directly. Takes effect with each session's next message; if the proxy stops answering, sessions connect directly.")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .task { await proxy.refresh() }
@@ -1057,7 +1057,7 @@ struct SecretsSection: View {
         } header: {
             Text("Secrets & Accounts")
         } footer: {
-            Text("Values are kept in your Mac's Keychain and never shown here again. Chats in scope get each one as an environment variable for the commands their agent runs; the agent is told only its name and what it's for, and any value that shows up in a chat is masked. A command that prints a value would still show it to the agent's model, so agents are told never to.")
+            Text("Values are kept in your Mac's Keychain and never shown here again. Sessions in scope get each one as an environment variable for the commands their agent runs; the agent is told only its name and what it's for, and any value that shows up in a session is masked. A command that prints a value would still show it to the agent's model, so agents are told never to.")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .sheet(item: $editing) { entry in
@@ -1075,12 +1075,12 @@ struct SecretsSection: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Deletes it from Keychain. Chats lose $\(removing?.variable ?? "") with their next message.")
+            Text("Deletes it from Keychain. Sessions lose $\(removing?.variable ?? "") with their next message.")
         }
     }
 
     private func scope(_ entry: SecretEntry) -> String {
-        if entry.projects.isEmpty { return "all chats" }
+        if entry.projects.isEmpty { return "all sessions" }
         let names = entry.projects.compactMap { folder in model.session(boundTo: folder)?.projectName }
         return names.isEmpty ? "\(entry.projects.count) project\(entry.projects.count == 1 ? "" : "s")" : names.joined(separator: ", ")
     }
@@ -1131,7 +1131,7 @@ struct SecretEditor: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Section("Available to") {
-                    Toggle("All chats", isOn: $everywhere)
+                    Toggle("All sessions", isOn: $everywhere)
                     if !everywhere {
                         ForEach(projects, id: \.folder) { project in
                             Toggle(project.name, isOn: Binding(

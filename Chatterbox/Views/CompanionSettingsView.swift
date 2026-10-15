@@ -20,7 +20,7 @@ struct CompanionSettingsView: View {
                     }
                 }
             } footer: {
-                Text("Your iPhone can read your chats and send messages while Chatterbox’s background service runs on this Mac, even with the app closed. It connects over your home Wi-Fi, or through Tailscale.")
+                Text("Your iPhone can read your sessions and send messages while Chatterbox’s background service runs on this Mac, even with the app closed. It connects over your home Wi-Fi, or through Tailscale.")
                     .foregroundStyle(.secondary)
             }
 

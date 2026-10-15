@@ -74,7 +74,7 @@ struct ChatListView: View {
                 .navigationTitle(fixedPage?.title ?? store.connection?.macName ?? "Chatterbox")
                 .navigationBarTitleDisplayMode(.inline)
                 .refreshable { await store.loadChats() }
-                .searchable(text: $search, placement: .navigationBarDrawer(displayMode: page == .studios ? .always : .automatic), prompt: fixedPage.map { "Search \($0.title)" } ?? "Search chats")
+                .searchable(text: $search, placement: .navigationBarDrawer(displayMode: page == .studios ? .always : .automatic), prompt: fixedPage.map { "Search \($0.title)" } ?? "Search sessions")
                 .sheet(item: $editingStudio) { group in
                     if let id = group.studioID {
                         StudioInstructionsEditor(title: group.title, studio: id, initial: group.instructions ?? "")
@@ -149,13 +149,13 @@ struct ChatListView: View {
         .sheet(item: $promoting) { target in
             ChatPromotionSheet(target: target) { result in open(result.summary); history?.apply(result) }
         }
-        .alert("Rename Chat", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } }), presenting: renaming) { chat in
+        .alert("Rename Session", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } }), presenting: renaming) { chat in
             TextField("Name", text: $newTitle)
             Button("Rename") { rename(chat, to: newTitle.trimmingCharacters(in: .whitespacesAndNewlines)) }
                 .disabled(newTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             Button("Cancel", role: .cancel) { renaming = nil }
         }
-        .alert("Couldn't rename chat", isPresented: Binding(get: { managementError != nil }, set: { if !$0 { managementError = nil } })) {
+        .alert("Couldn't rename session", isPresented: Binding(get: { managementError != nil }, set: { if !$0 { managementError = nil } })) {
             Button("OK", role: .cancel) { managementError = nil }
         } message: { Text(managementError ?? "") }
         .onChange(of: scenePhase) { _, phase in
@@ -322,7 +322,7 @@ struct ChatListView: View {
         if store.chatList != nil, groups.isEmpty {
             if search.isEmpty {
                 ContentUnavailableView(page == .all ? "No Sessions" : "No \(page.title)", systemImage: page.icon,
-                                       description: Text(page == .all ? "Projects, Studios and chats from the Mac show up here." : page == .studios ? "Studios you make on the Mac show up here." :
+                                       description: Text(page == .all ? "Projects, Studios and sessions from the Mac show up here." : page == .studios ? "Studios you make on the Mac show up here." :
                                                          page == .projects ? "Projects you open on the Mac show up here." :
                                                          "Chats outside a project or Studio show up here."))
             } else {
@@ -410,7 +410,7 @@ struct ChatListView: View {
                             HStack {
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(group.title).font(.title3.weight(.bold))
-                                    Text("\(group.chats.count) chat\(group.chats.count == 1 ? "" : "s")").font(.caption).foregroundStyle(.secondary)
+                                    Text("\(group.chats.count) session\(group.chats.count == 1 ? "" : "s")").font(.caption).foregroundStyle(.secondary)
                                 }
                                 Spacer()
                                 if group.studioID != nil {
@@ -542,8 +542,8 @@ struct ChatListView: View {
                     if MobilePushNotifications.shared.readingChat == chat.id { MobilePushNotifications.shared.readingChat = nil }
                 }
         } else {
-            ContentUnavailableView("Choose a Chat", systemImage: "bubble.left.and.bubble.right",
-                                   description: Text("Your chats from \(store.connection?.macName ?? "your Mac") are in the sidebar."))
+            ContentUnavailableView("Choose a Session", systemImage: "bubble.left.and.bubble.right",
+                                   description: Text("Your sessions from \(store.connection?.macName ?? "your Mac") are in the sidebar."))
         }
     }
 

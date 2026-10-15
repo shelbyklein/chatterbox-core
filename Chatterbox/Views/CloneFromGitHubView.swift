@@ -60,7 +60,7 @@ struct CloneFromGitHubView: View {
                             }
                             Spacer()
                             if model.session(forRepo: repo.nameWithOwner) != nil {
-                                Text("Has a chat").font(.caption).foregroundStyle(.secondary)
+                                Text("Has a session").font(.caption).foregroundStyle(.secondary)
                             }
                         }
                         .tag(repo.nameWithOwner)
@@ -100,7 +100,7 @@ struct CloneFromGitHubView: View {
 
     private var actionTitle: String {
         if cloning { return "Cloning\u{2026}" }
-        if let repo = chosenRepo, model.session(forRepo: repo) != nil { return "Open Chat" }
+        if let repo = chosenRepo, model.session(forRepo: repo) != nil { return "Open Session" }
         return "Clone and Open"
     }
 
