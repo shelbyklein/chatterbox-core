@@ -369,10 +369,20 @@ struct ChatListView: View {
         return sort == .tag ? filtered(all) : sorted(filtered(all))
     }
 
+    /// A search shows every Studio's matches; otherwise the Studio you opened, or none (the
+    /// Studios themselves show first).
     private var visibleStudios: [Companion.ChatGroup] {
         if !search.isEmpty { return studioGroups }
-        let chosen = studioGroups.first { $0.id == selectedStudioID } ?? studioGroups.first
-        return chosen.map { [$0] } ?? []
+        return studioGroups.first { $0.id == selectedStudioID }.map { [$0] } ?? []
+    }
+
+    /// Every Studio as a card, to open one.
+    private var studioIndex: some View {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
+            ForEach(studioGroups) { group in
+                StudioIndexCard(group: group) { withAnimation(.easeOut(duration: 0.2)) { selectedStudioID = group.id } }
+            }
+        }
     }
 
     private var studioWorkspace: some View {
@@ -384,24 +394,14 @@ struct ChatListView: View {
                 if let list = store.chatList {
                     if search.isEmpty {
                         MobileNewReplies(activity: list.activity ?? [], chats: allChats, summary: summary(for:), open: open, rename: beginRename)
-                        if !studioGroups.isEmpty {
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                HStack(spacing: 8) {
-                                    ForEach(studioGroups) { group in
-                                        let chosen = group.id == visibleStudios.first?.id
-                                        Button { withAnimation(.easeOut(duration: 0.2)) { selectedStudioID = group.id } } label: {
-                                            Label(group.title, systemImage: "paintpalette")
-                                                .font(.subheadline.weight(.semibold)).lineLimit(1)
-                                                .padding(.horizontal, 14).frame(minHeight: 44)
-                                                .background(chosen ? Color.accentColor.opacity(0.15) : Color(uiColor: .secondarySystemGroupedBackground), in: Capsule())
-                                                .overlay(Capsule().strokeBorder(chosen ? Color.accentColor : Color.primary.opacity(0.08), lineWidth: 1))
-                                        }
-                                        .buttonStyle(.plain)
-                                        .accessibilityIdentifier("studio-select-" + group.id)
-                                        .accessibilityAddTraits(chosen ? .isSelected : [])
-                                    }
-                                }
+                        if visibleStudios.isEmpty { studioIndex }
+                        else {
+                            Button { withAnimation(.easeOut(duration: 0.2)) { selectedStudioID = nil } } label: {
+                                Label("All Studios", systemImage: "chevron.left").font(.subheadline.weight(.semibold))
+                                    .frame(minHeight: 44).contentShape(Rectangle())
                             }
+                            .buttonStyle(.plain).foregroundStyle(Color.accentColor)
+                            .accessibilityIdentifier("studios-index")
                         }
                     }
                     emptyPage
@@ -821,4 +821,55 @@ private struct ChatCard: View {
         .contentShape(RoundedRectangle(cornerRadius: 16))
     }
 
+}
+
+/// A Studio on the Studios page: its newest picture, its name, how many sessions it has, and
+/// how many need you or are working. Tap to see its sessions.
+private struct StudioIndexCard: View {
+    let group: Companion.ChatGroup
+    let open: () -> Void
+    @Environment(MobileStore.self) private var store
+    @State private var cover: UIImage?
+    private var coverChat: Companion.ChatSummary? { group.chats.first { $0.thumbnail != nil } }
+
+    var body: some View {
+        let waiting = group.chats.filter(\.isWaitingOnYou).count
+        let working = group.chats.filter(\.isRunning).count
+        Button(action: open) {
+            VStack(alignment: .leading, spacing: 0) {
+                Color(uiColor: .tertiarySystemFill)
+                    .aspectRatio(4 / 3, contentMode: .fit)
+                    .overlay {
+                        if let cover { Image(uiImage: cover).resizable().scaledToFill() }
+                        else { Image(systemName: "paintpalette").font(.title).foregroundStyle(.secondary) }
+                    }
+                    .clipped()
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(group.title).font(.headline).lineLimit(1)
+                    Text("\(group.chats.count) session\(group.chats.count == 1 ? "" : "s")").font(.caption).foregroundStyle(.secondary)
+                    if waiting > 0 || working > 0 {
+                        HStack(spacing: 8) {
+                            if waiting > 0 { Label("\(waiting) need\(waiting == 1 ? "s" : "") you", systemImage: "exclamationmark.circle.fill").foregroundStyle(.orange) }
+                            if working > 0 { Label("\(working) working", systemImage: "circle.dotted").foregroundStyle(.secondary) }
+                        }
+                        .font(.caption2.weight(.medium)).labelStyle(.titleAndIcon).lineLimit(1)
+                    }
+                }
+                .padding(10)
+                // Room for the status line on every card, so a row of cards lines up.
+                .frame(maxWidth: .infinity, minHeight: 82, alignment: .topLeading)
+            }
+            .background(Color(uiColor: .secondarySystemGroupedBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(waiting > 0 ? Color.orange : Color.primary.opacity(0.08), lineWidth: waiting > 0 ? 2 : 1))
+            .contentShape(RoundedRectangle(cornerRadius: 14))
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("studio-select-" + group.id)
+        .accessibilityLabel("\(group.title), \(group.chats.count) sessions\(waiting > 0 ? ", \(waiting) need you" : "")")
+        .task(id: coverChat.map { "\($0.id)|\($0.thumbnail?.id.uuidString ?? "")|\($0.thumbnail?.revision ?? "")" } ?? "") {
+            guard let chat = coverChat, let file = chat.thumbnail else { cover = nil; return }
+            cover = try? await store.thumbnail(file, in: chat.id)
+        }
+    }
 }
