@@ -874,6 +874,8 @@ final class AppModel {
             if let total=state.totalCount,total>record.items.count,let first=record.items.first?.id,
                let index=session.items.firstIndex(where:{$0.id==first}) {record.items=Array(session.items.prefix(index))+record.items}
             session.record=record;session.isRunning=state.running
+            // Sent messages the service hasn't added yet stay showing.
+            session.keepSentEchoes()
             // Never over a draft typed here that the service hasn't confirmed yet.
             if let draft=state.draft, !session.draftUnsynced {session.draft=draft.text;session.draftAttachments=draft.attachments}
             session.applyingRemoteState=false

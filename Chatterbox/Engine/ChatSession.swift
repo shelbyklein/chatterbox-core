@@ -188,6 +188,8 @@ final class ChatSession: Identifiable {
 
     nonisolated let id: UUID
     @ObservationIgnored var thumbnailLookupKey: String?
+    /// Messages sent through the service that it hasn't shown back yet (see echoSent).
+    @ObservationIgnored var sentEchoes: [SentEcho] = []
     /// Where this chat's question and approval rows are (see `pendingRequests`).
     @ObservationIgnored var requestRowCache = RequestRowCache()
     @ObservationIgnored var thumbnailLookupURL: URL?
@@ -227,7 +229,10 @@ final class ChatSession: Identifiable {
 
     func send(_ raw: String, attachments: [Attachment] = []) {
         guard !isRestartingThread else { return }
-        if let remoteCommand { remoteCommand("send", ["text":.string(raw),"attachments":(try? .value(attachments)) ?? []]);return }
+        if let remoteCommand {
+            echoSent(raw, attachments: attachments)
+            remoteCommand("send", ["text":.string(raw),"attachments":(try? .value(attachments)) ?? []]);return
+        }
         let message = UserMessage(text: raw.trimmingCharacters(in: .whitespacesAndNewlines), attachments: attachments)
         guard !message.text.isEmpty || !attachments.isEmpty else { return }
         RuntimeHooks.clearSuggestions(self)
@@ -400,6 +405,46 @@ final class ChatSession: Identifiable {
     }
 
     @discardableResult
+    /// Sent through the background service: the message shows here at once, as typing does in
+    /// a terminal, instead of after the service has added it and told the app (which waits on
+    /// the agent starting). The service's own row replaces it when it arrives.
+    func echoSent(_ raw: String, attachments: [Attachment]) {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        // "!" commands come back as a command row, not this message.
+        guard !text.isEmpty || !attachments.isEmpty, !(text.hasPrefix("!") && attachments.isEmpty) else { return }
+        let item = DisplayItem(kind: .user, text: text, queued: isRunning ? true : nil,
+                               attachments: attachments.isEmpty ? nil : attachments, agent: record.backend)
+        record.items.append(item)
+        sentEchoes.append(SentEcho(item: item, sentAt: Date()))
+    }
+
+    /// After the service's copy of the chat comes in: echoes it now shows go; the rest stay at
+    /// the end until it does (a refresh can arrive before the service has added them), for up
+    /// to half a minute.
+    func keepSentEchoes() {
+        guard !sentEchoes.isEmpty else { return }
+        let now = Date()
+        // Oldest first, each of the service's rows standing for one sent message (the same
+        // text sent twice shows twice).
+        var unclaimed = Array(record.items.suffix(24))
+        sentEchoes.removeAll { echo in
+            if now.timeIntervalSince(echo.sentAt) > 30 { return true }
+            guard let index = Self.row(for: echo, in: unclaimed) else { return false }
+            unclaimed.remove(at: index)
+            return true
+        }
+        for echo in sentEchoes where !record.items.contains(where: { $0.id == echo.item.id }) { record.items.append(echo.item) }
+    }
+
+    /// The service's row for this message: the same text, from about when it was sent.
+    private static func row(for echo: SentEcho, in items: [DisplayItem]) -> Int? {
+        let since = echo.sentAt.addingTimeInterval(-2)
+        return items.firstIndex { item in
+            guard item.kind == .user, item.id != echo.item.id, item.text == echo.item.text else { return false }
+            return (item.timestamp ?? .distantFuture) >= since
+        }
+    }
+
     func appendUserItem(_ message: UserMessage, steered: Bool = false) -> UUID {
         // A message sent mid-turn waits until the agent picks it up (see ChatSession+Status).
         appendItem(DisplayItem(kind: .user, text: message.text, steered: steered, queued: steered ? true : nil,
@@ -755,4 +800,10 @@ struct RequestRowCache {
     var firstID: UUID?
     var rows: [Int] = []
     var ids: [UUID] = []
+}
+
+/// A message shown before the background service has it in the chat (ChatSession.echoSent).
+struct SentEcho {
+    var item: DisplayItem
+    var sentAt: Date
 }

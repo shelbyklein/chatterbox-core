@@ -11,6 +11,8 @@ extension ChatSession {
         if !steered { setTitleIfNeeded(message) }
         let earlierItems = record.items.count
         appendUserItem(message, steered: steered)
+        // Shown before the agent is started or woken, which can take a moment.
+        onChange?(self)
 
         do {
             let process = try claudeEnsureProcess(earlierItems: earlierItems)

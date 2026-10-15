@@ -45,6 +45,7 @@ extension ChatSession {
         if isRunning {
             // Codex supports steering natively: the text joins the running turn.
             let item = appendUserItem(message, steered: true)
+            onChange?(self)
             if let turn = codexTurnID {
                 Task { await codexSteer(message, turn: turn, item: item) }
             } else {
@@ -55,6 +56,8 @@ extension ChatSession {
         }
         setTitleIfNeeded(message)
         appendUserItem(message)
+        // Shown before the turn starts, which can take a moment.
+        onChange?(self)
         beginCodexTurn(message)
     }
 
