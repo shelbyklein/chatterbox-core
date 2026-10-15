@@ -240,20 +240,19 @@ private struct StudioColumn: View {
         VStack(alignment: .leading, spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("STUDIOS").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                        .padding(.horizontal, 10).padding(.bottom, 6)
+                    HStack {
+                        Text("STUDIOS").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        Spacer()
+                        Button { newStudio() } label: { Image(systemName: "plus") }
+                            .buttonStyle(.borderless).help("New Studio").accessibilityLabel("New Studio")
+                    }
+                    .padding(.horizontal, 10).padding(.bottom, 6)
                     let pinned = model.pinnedThreads.filter { $0.record.studioID != nil }
                     entry(.pinned, title: "Pinned", count: pinned.count, attention: pinned.filter(Attention.shared.needsAttention).count, icon: "pin")
                     ForEach(model.activeStudios) { studio in
                         entry(.studio(studio.id), title: studio.name, count: model.chats(in: studio).count,
                               attention: attention(in: studio), icon: "paintpalette")
                     }
-                    Button { newStudio() } label: {
-                        Label("New Studio", systemImage: "plus").font(.callout).foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 10).padding(.vertical, 7)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain).padding(.top, 6)
                 }
                 .padding(.horizontal, 12).padding(.top, 24)
             }

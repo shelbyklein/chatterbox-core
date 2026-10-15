@@ -1176,7 +1176,7 @@ extension ContentView {
     @ViewBuilder var sidebarColumn: some View {
         if model.studioSidebarID != nil {
             HStack(spacing: 0) {
-                StudioRail(rename: { studio in studioName = studio.name; renamingStudio = studio }).frame(width: ChatColumns.studioRailWidth)
+                StudioRail(newStudio: { beginNewStudio() }, rename: { studio in studioName = studio.name; renamingStudio = studio }).frame(width: ChatColumns.studioRailWidth)
                 Divider()
                 sidebarSessions
             }
@@ -1726,14 +1726,21 @@ struct LinkedStudioShortcut: View {
 /// Picking one opens its newest session.
 private struct StudioRail: View {
     @Environment(AppModel.self) private var model
+    /// Opens ContentView's New Studio sheet.
+    let newStudio: () -> Void
     /// Opens ContentView's rename prompt.
     let rename: (Studio) -> Void
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 2) {
-                Text("STUDIOS").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-                    .padding(.horizontal, 8).padding(.bottom, 4)
+                HStack {
+                    Text("STUDIOS").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                    Spacer()
+                    Button(action: newStudio) { Image(systemName: "plus") }
+                        .buttonStyle(.borderless).help("New Studio").accessibilityLabel("New Studio")
+                }
+                .padding(.horizontal, 8).padding(.bottom, 4)
                 ForEach(model.activeStudios) { studio in row(studio) }
             }
             .padding(.horizontal, 8).padding(.vertical, 12)
