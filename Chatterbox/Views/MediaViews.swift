@@ -1,8 +1,9 @@
 import AVKit
 import ImageIO
+import SceneKit
 import SwiftUI
 
-/// A GIF, video, or Lottie animation in the chat, playing. Videos loop silently with
+/// A GIF, video, Lottie animation or 3D model in the chat, playing (a model turns). Videos loop silently with
 /// controls; Open shows the file in its own app.
 struct MediaPreview: View {
     let url: URL
@@ -15,6 +16,8 @@ struct MediaPreview: View {
             case .video: LoopingVideo(url: url)
             case .lottie: lottie { (try? String(contentsOf: url, encoding: .utf8)).map(MediaKind.lottiePage(json:)) }
             case .dotLottie: lottie { (try? Data(contentsOf: url)).map { MediaKind.dotLottiePage(base64: $0.base64EncodedString()) } }
+            case .model3D: ModelPreview(url: url)
+            case .usdz: USDZPreview(url: url)
             }
         }
         // Bottom corner: a page preview keeps its own buttons at the top.
@@ -203,3 +206,67 @@ private struct AsyncLocalImage: View {
         }
     }
 }
+
+/// A GLB, glTF, STL, OBJ or FBX model to turn, zoom and pan (three.js in a web page).
+private struct ModelPreview: View {
+    let url: URL
+    @Environment(\.colorScheme) private var scheme
+    @State private var page: String?
+    @State private var problem: String?
+
+    var body: some View {
+        Group {
+            if let page {
+                HTMLPreview(source: .html(page), maxHeight: 360).frame(maxWidth: 640)
+            } else {
+                RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.06))
+                    .frame(maxWidth: 640).frame(height: 360)
+                    .overlay { if let problem { Text(problem).foregroundStyle(.secondary).padding() } else { ProgressView() } }
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .task(id: url) {
+            let dark = scheme == .dark
+            let file = url
+            let result = await Task.detached(priority: .userInitiated) { () -> Result<String, PreviewProblem> in
+                let size = (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+                guard size <= MediaKind.modelPreviewLimit else { return .failure(PreviewProblem(message: "\(file.lastPathComponent) is too big to preview here (\(size / 1_048_576) MB). Open it to view.")) }
+                guard let data = MediaKind.selfContainedModel(file) else { return .failure(PreviewProblem(message: "Couldn't read \(file.lastPathComponent).")) }
+                return .success(MediaKind.modelPage(base64: data.base64EncodedString(), ext: file.pathExtension, dark: dark))
+            }.value
+            switch result {
+            case .success(let html): page = html
+            case .failure(let failure): problem = failure.message
+            }
+        }
+    }
+}
+
+/// A USDZ model to turn and zoom, natively.
+private struct USDZPreview: View {
+    let url: URL
+    @State private var scene: SCNScene?
+    @State private var failed = false
+
+    var body: some View {
+        Group {
+            if let scene {
+                SceneView(scene: scene, options: [.allowsCameraControl, .autoenablesDefaultLighting])
+            } else {
+                Color.primary.opacity(0.06).overlay {
+                    if failed { Text("Couldn't show \(url.lastPathComponent).").foregroundStyle(.secondary) } else { ProgressView() }
+                }
+            }
+        }
+        .frame(maxWidth: 640).frame(height: 360)
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .task(id: url) {
+            let file = url
+            scene = await Task.detached(priority: .userInitiated) { try? SCNScene(url: file) }.value
+            failed = scene == nil
+        }
+    }
+}
+
+/// Why a preview couldn't be made, said to the user.
+private struct PreviewProblem: Error { let message: String }

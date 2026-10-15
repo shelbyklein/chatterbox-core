@@ -646,6 +646,10 @@ final class CompanionServer {
             // the chat; the original comes without it (viewing full screen, marking up, saving).
             let maxSide = request.query["max"].flatMap(Int.init).map { min(4096, max(200, $0)) }
             func send(_ url: URL, type: String) -> HTTPResponse {
+                // A .gltf goes with the files it points to folded in: the phone gets only this one.
+                if url.pathExtension.lowercased() == "gltf", let data = MediaKind.selfContainedModel(url) {
+                    return HTTPResponse(status: 200, contentType: "model/gltf+json", body: data)
+                }
                 if let maxSide, MediaKind.isStillImage(url.path) {
                     return HTTPResponse(status: 200, contentType: type, body: Data(), thumbnailSource: url, thumbnailSize: maxSide, fallbackFile: true)
                 }

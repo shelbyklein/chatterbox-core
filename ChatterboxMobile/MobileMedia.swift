@@ -1,20 +1,26 @@
 import AVKit
 import ImageIO
+import SceneKit
 import SwiftUI
 import UIKit
 
-/// A GIF, video, or Lottie animation from the chat, fetched from the Mac and playing.
+/// A GIF, video, Lottie animation or 3D model from the chat, fetched from the Mac and playing
+/// (a model turns: drag to turn it, pinch to zoom).
 struct RemoteMedia: View {
     let file: Companion.File
     let chat: UUID
     @Environment(MobileStore.self) private var store
     @State private var loaded: Loaded?
     @State private var failed = false
+    @Environment(\.colorScheme) private var scheme
 
     enum Loaded {
         case gif(UIImage)
         case video(URL)
         case page(String)
+        /// A 3D model's page (three.js), shown at a fixed height.
+        case model(String)
+        case scene(SCNScene)
     }
 
     static func isMedia(_ file: Companion.File) -> Bool {
@@ -32,6 +38,10 @@ struct RemoteMedia: View {
                 LoopingVideo(url: url).frame(maxWidth: 520)
             case .page(let html):
                 HTMLPreview(source: .html(html), maxHeight: 480)
+            case .model(let html):
+                HTMLPreview(source: .html(html), maxHeight: 360).frame(height: 360)
+            case .scene(let scene):
+                SceneView(scene: scene, options: [.allowsCameraControl, .autoenablesDefaultLighting]).frame(height: 360)
             case nil:
                 RoundedRectangle(cornerRadius: 10).fill(Color(uiColor: .secondarySystemBackground))
                     .frame(height: 160)
@@ -55,6 +65,14 @@ struct RemoteMedia: View {
             loaded = .page(MediaKind.lottiePage(json: String(decoding: data, as: UTF8.self)))
         case .dotLottie:
             loaded = .page(MediaKind.dotLottiePage(base64: data.base64EncodedString()))
+        case .model3D:
+            guard data.count <= MediaKind.modelPreviewLimit else { failed = true; return }
+            let ext = (file.name as NSString).pathExtension, dark = scheme == .dark
+            loaded = .model(await Task.detached { MediaKind.modelPage(base64: data.base64EncodedString(), ext: ext, dark: dark) }.value)
+        case .usdz:
+            // SceneKit reads a USDZ from a file.
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent(file.id.uuidString + ".usdz")
+            if (try? data.write(to: url)) != nil, let scene = try? SCNScene(url: url) { loaded = .scene(scene) } else { failed = true }
         case nil:
             failed = true
         }
