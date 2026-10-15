@@ -144,6 +144,10 @@ struct ImageReviewView: View {
                             .offset(x: fitted.minX + dragRect.minX * fitted.width, y: fitted.minY + dragRect.minY * fitted.height)
                     }
                 }
+                // The whole canvas takes clicks. The picture is moved into place by offsets,
+                // which don't move a view's frame: sized to the picture alone, the clickable
+                // area stayed at the left and missed the picture's right side.
+                .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
                 .contentShape(Rectangle())
                 .gesture(
                     DragGesture(minimumDistance: 0)
