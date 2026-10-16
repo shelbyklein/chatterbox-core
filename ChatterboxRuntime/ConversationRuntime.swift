@@ -109,7 +109,9 @@ struct CommandReceipt: Codable {
         try encoder.encode(["schema":1,"owner":"chatterboxd"] as JSON).write(to: root.appendingPathComponent("runtime-owner.json"), options: .atomic)
         try persistState()
         // Save chat records before acknowledging the shared stream's replay offset.
-        CodexAppServer.shared.onThreadLifecycleChange = { [weak self] in self?.flushNow() }
+        CodexAppServer.shared.onThreadLifecycleChange = { [weak self] in
+            do { try self?.flush() } catch { RuntimeHooks.note("Runtime save failed: \(error.localizedDescription)") }
+        }
     }
     func resume() async {
         let processes = (try? await HostClient.shared.list()) ?? []
@@ -215,7 +217,9 @@ struct CommandReceipt: Codable {
         guard let s=session(id) else { throw RuntimeFailure("Conversation not found") }
         s.shutdown();sessions.removeAll { $0.id == id };dirty.remove(id)
         // Retain attachments: deletion can otherwise destroy files used by forks or a retry.
-        try FileManager.default.removeItem(at: file(id))
+        // After any save still queued for it, so the file doesn't come back.
+        let url=file(id)
+        try saveQueue.sync { try FileManager.default.removeItem(at: url) }
         publish(s,kind:"chat.deleted");try persistState()
     }
     func updateDraft(_ s: ChatSession, text: String, attachments: [Attachment]) {
@@ -250,16 +254,62 @@ struct CommandReceipt: Codable {
         let oldest=state.events.first?.sequence ?? state.sequence
         return (cursor < oldest-1 || cursor > state.sequence, state.events.filter { $0.sequence > cursor })
     }
+    /// Saves changed sessions now, and throws if one can't be written (a command can then
+    /// roll back). Waits for any background save first, so writes stay in order.
     func flush() throws {
-        for id in dirty {
-            guard let session=session(id) else { continue }
+        let snapshots=takeDirty()
+        var failure: Error?
+        saveQueue.sync { [saveEncoder] in
+            for (record,url) in snapshots where failure == nil {
+                do { try saveEncoder.encode(record).write(to:url,options:.atomic) } catch { failure=error }
+            }
+        }
+        if let failure { for (record,_) in snapshots { dirty.insert(record.id) };throw failure }
+        for (record,_) in snapshots { ackHost(record) }
+        finishFlush()
+        try persistState()
+    }
+
+    /// The same in the background, for the automatic saves while replies stream: encoding a
+    /// long session's whole transcript took most of the main thread, and requests waiting
+    /// behind it timed out. The main thread only takes a copy; a serial queue writes it.
+    private func flushInBackground() {
+        let snapshots=takeDirty()
+        saveQueue.async { [saveEncoder] in
+            for (record,url) in snapshots {
+                do {
+                    try saveEncoder.encode(record).write(to:url,options:.atomic)
+                    DispatchQueue.main.async { [weak self] in self?.ackHost(record) }
+                } catch {
+                    DispatchQueue.main.async { [weak self] in
+                        self?.dirty.insert(record.id)
+                        RuntimeHooks.note("Runtime save failed: \(error.localizedDescription)")
+                    }
+                }
+            }
+        }
+        finishFlush()
+        do { try persistState() } catch { RuntimeHooks.note("Runtime save failed: \(error.localizedDescription)") }
+    }
+
+    /// Copies of the changed sessions, ready to write.
+    private func takeDirty() -> [(ConversationRecord, URL)] {
+        let snapshots: [(ConversationRecord, URL)] = dirty.compactMap { id in
+            guard let session=session(id) else { return nil }
             session.prepareForSave()
-            try encoder.encode(session.record).write(to:file(id),options:.atomic)
-            if let link=session.record.claudeHost, HostClient.shared.isConnected { HostClient.shared.ack(id:link.processID,offset:link.offset) }
+            return (session.record, file(id))
         }
         dirty.removeAll()
+        return snapshots
+    }
+
+    /// The agent host can drop output once it's saved.
+    private func ackHost(_ record: ConversationRecord) {
+        if let link=record.claudeHost, HostClient.shared.isConnected { HostClient.shared.ack(id:link.processID,offset:link.offset) }
+    }
+
+    private func finishFlush() {
         if CodexAppServer.shared.isRunning { CodexAppServer.shared.saveResumeState() }
-        try persistState()
     }
     func execute(id: String, operation: String, fingerprint: String, body: () throws -> JSON) throws -> JSON {
         guard !id.isEmpty, id.count <= 128 else { throw RuntimeFailure("A bounded request ID is required") }
@@ -332,6 +382,12 @@ struct CommandReceipt: Codable {
         state.sequence += 1
         onEvent?(RuntimeEvent(sequence:state.sequence,revision:0,kind:kind,payload:payload))
     }
+    /// Session files are written here, one at a time (see flush).
+    private let saveQueue=DispatchQueue(label:"chatterbox.runtime.save",qos:.utility)
+    /// The save queue's own encoder (JSONEncoder isn't safe to share across threads).
+    private let saveEncoder: JSONEncoder = { let e=JSONEncoder();e.dateEncodingStrategy = .iso8601;return e }()
+    /// Waits for every queued session save (tests, and before the service exits).
+    func waitForSaves() { saveQueue.sync {} }
     private func persistState() throws { try encoder.encode(state).write(to:root.appendingPathComponent("runtime-state.json"),options:.atomic) }
     private func attach(_ session: ChatSession) {
         session.onChange = { [weak self] s in self?.changed(s,streamed:false) }
@@ -379,7 +435,7 @@ struct CommandReceipt: Codable {
     private var lastFlush=Date.distantPast,flushPending=false
     private func flushNow() {
         lastFlush=Date()
-        do { try flush() } catch { RuntimeHooks.note("Runtime save failed: \(error.localizedDescription)") }
+        flushInBackground()
     }
     private func flushSoon() {
         guard !flushPending else { return }
