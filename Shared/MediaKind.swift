@@ -125,14 +125,18 @@ enum MediaKind: Equatable {
         let mixer = null;
         const buf = Uint8Array.from(atob('\(base64)'), c => c.charCodeAt(0)).buffer;
         const renderer = new THREE.WebGLRenderer({antialias: true, alpha: true});
-        renderer.setPixelRatio(window.devicePixelRatio); renderer.setSize(innerWidth, 360);
+        // A phone's web view has little graphics memory: at most 2x, and the page's width (it
+        // can be 0 before the view is laid out).
+        const width = () => Math.max(innerWidth, 100);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); renderer.setSize(width(), 360);
         renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.toneMapping = THREE.ACESFilmicToneMapping;
         document.body.appendChild(renderer.domElement);
         const scene = new THREE.Scene();
-        scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+        // Reflections from a lit room, where there's memory for them; plain lights otherwise.
+        try { scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture; } catch (e) {}
         scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1.2));
         const sun = new THREE.DirectionalLight(0xffffff, 1.5); sun.position.set(3, 5, 4); scene.add(sun);
-        const camera = new THREE.PerspectiveCamera(40, innerWidth / 360, 0.001, 10000);
+        const camera = new THREE.PerspectiveCamera(40, width() / 360, 0.001, 10000);
         const controls = new OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true; controls.autoRotate = true; controls.autoRotateSpeed = 1.2;
         controls.addEventListener('start', () => { controls.autoRotate = false; });
@@ -145,9 +149,9 @@ enum MediaKind: Equatable {
           camera.position.copy(center).add(new THREE.Vector3(0.9, 0.55, 1.4).normalize().multiplyScalar(radius / Math.sin(THREE.MathUtils.degToRad(20)) * 1.05));
           camera.near = radius / 100; camera.far = radius * 100; camera.updateProjectionMatrix();
           document.getElementById('m').remove();
-        } catch (e) { document.getElementById('m').textContent = "Couldn't show this model: " + (e && e.message || e); }
+        } catch (e) { const m = document.getElementById('m'); m.style.cssText += ';white-space:pre-wrap;font-size:10px;padding:12px;text-align:left'; m.textContent = "Couldn't show this model: " + (e && e.message || e) + "\\nbytes " + buf.byteLength + " webgl2 " + !!renderer.capabilities.isWebGL2 + "\\n" + (e && e.stack || '').replace(/https:\\/\\/cdn.jsdelivr.net\\/npm\\/three@0.170.0\\//g, ''); }
         const clock = new THREE.Clock();
-        addEventListener('resize', () => { renderer.setSize(innerWidth, 360); camera.aspect = innerWidth / 360; camera.updateProjectionMatrix(); });
+        addEventListener('resize', () => { renderer.setSize(width(), 360); camera.aspect = width() / 360; camera.updateProjectionMatrix(); });
         renderer.setAnimationLoop(() => { if (mixer) mixer.update(clock.getDelta()); controls.update(); renderer.render(scene, camera); });
         </script></body></html>
         """
