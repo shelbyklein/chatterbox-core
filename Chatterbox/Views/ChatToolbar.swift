@@ -126,6 +126,59 @@ struct SessionTools: View {
     }
 }
 
+/// The session's Brief: the assignment, the tools to use, the key files, which both agents
+/// always get. The pill shows its first line; click to write, change or clear it.
+struct BriefButton: View {
+    let session: ChatSession
+    @State private var open = false
+    @State private var text = ""
+    @Environment(\.colorScheme) private var scheme
+    private var brief: String { session.record.brief ?? "" }
+    private var preview: String {
+        let first = brief.split(separator: "\n").first.map(String.init) ?? ""
+        return first.count > 28 ? String(first.prefix(27)) + "\u{2026}" : first
+    }
+
+    var body: some View {
+        Button { text = brief; open.toggle() } label: {
+            HStack(spacing: 5) {
+                Image(systemName: brief.isEmpty ? "doc.text" : "doc.text.fill")
+                Text(brief.isEmpty ? "Brief" : preview).lineLimit(1)
+            }
+            .font(.callout)
+            .padding(.horizontal, 10).frame(height: 32).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(brief.isEmpty ? Color.secondary : Color.primary)
+        .background(scheme == .dark ? Color(white: 0.10) : Color(white: 0.97), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12)))
+        .help(brief.isEmpty ? "Brief: what this session is for, the tools to use, the key files. Both agents get it." : "Brief: \(brief)")
+        .accessibilityLabel(brief.isEmpty ? "Brief, not set" : "Brief: \(brief)")
+        .popover(isPresented: $open, arrowEdge: .top) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Session brief").font(.headline)
+                Text("The assignment, the tools to use (an MCP server, say) and the key files. Claude and Codex both get it, and keep it across an agent switch.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                TextEditor(text: $text)
+                    .font(.body).scrollContentBackground(.hidden)
+                    .padding(6).frame(height: 140)
+                    .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+                    .accessibilityLabel("Brief")
+                HStack {
+                    if !brief.isEmpty { Button("Clear", role: .destructive) { session.setBrief(""); open = false } }
+                    Spacer()
+                    Button("Cancel") { open = false }.keyboardShortcut(.cancelAction)
+                    Button("Save") { session.setBrief(text); open = false }
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines) == brief)
+                }
+                Text("It reaches the agent with your next message.").font(.caption2).foregroundStyle(.tertiary)
+            }
+            .padding(16).frame(width: 380)
+        }
+    }
+}
+
 struct SessionImages: View {
     let bridge: ChatToolbarBridge
     @Environment(\.colorScheme) private var scheme

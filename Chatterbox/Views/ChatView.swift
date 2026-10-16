@@ -91,6 +91,7 @@ struct ChatView: View {
                         GeometryReader { geometry in
                             VStack(alignment: .trailing, spacing: 8) {
                                 HStack(alignment: .top, spacing: 8) {
+                                    BriefButton(session: session)
                                     SessionTools(bridge: windowToolbar ?? ownToolbar)
                                     SessionImages(bridge: windowToolbar ?? ownToolbar)
                                     ChatQuickActions(session: session)
