@@ -467,7 +467,9 @@ struct ChatView: View {
                             #else
                             Text("Open this conversation in Golem.")
                             #endif
-                            Color.clear.frame(height: 1).id("bottom")
+                            // The transcript's bottom margin is this marker, so scrolling to it reaches the very end
+                            // (and the view stays pinned there as the typing dots and replies arrive).
+                            Color.clear.frame(height: compact ? 12 : 20).id("bottom")
                         }
                     } else {
                     let page = findWindow.map(windowPage) ?? transcriptPage(rows: shownRowCount)
@@ -536,12 +538,14 @@ struct ChatView: View {
                         if session.isRunning && !isVisiblyWorking {
                             TypingIndicator()
                         }
-                        Color.clear.frame(height: 1).id("bottom")
+                        // The transcript's bottom margin is this marker, so scrolling to it reaches the very end
+                            // (and the view stays pinned there as the typing dots and replies arrive).
+                            Color.clear.frame(height: compact ? 12 : 20).id("bottom")
                     }
                     }
                     }
                     .padding(.horizontal, compact ? 14 : 24)
-                    .padding(.vertical, compact ? 12 : 20)
+                    .padding(.top, compact ? 12 : 20)
                     .frame(maxWidth: appearance.style.contentWidth)
                     .environment(\.readerStyle, appearance.style)
                     .environment(\.reviewImage, ImageReviewAction { reviewing = $0 })
@@ -589,7 +593,11 @@ struct ChatView: View {
                 // The new rows can take more than one pass to lay out; keep the newest in view until they settle.
                 keepBottom(proxy)
             }
-            .onChange(of: session.isRunning) { _, running in if !running { stopStatus = nil; requestingStop = false } }
+            .onChange(of: session.isRunning) { _, running in
+                if !running { stopStatus = nil; requestingStop = false }
+                // The typing dots appear when the agent starts, after the message showed: keep them in view.
+                else if !find.isOpen { keepBottom(proxy) }
+            }
             .onChange(of: session.items.count) { if !find.isOpen { scrollToBottom(proxy) } else { find.recompute() } }
             .onChange(of: find.jumpRequest) { jumpToMatch(proxy) }
             .onChange(of: pinJump) { _, id in
