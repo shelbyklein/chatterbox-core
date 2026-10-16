@@ -87,6 +87,9 @@ struct DisplayItem: Identifiable, Codable, Equatable {
     var workedSeconds: Int?
     /// Notices marking a change of agent, model, or effort. Back-to-back changes share one.
     var isSettingsChange: Bool?
+    /// Tool rows: which tool ran, for the tools-used line in handoffs. "mcp:<server>/<tool>"
+    /// for an MCP tool, else the agent's own name for it ("Bash", "shell"). Older rows have none.
+    var tool: String?
     /// Question rows: what the agent asked, and your answers by question id once sent.
     var questions: [AgentQuestion]?
     var answers: [String: [String]]?
@@ -133,6 +136,10 @@ struct ConversationRecord: Codable {
     var sentComputerNote: Bool?
     /// The Studio's instructions as last given to this chat's agent.
     var sentStudioInstructions: String?
+    /// The session's Brief: its assignment, the tools to use, the key files. Both agents get
+    /// it (see Prompts.brief); `sentBrief` is the version the agent answering now has.
+    var brief: String?
+    var sentBrief: String?
     /// Set on a forked chat: the next Claude Code session branches off `claudeSessionID`
     /// instead of continuing it, so the original chat is left as it was.
     var claudeForkPending: Bool?

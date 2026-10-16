@@ -36,6 +36,7 @@ extension ChatSession {
                 record.sentUserInstructions = user
             }
             if let studioUpdate = takeStudioInstructionsUpdate() { content.append(.text(studioUpdate)) }
+            if let brief = takeBriefUpdate() { content.append(.text(brief)) }
             if let secrets = takeSecretsUpdate() { content.append(.text(secrets)) }
             if let computer = takeComputerUpdate() { content.append(.text(computer)) }
             // A resumed session keeps the name it started with, so a rename is said outright.
@@ -126,7 +127,8 @@ extension ChatSession {
         if !resuming, record.pendingHandoff == nil, record.claudeSeenThrough == nil, earlierItems > 0 {
             let transcript = Self.transcript(record.items[0..<earlierItems])
             if !transcript.isEmpty {
-                record.pendingHandoff = Prompts.handoff(from: "", transcript: transcript, isWholeConversation: true)
+                record.pendingHandoff = Prompts.handoff(from: "", transcript: transcript, isWholeConversation: true,
+                                                        toolsUsed: Self.toolsUsed(record.items[0..<earlierItems]))
             }
         }
         let process = makeClaudeProcess()
@@ -140,7 +142,7 @@ extension ChatSession {
             effort: record.effort,
             permissionMode: claudePermissionMode,
             appendSystemPrompt: Prompts.fullInstructions(record.personality, backend: .claude, projectFolder: record.boundFolder,
-                                                         studio: studio) + (isDot ? "\n\n" + Prompts.dotInstructions(name: title) : ""),
+                                                         studio: studio, brief: record.brief) + (isDot ? "\n\n" + Prompts.dotInstructions(name: title) : ""),
             resumeSessionID: record.claudeSessionID,
             extraDirectories: [Attachments.directory.path],
             forkSession: record.claudeForkPending == true,
@@ -158,6 +160,7 @@ extension ChatSession {
             record.sentPersonality = record.personality
             record.sentUserInstructions = Prompts.userInstructions
             record.sentStudioInstructions = studio?.noteKey ?? ""
+            record.sentBrief = record.brief ?? ""
             record.instructionsVersion = Prompts.instructionsVersion
         }
         // The branch gets its own session id in its first `init` message.
@@ -292,7 +295,12 @@ extension ChatSession {
                 } else if Self.claudeTaskTools.contains(name) {
                     claudeTaskToolUsed(name, input: block["input"] ?? [:], useID: useID)
                 } else if let item = claudeToolItems[useID] {
-                    updateItem(item) { $0.text = Tools.label(name: name, input: block["input"]) }
+                    updateItem(item) { $0.text = Tools.label(name: name, input: block["input"]); $0.tool = Tools.key(claudeName: name) }
+                } else if name != "AskUserQuestion" {
+                    // A call that never streamed still gets its row.
+                    var row = DisplayItem(kind: .tool, text: Tools.label(name: name, input: block["input"]))
+                    row.tool = Tools.key(claudeName: name)
+                    claudeToolItems[useID] = appendItem(row)
                 }
             }
 
@@ -361,7 +369,9 @@ extension ChatSession {
                 let name = block["name"]?.string ?? ""
                 // The plan card and question card stand in for these rows.
                 guard name != Tools.todoTool, name != "AskUserQuestion", !Self.claudeTaskTools.contains(name) else { break }
-                let id = appendItem(DisplayItem(kind: .tool, text: Tools.label(name: name, input: nil)))
+                var row = DisplayItem(kind: .tool, text: Tools.label(name: name, input: nil))
+                row.tool = Tools.key(claudeName: name)
+                let id = appendItem(row)
                 claudeRender.itemForIndex[index] = id
                 if let useID = block["id"]?.string { claudeToolItems[useID] = id }
             default:

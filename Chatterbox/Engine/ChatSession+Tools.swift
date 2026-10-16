@@ -142,3 +142,33 @@ extension ChatSession {
         return config
     }
 }
+
+extension ChatSession {
+    /// After a switch: MCP servers the leaving agent used here that the incoming agent has
+    /// neither in its own config nor from Chatterbox's Tools for this session, said once as a
+    /// notice. Chatterbox's own server and claude.ai connectors (Claude only) are left out.
+    @MainActor func noteMissingServers(used items: ArraySlice<DisplayItem>, by leaving: Backend, now incoming: Backend) {
+        var used: [String] = []
+        for item in items where item.kind == .tool {
+            guard let tool = item.tool, tool.hasPrefix("mcp:"),
+                  let server = tool.dropFirst(4).split(separator: "/").first.map(String.init),
+                  server != "chatterbox", !server.hasPrefix("claude_ai_"), !used.contains(server) else { continue }
+            used.append(server)
+        }
+        guard !used.isEmpty else { return }
+        let missing = used.filter { !Self.agentHasServer($0, incoming, session: self) }
+        guard !missing.isEmpty else { return }
+        let names = missing.map { "\u{201C}\($0)\u{201D}" }.joined(separator: ", ")
+        appendItem(DisplayItem(kind: .notice, text: "\(incoming.label) doesn't have the \(names) MCP server\(missing.count == 1 ? "" : "s") \(leaving.label) was using here. Add \(missing.count == 1 ? "it" : "them") in Settings \u{2192} Tools, or import \(missing.count == 1 ? "it" : "them") from \(leaving.label)'s config."))
+    }
+
+    /// Whether `backend` gets an MCP server by this name: its own config, or this session's Tools.
+    @MainActor static func agentHasServer(_ name: String, _ backend: Backend, session: ChatSession) -> Bool {
+        func same(_ a: String, _ b: String) -> Bool { claudeToolName(a).lowercased() == claudeToolName(b).lowercased() }
+        let own: [String] = backend == .codex ? ToolDiscovery.codexServers().map(\.name)
+            : ToolDiscovery.claudeServers(projectFolder: session.record.boundFolder).map(\.name)
+        let added = ToolScopes.effective(for: session).servers(for: backend).map(\.name)
+        return (own + added).contains { same($0, name) }
+    }
+}
+

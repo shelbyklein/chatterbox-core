@@ -15,6 +15,16 @@ enum Tools {
     }
 
     /// Human-readable status line for a tool call.
+    /// A Claude Code tool's name as a tools-used key: "mcp__indesign__set_text" is
+    /// "mcp:indesign/set_text" (claude.ai connectors keep their "claude_ai_" server name).
+    static func key(claudeName name: String) -> String? {
+        guard !name.isEmpty else { return nil }
+        guard name.hasPrefix("mcp__") else { return name }
+        let rest = name.dropFirst("mcp__".count)
+        guard let split = rest.range(of: "__") else { return "mcp:" + rest }
+        return "mcp:" + rest[..<split.lowerBound] + "/" + rest[split.upperBound...]
+    }
+
     static func label(name: String, input: JSON?) -> String {
         if name.hasPrefix("mcp__chatterbox__") { return dotLabel(String(name.dropFirst("mcp__chatterbox__".count)), input: input) }
         let file = input?["file_path"]?.string ?? input?["notebook_path"]?.string ?? input?["path"]?.string

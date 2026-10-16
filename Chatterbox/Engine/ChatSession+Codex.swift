@@ -173,6 +173,7 @@ extension ChatSession {
                 record.sentUserInstructions = user
             }
             if let studioUpdate = takeStudioInstructionsUpdate() { input.append(Self.textInput(studioUpdate)) }
+            if let brief = takeBriefUpdate() { input.append(Self.textInput(brief)) }
             if let secrets = takeSecretsUpdate() { input.append(Self.textInput(secrets)) }
             if let computer = takeComputerUpdate() { input.append(Self.textInput(computer)) }
             if let route = takeCodexRouteUpdate() { input.append(Self.textInput(route)) }
@@ -225,7 +226,8 @@ extension ChatSession {
                 // Fall back to a new thread caught up on the conversation.
                 let transcript = Self.transcript(record.items[...])
                 if !transcript.isEmpty, record.pendingHandoff == nil {
-                    record.pendingHandoff = Prompts.handoff(from: "", transcript: transcript, isWholeConversation: true)
+                    record.pendingHandoff = Prompts.handoff(from: "", transcript: transcript, isWholeConversation: true,
+                                                            toolsUsed: Self.toolsUsed(record.items[...]))
                 }
             }
         }
@@ -257,6 +259,7 @@ extension ChatSession {
         record.sentPersonality = record.personality
         record.sentUserInstructions = Prompts.userInstructions
         record.sentStudioInstructions = studio?.noteKey ?? ""
+        record.sentBrief = record.brief ?? ""
         record.instructionsVersion = Prompts.instructionsVersion
         codexRegisterHandler(id)
         server.markLoaded(id)
@@ -272,7 +275,7 @@ extension ChatSession {
             "approvalPolicy": approvalPolicy(settings),
             "sandbox": .string(["readOnly": "read-only", "fullAccess": "danger-full-access"][settings.modeID] ?? "workspace-write"),
             "developerInstructions": .string(Prompts.fullInstructions(record.personality, backend: .codex, projectFolder: record.boundFolder,
-                                                                         studio: studio)),
+                                                                         studio: studio, brief: record.brief)),
         ]
         if let model = settings.model { params["model"] = .string(model) }
         if isDot {
@@ -518,7 +521,9 @@ extension ChatSession {
             if codexItems[itemID] == nil { codexItems[itemID] = appendItem(DisplayItem(kind: .thought)) }
         default:
             if let label = Self.label(for: item) {
-                codexItems[itemID] = appendItem(DisplayItem(kind: .tool, text: label))
+                var row = DisplayItem(kind: .tool, text: label)
+                row.tool = Self.toolKey(for: item)
+                codexItems[itemID] = appendItem(row)
             }
         }
     }
@@ -786,6 +791,19 @@ extension ChatSession {
             text.removeLast()
         }
         return text.count > 80 ? String(text.prefix(79)) + "\u{2026}" : text
+    }
+
+    /// Which tool a Codex item is, for the tools-used line (see DisplayItem.tool).
+    static func toolKey(for item: JSON) -> String? {
+        switch item["type"]?.string {
+        case "commandExecution": "shell"
+        case "fileChange": "file edits"
+        case "mcpToolCall": "mcp:\(item["server"]?.string ?? "?")/\(item["tool"]?.string ?? "?")"
+        case "dynamicToolCall": item["tool"]?.string
+        case "webSearch": "web search"
+        case "imageGeneration": "image generation"
+        default: nil
+        }
     }
 
     private static func label(for item: JSON) -> String? {

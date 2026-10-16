@@ -179,6 +179,22 @@ final class ChatSession: Identifiable {
 
     /// The Studio's instructions if they changed since the agent last saw them, and marks
     /// them seen. Moving into or out of a Studio counts as a change.
+    /// The Brief, when the agent answering doesn't have this version: once, with the next message.
+    func takeBriefUpdate() -> String? {
+        let current = record.brief?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard current != (record.sentBrief ?? "").trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
+        record.sentBrief = current
+        return Prompts.briefUpdate(current)
+    }
+
+    /// Sets or clears the Brief. The agent gets it with the next message.
+    func setBrief(_ text: String) {
+        if let remoteCommand { remoteCommand("setBrief", ["brief": .string(text)]); return }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        record.brief = trimmed.isEmpty ? nil : trimmed
+        onChange?(self)
+    }
+
     func takeStudioInstructionsUpdate() -> String? {
         let current = studio?.noteKey ?? ""
         guard current != (record.sentStudioInstructions ?? "") else { return nil }
@@ -500,8 +516,13 @@ final class ChatSession: Identifiable {
             let start = seen.flatMap { id in record.items.firstIndex { $0.id == id } }.map { $0 + 1 } ?? 0
             let transcript = Self.transcript(record.items[start...])
             record.pendingHandoff = transcript.isEmpty ? nil
-                : Prompts.handoff(from: leaving.label, transcript: transcript, isWholeConversation: seen == nil)
+                : Prompts.handoff(from: leaving.label, transcript: transcript, isWholeConversation: seen == nil,
+                                  toolsUsed: Self.toolsUsed(record.items[start...]))
+            noteMissingServers(used: record.items[start...], by: leaving, now: backend)
         }
+        // The incoming agent may be picking up a thread from before the Brief changed: it gets
+        // the Brief with the next message (a fresh thread has it in its instructions instead).
+        if !(record.brief ?? "").isEmpty { record.sentBrief = nil }
         if backend == .codex, record.codex == nil {
             let defaults = AppPreferences.defaults
             record.codex = CodexSettings(
@@ -559,6 +580,34 @@ final class ChatSession: Identifiable {
     }
 
     /// A plain-text record of the conversation for handing it to another agent.
+    /// The tools these rows used, by MCP server then the agent's own, with counts:
+    /// "indesign MCP (set_text ×32, place_image ×14), Bash ×3". nil when none were recorded.
+    static func toolsUsed(_ items: ArraySlice<DisplayItem>) -> String? {
+        var servers: [String: [String: Int]] = [:], serverOrder: [String] = []
+        var plain: [String: Int] = [:], plainOrder: [String] = []
+        for item in items where item.kind == .tool {
+            guard let tool = item.tool else { continue }
+            if tool.hasPrefix("mcp:") {
+                let parts = tool.dropFirst(4).split(separator: "/", maxSplits: 1).map(String.init)
+                let server = parts.first ?? "?", name = parts.count > 1 ? parts[1] : ""
+                if servers[server] == nil { serverOrder.append(server) }
+                servers[server, default: [:]][name, default: 0] += 1
+            } else {
+                if plain[tool] == nil { plainOrder.append(tool) }
+                plain[tool, default: 0] += 1
+            }
+        }
+        func counted(_ name: String, _ n: Int) -> String { n > 1 ? "\(name) \u{00D7}\(n)" : name }
+        let mcp = serverOrder.map { server in
+            let tools = servers[server]!.sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }
+            let shown = tools.prefix(6).map { counted($0.key, $0.value) } + (tools.count > 6 ? ["\(tools.count - 6) more"] : [])
+            return "\(server) MCP (\(shown.joined(separator: ", ")))"
+        }
+        let own = plainOrder.sorted { plain[$0]! > plain[$1]! }.prefix(8).map { counted($0, plain[$0]!) }
+        let all = mcp + own
+        return all.isEmpty ? nil : all.joined(separator: ", ")
+    }
+
     static func transcript(_ items: ArraySlice<DisplayItem>, limit: Int = 150_000) -> String {
         var parts: [String] = []
         for item in items {

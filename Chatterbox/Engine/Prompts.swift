@@ -41,9 +41,10 @@ enum Prompts {
 
     /// Everything Chatterbox adds for an agent: its own block, then yours, then the project's
     /// file meant for the other agent.
-    static func fullInstructions(_ p: Personality, backend: Backend, projectFolder: String?, studio: Studio? = nil) -> String {
+    static func fullInstructions(_ p: Personality, backend: Backend, projectFolder: String?, studio: Studio? = nil, brief: String? = nil) -> String {
         var parts = [agentInstructions(p)]
         if let studio { parts.append(studioNote(studio)) }
+        if let brief = brief?.trimmingCharacters(in: .whitespacesAndNewlines), !brief.isEmpty { parts.append(briefBlock(brief)) }
         let user = userInstructions
         if !user.isEmpty { parts.append("# The user's instructions for every session\n\n" + user) }
         let project = crossAgentProjectFile(for: backend, folder: projectFolder)
@@ -73,6 +74,18 @@ enum Prompts {
 
     /// Tells an agent mid-chat that its Studio's instructions changed, or that it joined or
     /// left a Studio.
+    /// The session's Brief, as both agents get it.
+    static func briefBlock(_ brief: String) -> String {
+        "<session_brief>\nThe user's brief for this session: the assignment, the tools to use, the key files. Follow it whichever agent you are; it outranks habits from other sessions.\n\n\(brief)\n</session_brief>"
+    }
+
+    /// A Brief set, changed or cleared mid-session; it replaces any earlier one.
+    static func briefUpdate(_ brief: String) -> String {
+        brief.isEmpty
+            ? "<app_note>\nThis session has no brief now. Ignore any earlier session brief.\n</app_note>"
+            : "<app_note>\nThe session's brief is new or updated. It replaces any earlier version:\n\n\(briefBlock(brief))\n</app_note>"
+    }
+
     static func studioInstructionsUpdate(studio: Studio?) -> String {
         guard let studio else {
             return "<app_note>\nThis session is no longer in a Studio. Ignore any earlier Studio instructions.\n</app_note>"
@@ -91,7 +104,7 @@ enum Prompts {
         \(personalitySpec(p))
 
         # About this app
-        You're running inside Chatterbox, a Mac chat app, not a terminal. The user reads your messages in a chat window that renders Markdown, and they can't see command or tool output unless you summarize it. Text you write before a tool call shows as a small inline note; your last message of the turn is the main reply. Blocks tagged <personality_spec>, <conversation_handoff>, <sidequest>, <sidequest_result>, or <app_note> come from the app, not from something the user typed. A newer <personality_spec> block replaces this one.
+        You're running inside Chatterbox, a Mac chat app, not a terminal. The user reads your messages in a chat window that renders Markdown, and they can't see command or tool output unless you summarize it. Text you write before a tool call shows as a small inline note; your last message of the turn is the main reply. Blocks tagged <personality_spec>, <conversation_handoff>, <session_brief>, <sidequest>, <sidequest_result>, or <app_note> come from the app, not from something the user typed. A newer <personality_spec> block replaces this one. A <session_brief> is the user's brief for this session (the assignment, the tools to use, the key files); a newer one replaces it, and it holds whichever agent answers. A handoff's "Tools used" line names the tools the work so far was built on: keep to them where you have them.
 
         The chat shows visuals inline: HTML and SVG code blocks render as live previews, and images you make with an image-generation tool appear by themselves. A file on disk shows only when your final reply names its path: images (PNG, JPG, screenshots, renders, proofs), GIFs, videos, and Lottie files you name appear under the reply, and the user can click .html, .svg, and .pdf paths to open them beside the chat. Reading or viewing a file yourself doesn't show it to the user, so when they ask to see something, name each file's full path in your reply, like ![Full page](/path/to/full-page.png), or name the folder that holds them. Don't open files in a browser or another app (no `open`, `xdg-open`, or launching a browser) unless the user asks for that.
 
@@ -106,7 +119,7 @@ enum Prompts {
     }
 
     /// Bump when `agentInstructions` gains something chats already in progress should hear.
-    static let instructionsVersion = 9
+    static let instructionsVersion = 10
 
     /// What changed since earlier versions, sent once to chats whose session started before.
     static let instructionsUpdate = """
@@ -120,6 +133,8 @@ enum Prompts {
     Skills are shared between Claude and Codex, so one may name the other agent's tools. Use your own equivalent: the question tool (AskUserQuestion, or request_user_input), sub-agents (the Agent tool, or spawn_agent), the todo list (TodoWrite, or update_plan), file edits (Edit/Write, or apply_patch). If you have no equivalent, do the step another way and say so.
 
     Blocks tagged <sidequest> and <sidequest_result> also come from the app: a task handed between Claude and Codex, and its answer coming back.
+
+    A <session_brief> block is the user's brief for this session: the assignment, the tools to use, the key files. A newer one replaces it, and it holds whichever agent answers. When the user switches agents, the handoff ends with a "Tools used" line naming the tools the work was built on (an MCP server, say): keep to them where you have them, rather than starting down another path.
 
     Sidequests: to hand a task to the other agent (Claude and Codex each have their strengths; Codex usually makes the images, and Claude usually double-checks work), run `sidequest "<the task>"` from your working folder. It opens beside this session as a Sidechat on the other agent, which reads this whole conversation first, so the task can be short. When it finishes, its answer arrives here as a new message and you carry on from it. Start one when the user asks for it, or when the other agent is clearly the better fit; tell the user you did, and finish your reply instead of waiting for it.
     </app_note>
@@ -191,14 +206,16 @@ enum Prompts {
     }
 
     /// Hands the conversation to a different agent, or to a fresh session of the same one.
-    static func handoff(from other: String, transcript: String, isWholeConversation: Bool) -> String {
-        """
+    static func handoff(from other: String, transcript: String, isWholeConversation: Bool, toolsUsed: String? = nil) -> String {
+        // The tools the work was built on, so the incoming agent keeps to the same path.
+        let tools = toolsUsed.map { "\n\nTools used: \($0). Keep using these for this work where you have them." } ?? ""
+        return """
         <conversation_handoff>
         \(isWholeConversation
-            ? "This chat started before your session did. Here is the conversation so far"
-            : "The user switched agents in this chat. Here is what happened while \(other) was answering"), so you can continue without asking them to repeat anything:
+            ? "This session started before your thread did. Here is the conversation so far"
+            : "The user switched agents in this session. Here is what happened while \(other) was answering"), so you can continue without asking them to repeat anything:
 
-        \(transcript)
+        \(transcript)\(tools)
         </conversation_handoff>
         """
     }
