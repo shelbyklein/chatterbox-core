@@ -90,17 +90,16 @@ struct ChatView: View {
                     if !compact && tileContext == nil && !session.isDot {
                         GeometryReader { geometry in
                             VStack(alignment: .trailing, spacing: 8) {
-                                HStack(alignment: .top, spacing: 8) {
+                                // A column of buttons down the right edge.
+                                VStack(alignment: .trailing, spacing: 8) {
                                     BriefButton(session: session)
+                                    NotesButton(scope: PinnedNotesStore.scope(for: session.record), project: session.record.projectFolder != nil)
+                                        .id(PinnedNotesStore.scope(for: session.record))
                                     SessionTools(bridge: windowToolbar ?? ownToolbar)
                                     SessionImages(bridge: windowToolbar ?? ownToolbar)
                                     ChatQuickActions(session: session)
                                     if !session.isSidequest { SidequestButton(session: session) }
                                 }
-                                // Always open, under the buttons.
-                                ChatNotes(scope: PinnedNotesStore.scope(for: session.record), project: session.record.projectFolder != nil,
-                                          panelWidth: min(280, max(220, (geometry.size.width - appearance.style.contentWidth) / 2 - 32)))
-                                    .id(PinnedNotesStore.scope(for: session.record))
                                 ChatPins(chat: session.record.id, agentName: session.record.backend == .codex ? "Codex" : "Claude",
                                          panelWidth: min(280, max(220, (geometry.size.width - appearance.style.contentWidth) / 2 - 32))) { pinJump = $0 }
                             }

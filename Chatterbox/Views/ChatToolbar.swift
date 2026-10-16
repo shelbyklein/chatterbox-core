@@ -110,43 +110,32 @@ struct SessionTools: View {
 
     var body: some View {
         Button { open.toggle() } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "slider.horizontal.3")
-                Image(systemName: "chevron.down").font(.caption2)
-            }.padding(.horizontal, 8).frame(height: 32).contentShape(Rectangle())
+            Image(systemName: "slider.horizontal.3").frame(width: 36, height: 32).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .background(scheme == .dark ? Color(white: 0.10) : Color(white: 0.97), in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12)))
         .help("Session tools: tone, folder and repository")
         .accessibilityLabel("Session tools")
-        .popover(isPresented: $open, arrowEdge: .top) {
+        .popover(isPresented: $open, arrowEdge: .leading) {
             SessionToolsPanel(bridge: bridge).padding(16).frame(minWidth: 260, maxWidth: 420)
         }
     }
 }
 
 /// The session's Brief: the assignment, the tools to use, the key files, which both agents
-/// always get. The pill shows its first line; click to write, change or clear it.
+/// always get. Filled once set (its text in the tooltip); click to write, change or clear it.
 struct BriefButton: View {
     let session: ChatSession
     @State private var open = false
     @State private var text = ""
     @Environment(\.colorScheme) private var scheme
     private var brief: String { session.record.brief ?? "" }
-    private var preview: String {
-        let first = brief.split(separator: "\n").first.map(String.init) ?? ""
-        return first.count > 28 ? String(first.prefix(27)) + "\u{2026}" : first
-    }
 
     var body: some View {
         Button { text = brief; open.toggle() } label: {
-            HStack(spacing: 5) {
-                Image(systemName: brief.isEmpty ? "doc.text" : "doc.text.fill")
-                Text(brief.isEmpty ? "Brief" : preview).lineLimit(1)
-            }
-            .font(.callout)
-            .padding(.horizontal, 10).frame(height: 32).contentShape(Rectangle())
+            Image(systemName: brief.isEmpty ? "doc.text" : "doc.text.fill")
+                .frame(width: 36, height: 32).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .foregroundStyle(brief.isEmpty ? Color.secondary : Color.primary)
@@ -154,7 +143,7 @@ struct BriefButton: View {
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12)))
         .help(brief.isEmpty ? "Brief: what this session is for, the tools to use, the key files. Both agents get it." : "Brief: \(brief)")
         .accessibilityLabel(brief.isEmpty ? "Brief, not set" : "Brief: \(brief)")
-        .popover(isPresented: $open, arrowEdge: .top) {
+        .popover(isPresented: $open, arrowEdge: .leading) {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Session brief").font(.headline)
                 Text("The assignment, the tools to use (an MCP server, say) and the key files. Claude and Codex both get it, and keep it across an agent switch.")
@@ -179,6 +168,38 @@ struct BriefButton: View {
     }
 }
 
+/// The session's (or project's) notes, behind an icon with their count.
+struct NotesButton: View {
+    let scope: String
+    let project: Bool
+    @State private var open = false
+    @State private var store = PinnedNotesStore.shared
+    @Environment(\.colorScheme) private var scheme
+    private var count: Int { store.notes[scope]?.count ?? 0 }
+
+    var body: some View {
+        Button { open.toggle() } label: {
+            Image(systemName: "note.text")
+                .frame(width: 36, height: 32).contentShape(Rectangle())
+                .overlay(alignment: .topTrailing) {
+                    if count > 0 {
+                        Text("\(count)").font(.system(size: 9, weight: .bold).monospacedDigit()).foregroundStyle(.white)
+                            .padding(.horizontal, 4).frame(minWidth: 15, minHeight: 15)
+                            .background(Capsule().fill(Color.accentColor)).offset(x: 4, y: -4)
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+        .background(scheme == .dark ? Color(white: 0.10) : Color(white: 0.97), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12)))
+        .help(project ? "Project notes" : "Session notes")
+        .accessibilityLabel((project ? "Project notes" : "Session notes") + (count > 0 ? ", \(count)" : ""))
+        .popover(isPresented: $open, arrowEdge: .leading) {
+            ChatNotes(scope: scope, project: project, panelWidth: 300)
+        }
+    }
+}
+
 struct SessionImages: View {
     let bridge: ChatToolbarBridge
     @Environment(\.colorScheme) private var scheme
@@ -186,7 +207,7 @@ struct SessionImages: View {
     var body: some View {
         Button { bridge.showImages() } label: {
             Image(systemName: "photo.on.rectangle.angled")
-                .padding(.horizontal, 10).frame(height: 32).contentShape(Rectangle())
+                .frame(width: 36, height: 32).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .background(scheme == .dark ? Color(white: 0.10) : Color(white: 0.97), in: RoundedRectangle(cornerRadius: 10))

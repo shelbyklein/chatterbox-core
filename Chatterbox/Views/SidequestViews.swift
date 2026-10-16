@@ -13,7 +13,7 @@ struct SidequestButton: View {
     var body: some View {
         Button { open.toggle() } label: {
             Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
-                .padding(.horizontal, 10).frame(height: 32).contentShape(Rectangle())
+                .frame(width: 36, height: 32).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .background(scheme == .dark ? Color(white: 0.10) : Color(white: 0.97), in: RoundedRectangle(cornerRadius: 10))
