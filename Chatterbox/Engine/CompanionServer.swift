@@ -516,6 +516,11 @@ final class CompanionServer {
             guard let body = try? Companion.decoder.decode(Companion.RenameRequest.self, from: request.body) else { return .error(400, "Bad name.") }
             if session.isDot { model.renameDot(body.title) } else { session.setTitle(body.title) }
             return .json(CompanionMapper.detail(session, model: model))
+        case ("POST", 4) where parts[1] == "chats" && parts[3] == "brief":
+            guard let session = session(parts[2]), !session.isDot else { return .error(404, "That session is gone.") }
+            guard let body = try? Companion.decoder.decode(Companion.BriefRequest.self, from: request.body) else { return .error(400, "Bad brief.") }
+            session.setBrief(body.brief)
+            return .json(CompanionMapper.detail(session, model: model))
         case ("GET", 4) where parts[1] == "chats" && parts[3] == "organization":
             guard !local, currentProduct == "chatterbox" else { return .error(403, "Only the paired Chatterbox app can promote sessions here.") }
             guard let session = session(parts[2]) else { return .error(404, "That session is gone.") }
@@ -850,7 +855,7 @@ enum CompanionMapper {
                      tags: session.tags.isEmpty ? nil : session.tags,
                      turnsToday: activity.day, turnsThisWeek: activity.week, turnsPerDay: activity.perDay,
                      thumbnail: thumbnail(session), turnStartedAt: session.isRunning ? session.record.turnStartedAt : nil,
-                     canPromote: ChatPromotion.eligible(session))
+                     canPromote: ChatPromotion.eligible(session), brief: session.record.brief)
     }
 
     private static func thumbnail(_ session: ChatSession) -> Companion.File? {

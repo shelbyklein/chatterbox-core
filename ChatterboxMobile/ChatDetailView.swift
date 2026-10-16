@@ -112,6 +112,9 @@ struct ChatDetailView: View {
     @State private var showingSettings = false
     @State private var renaming = false
     @State private var newTitle = ""
+    /// The Brief editor, and its text while editing.
+    @State private var editingBrief = false
+    @State private var briefText = ""
     @State private var askingSidequest = false
     @State private var sidequestTask = ""
 
@@ -275,6 +278,11 @@ struct ChatDetailView: View {
         }
         .sheet(item: $promoting) { target in
             ChatPromotionSheet(target: target) { result in history.apply(result) }
+        }
+        .sheet(isPresented: $editingBrief) {
+            MobileBriefEditor(text: $briefText, isSet: !(summary.brief ?? "").isEmpty) { brief in
+                perform { try await store.setBrief(chat.id, to: brief) }
+            }
         }
         #if DEBUG
         // Simulator tests: tap Golem in, then send him back.
@@ -667,6 +675,11 @@ struct ChatDetailView: View {
             Button { showingSettings = true } label: { Label("Session Settings", systemImage: "slider.horizontal.3") }
                 .disabled(detail?.options == nil)
             Button { newTitle = summary.title; renaming = true } label: { Label("Rename", systemImage: "pencil") }
+            if !isConversation {
+                Button { briefText = summary.brief ?? ""; editingBrief = true } label: {
+                    Label((summary.brief ?? "").isEmpty ? "Brief…" : "Edit Brief…", systemImage: "doc.text")
+                }
+            }
             if !isConversation, !summary.isSidequest, detail?.isArchived != true {
                 Button { sidequestTask = ""; askingSidequest = true } label: {
                     Label("Sidequest to \(summary.otherAgentLabel)…", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
@@ -1473,3 +1486,33 @@ private struct GolemMatch: ViewModifier {
         if enabled { content.matchedGeometryEffect(id: "golem", in: namespace, properties: .frame) } else { content }
     }
 }
+
+/// The session's Brief, as on the Mac: the assignment, the tools to use, the key files.
+private struct MobileBriefEditor: View {
+    @Binding var text: String
+    let isSet: Bool
+    let save: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextEditor(text: $text).frame(minHeight: 180).accessibilityIdentifier("brief-text")
+                } footer: {
+                    Text("Claude and Codex both get it, and keep it across an agent switch. It reaches the agent with your next message.")
+                }
+                if isSet {
+                    Section { Button("Clear Brief", role: .destructive) { save(""); dismiss() } }
+                }
+            }
+            .navigationTitle("Session Brief").navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) { Button("Save") { save(text); dismiss() } }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+}
+

@@ -159,6 +159,8 @@ enum Companion {
         var turnStartedAt: Date? = nil
         /// A regular chat that can become a Project or join a Studio. Older Macs omit it.
         var canPromote: Bool? = nil
+        /// The session's Brief, which both agents get (older Macs send none).
+        var brief: String? = nil
     }
 
     /// The assistant's animations and head image, to play on the phone too.
@@ -281,6 +283,11 @@ enum Companion {
 
     struct RenameRequest: Codable {
         var title: String
+    }
+
+    /// Sets the session's Brief; empty clears it.
+    struct BriefRequest: Codable {
+        var brief: String
     }
 
     struct Item: Codable, Identifiable, Hashable {

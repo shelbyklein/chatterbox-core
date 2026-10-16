@@ -235,6 +235,10 @@ final class MobileStore {
         try await call("/v1/chats/\(chat.uuidString)/rename", method: "POST", body: try JSONEncoder().encode(Companion.RenameRequest(title: title)))
     }
 
+    func setBrief(_ chat: UUID, to brief: String) async throws -> Companion.ChatDetail {
+        try await call("/v1/chats/\(chat.uuidString)/brief", method: "POST", body: try JSONEncoder().encode(Companion.BriefRequest(brief: brief)))
+    }
+
     func promotionOptions(_ chat: UUID) async throws -> Companion.PromotionOptions {
         try await call("/v1/chats/\(chat.uuidString)/organization")
     }
