@@ -3,6 +3,8 @@ import SwiftUI
 /// The tone button in the toolbar: the current tone's name, with the three to pick from.
 struct ToneMenu: View {
     let session: ChatSession
+    /// Just the tone's icon, for the session's button column.
+    var iconOnly = false
 
     var body: some View {
         let current = session.record.personality
@@ -15,8 +17,9 @@ struct ToneMenu: View {
             .pickerStyle(.inline)
             .labelsHidden()
         } label: {
-            ToolbarLabel(current.label, systemImage: Self.icon(current))
+            if iconOnly { Image(systemName: Self.icon(current)) } else { ToolbarLabel(current.label, systemImage: Self.icon(current)) }
         }
+        .modifier(SideIcon.MenuStyle(enabled: iconOnly))
         .help("Tone: \(current.label). Changes apply from your next message.")
     }
 

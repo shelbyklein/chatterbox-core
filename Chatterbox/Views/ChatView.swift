@@ -95,7 +95,10 @@ struct ChatView: View {
                                     BriefButton(session: session)
                                     NotesButton(scope: PinnedNotesStore.scope(for: session.record), project: session.record.projectFolder != nil)
                                         .id(PinnedNotesStore.scope(for: session.record))
-                                    SessionTools(bridge: windowToolbar ?? ownToolbar)
+                                    ToneMenu(session: session, iconOnly: true)
+                                    PlaceSlot(bridge: windowToolbar ?? ownToolbar, iconOnly: true)
+                                    RepoButton(bridge: windowToolbar ?? ownToolbar)
+                                    ToolsButton(session: session)
                                     SessionImages(bridge: windowToolbar ?? ownToolbar)
                                     ChatQuickActions(session: session)
                                     if !session.isSidequest { SidequestButton(session: session) }

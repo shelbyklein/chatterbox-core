@@ -103,26 +103,6 @@ struct ChatToolbarContent: ToolbarContent {
 }
 
 /// Controls for the open session live inside its chat, beside Notes and prompt presets.
-struct SessionTools: View {
-    let bridge: ChatToolbarBridge
-    @State private var open = false
-    @Environment(\.colorScheme) private var scheme
-
-    var body: some View {
-        Button { open.toggle() } label: {
-            Image(systemName: "slider.horizontal.3").frame(width: 36, height: 32).contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .background(scheme == .dark ? Color(white: 0.10) : Color(white: 0.97), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12)))
-        .help("Session tools: tone, folder and repository")
-        .accessibilityLabel("Session tools")
-        .popover(isPresented: $open, arrowEdge: .leading) {
-            SessionToolsPanel(bridge: bridge).padding(16).frame(minWidth: 260, maxWidth: 420)
-        }
-    }
-}
-
 /// The session's Brief: the assignment, the tools to use, the key files, which both agents
 /// always get. Filled once set (its text in the tooltip); click to write, change or clear it.
 struct BriefButton: View {
@@ -200,6 +180,62 @@ struct NotesButton: View {
     }
 }
 
+/// The session's button column: every control the same 36×32 tile.
+enum SideIcon {
+    struct Tile: ViewModifier {
+        @Environment(\.colorScheme) private var scheme
+        func body(content: Content) -> some View {
+            content
+                .frame(width: 36, height: 32).contentShape(Rectangle())
+                .background(scheme == .dark ? Color(white: 0.10) : Color(white: 0.97), in: RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12)))
+        }
+    }
+    /// A menu as a tile, without its arrow.
+    struct MenuStyle: ViewModifier {
+        let enabled: Bool
+        func body(content: Content) -> some View {
+            if enabled {
+                content.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().modifier(Tile())
+            } else {
+                content
+            }
+        }
+    }
+}
+
+/// The repository and its issues, behind a branch icon (sessions in a GitHub repo).
+struct RepoButton: View {
+    let bridge: ChatToolbarBridge
+    @State private var open = false
+
+    var body: some View {
+        if let session = bridge.session, bridge.issuesPanel != nil,
+           let status = GitStatusStore.shared.status(for: session.record.projectFolder),
+           let repo = status.remote(preferring: session.record.gitRemote)?.repo {
+            Button { open.toggle() } label: { Image(systemName: "arrow.triangle.branch") }
+                .buttonStyle(.plain).modifier(SideIcon.Tile())
+                .help("\(repo)\(status.branch.map { " · " + $0 } ?? ""): branch, remote and issues")
+                .accessibilityLabel("Repository")
+                .popover(isPresented: $open, arrowEdge: .leading) { RepoSlot(bridge: bridge).padding(14) }
+        }
+    }
+}
+
+/// The tools (MCP servers, connectors, skills) this session gets, behind a puzzle piece.
+struct ToolsButton: View {
+    let session: ChatSession
+    @State private var open = false
+
+    var body: some View {
+        Button { open.toggle() } label: { Image(systemName: "puzzlepiece.extension") }
+            .buttonStyle(.plain).modifier(SideIcon.Tile())
+            .help("Tools: MCP servers, connectors and skills for this session")
+            .accessibilityLabel("Tools")
+            .popover(isPresented: $open, arrowEdge: .leading) { SessionToolsSummary(session: session).padding(16).frame(width: 320) }
+    }
+}
+
 struct SessionImages: View {
     let bridge: ChatToolbarBridge
     @Environment(\.colorScheme) private var scheme
@@ -217,22 +253,6 @@ struct SessionImages: View {
     }
 }
 
-struct SessionToolsPanel: View {
-    let bridge: ChatToolbarBridge
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Session tools").font(.headline)
-            ToneSlot(bridge: bridge)
-            PlaceSlot(bridge: bridge)
-            RepoSlot(bridge: bridge)
-            if let session = bridge.session, !session.isDot {
-                Divider()
-                SessionToolsSummary(session: session)
-            }
-        }
-    }
-}
-
 struct ToneSlot: View {
     let bridge: ChatToolbarBridge
     var body: some View {
@@ -243,6 +263,8 @@ struct ToneSlot: View {
 /// The project folder, or the Studio the chat is in.
 struct PlaceSlot: View {
     let bridge: ChatToolbarBridge
+    /// Just an icon, for the session's button column.
+    var iconOnly = false
     @Environment(AppModel.self) private var model
 
     var body: some View {
@@ -264,9 +286,13 @@ struct PlaceSlot: View {
                 Button("Unbind from Folder") { session.unbindProject() }
             }
         } label: {
-            ToolbarLabel(session.record.projectFolder == nil ? "No Project" : session.projectName,
-                         systemImage: session.record.projectFolder == nil ? "folder.badge.plus" : "folder.fill")
+            if iconOnly { Image(systemName: session.record.projectFolder == nil ? "folder.badge.plus" : "folder.fill") }
+            else {
+                ToolbarLabel(session.record.projectFolder == nil ? "No Project" : session.projectName,
+                             systemImage: session.record.projectFolder == nil ? "folder.badge.plus" : "folder.fill")
+            }
         }
+        .modifier(SideIcon.MenuStyle(enabled: iconOnly))
         .help(session.record.projectFolder.map { "This session is bound to \($0). Claude and Codex work in this folder." }
               ?? "Bind this chat to a project folder so Claude or Codex can work in it. Each folder gets one chat.")
     }
@@ -287,8 +313,9 @@ struct PlaceSlot: View {
             Button("Remove from Studio") { model.move(session, to: nil) }
                 .disabled(session.isRunning)
         } label: {
-            ToolbarLabel(studio.name, systemImage: "paintpalette")
+            if iconOnly { Image(systemName: "paintpalette") } else { ToolbarLabel(studio.name, systemImage: "paintpalette") }
         }
+        .modifier(SideIcon.MenuStyle(enabled: iconOnly))
         .help("This session is in the \(studio.name) Studio. Its sessions share \(studio.folder).")
     }
 }
