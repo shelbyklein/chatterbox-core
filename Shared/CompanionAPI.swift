@@ -285,6 +285,29 @@ enum Companion {
         var title: String
     }
 
+    /// The accounts' usage, as the Mac sees it: each agent's limit windows (from its latest
+    /// report) and, with EasyCLIProxy, each proxy account's remaining quota.
+    struct Usage: Codable {
+        struct Window: Codable, Hashable {
+            var label: String
+            /// 0 to 1: used for a limit window, remaining for a proxy quota.
+            var fraction: Double?
+            var resetsAt: Date?
+        }
+        struct Account: Codable, Hashable {
+            var provider: String
+            var name: String
+            var status: String
+            var windows: [Window]
+            var problem: String?
+        }
+        var claude: [Window]
+        var codex: [Window]
+        var proxyAccounts: [Account]?
+        var proxyProblem: String?
+        var proxyChecked: Date?
+    }
+
     /// Sets the session's Brief; empty clears it.
     struct BriefRequest: Codable {
         var brief: String

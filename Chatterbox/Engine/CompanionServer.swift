@@ -516,6 +516,8 @@ final class CompanionServer {
             guard let body = try? Companion.decoder.decode(Companion.RenameRequest.self, from: request.body) else { return .error(400, "Bad name.") }
             if session.isDot { model.renameDot(body.title) } else { session.setTitle(body.title) }
             return .json(CompanionMapper.detail(session, model: model))
+        case ("GET", 2) where parts[1] == "usage":
+            return usageResponse(refresh: request.query["refresh"] == "1")
         case ("POST", 4) where parts[1] == "chats" && parts[3] == "brief":
             guard let session = session(parts[2]), !session.isDot else { return .error(404, "That session is gone.") }
             guard let body = try? Companion.decoder.decode(Companion.BriefRequest.self, from: request.body) else { return .error(400, "Bad brief.") }
@@ -685,6 +687,26 @@ final class CompanionServer {
         }
         referencedFiles[session.id] = (key, files)
         return files[id]
+    }
+
+    /// The usage the phone shows: the limits the agents last reported here, and EasyCLIProxy's
+    /// account quotas when it's set up (refreshed in the background when asked or stale).
+    private func usageResponse(refresh: Bool) -> HTTPResponse {
+        func windows(_ list: [UsageWindow]) -> [Companion.Usage.Window] {
+            list.map { .init(label: $0.label, fraction: $0.utilization, resetsAt: $0.resetsAt) }
+        }
+        let proxy = ProxyQuotaStore.shared
+        let configured = (try? ProxyQuotaStore.connection()) != nil
+        if configured, refresh || proxy.lastRefresh.map({ Date().timeIntervalSince($0) > 300 }) ?? true, !proxy.refreshing {
+            Task { await proxy.refresh() }
+        }
+        let accounts: [Companion.Usage.Account]? = configured ? proxy.accounts.map { account in
+            .init(provider: account.provider, name: account.name, status: account.status,
+                  windows: account.windows.map { .init(label: $0.title, fraction: $0.remaining, resetsAt: $0.reset) },
+                  problem: account.problem)
+        } : nil
+        return .json(Companion.Usage(claude: windows(UsageLimits.shared.claude), codex: windows(UsageLimits.shared.codex),
+                                     proxyAccounts: accounts, proxyProblem: configured ? proxy.problem : nil, proxyChecked: proxy.lastRefresh))
     }
 
     private func session(_ id: String) -> ChatSession? {

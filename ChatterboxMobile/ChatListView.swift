@@ -44,6 +44,7 @@ struct ChatListView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var savedPDFs = false
+    @State private var showingUsage = false
     @State private var appearance = false
     @State private var notificationSettings = false
     @State private var showingActivity = false
@@ -145,6 +146,7 @@ struct ChatListView: View {
             }
         }
         .sheet(isPresented: $savedPDFs) { SavedPDFsView() }
+        .sheet(isPresented: $showingUsage) { MobileUsageView().environment(store) }
         .sheet(isPresented: $appearance) { MobileAppearanceSettings() }
         .sheet(item: $promoting) { target in
             ChatPromotionSheet(target: target) { result in open(result.summary); history?.apply(result) }
@@ -524,6 +526,7 @@ struct ChatListView: View {
             }
         }
         Button { showingActivity = true } label: { Label("Activity", systemImage: "clock") }
+        Button { showingUsage = true } label: { Label("Usage", systemImage: "chart.bar.xaxis") }
         Button { notificationSettings = true } label: { Label("Notifications", systemImage: "bell") }
         Button { appearance = true } label: { Label("Appearance", systemImage: "paintbrush") }
         Button { savedPDFs = true } label: { Label("Saved PDFs", systemImage: "doc.richtext") }
