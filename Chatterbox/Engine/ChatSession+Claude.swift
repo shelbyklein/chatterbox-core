@@ -621,8 +621,12 @@ extension ChatSession {
 
 extension ChatSession {
     /// EasyCLIProxyAPI for this chat's Claude Code, when it's on (never for the assistant).
+    /// Claude Code turns tool search off for a non-Anthropic base URL, which loads every MCP
+    /// tool schema up front (Studio chats started at ~160k tokens instead of ~33k), so it's
+    /// switched back on; the proxy passes deferred tool loading through.
     var claudeProxyEnvironment: [String: String] {
         guard !isDot, let proxy = EasyCLIProxy.shared.active(for: .claude) else { return [:] }
-        return ["ANTHROPIC_BASE_URL": proxy.base, "ANTHROPIC_AUTH_TOKEN": proxy.key, "ANTHROPIC_API_KEY": ""]
+        return ["ANTHROPIC_BASE_URL": proxy.base, "ANTHROPIC_AUTH_TOKEN": proxy.key, "ANTHROPIC_API_KEY": "",
+                "ENABLE_TOOL_SEARCH": "true"]
     }
 }
