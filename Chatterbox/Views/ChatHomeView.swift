@@ -321,7 +321,6 @@ struct DesktopOverviewControls: View {
                 Image(systemName: "list.bullet").tag(false).accessibilityLabel("List")
                 Image(systemName: "square.grid.2x2").tag(true).accessibilityLabel("Cards")
             }.pickerStyle(.segmented).labelsHidden().frame(width: 86).help("List or cards")
-            Spacer()
         }
     }
 }

@@ -40,6 +40,7 @@ struct ContentView: View {
     @State private var taggingSession: ChatSession?
     @State private var newTag = ""
     @State private var searchText = ""
+    @State private var pinnedContentHeight: CGFloat = 1
     @State private var namingStudio = false
     @State private var studioName = ""
     @State private var studioDestinationID: UUID?
@@ -76,7 +77,7 @@ struct ContentView: View {
         #if DEBUG
         // Render tests: just the sidebar, since the system's glass sidebar can't be captured offscreen.
         if ProcessInfo.processInfo.environment["CHATTERBOX_TEST_SIDEBAR_ONLY"] != nil {
-            sidebarColumn
+            sidebarPane
                 .frame(width: Double(ProcessInfo.processInfo.environment["CHATTERBOX_TEST_SIDEBAR_ONLY"] ?? "") ?? 280)
                 .background(Theme.sidebar(themeBackground) ?? Color(nsColor: .windowBackgroundColor))
         } else {
@@ -93,11 +94,23 @@ struct ContentView: View {
 
     private var sidebarPane: AnyView {
         AnyView(VStack(spacing: 0) {
-            HStack {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("Search", text: $searchText).textFieldStyle(.plain)
+            HStack(spacing: 8) {
+                HStack {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    TextField("Search", text: $searchText).textFieldStyle(.plain)
+                        .accessibilityIdentifier("sidebar-search")
+                }
+                .padding(10)
+                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+                #if DEBUG
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { SidebarDebug.search = $0 }
+                #endif
+                DesktopOverviewControls().fixedSize()
+                    #if DEBUG
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { SidebarDebug.viewToggle = $0 }
+                    #endif
             }
-            .padding(10).background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10)).padding(12)
+            .padding(12)
             sidebarColumn
         }.modifier(ThemedSidebar(background: themeBackground)))
     }
@@ -1159,7 +1172,7 @@ private struct ThemedWindow: ViewModifier {
 
 // MARK: - The sidebar's layout
 
-/// The three resizable parts of the sidebar under Golem and the pins.
+/// The sidebar pages below Activity and the global pinned sessions.
 enum SidebarSection: Int, CaseIterable {
     case projects, studios, chats
 
@@ -1168,10 +1181,8 @@ enum SidebarSection: Int, CaseIterable {
 }
 
 extension ContentView {
-    /// Golem fixed at the top, the pins, then Projects, Studios, and Chats sharing the rest:
-    /// a third each to start, each scrolling on its own, resized by dragging the dividers
-    /// between them. A collapsed Studios or Chats moves to the dock at the bottom, beside
-    /// Archived. Projects always stays expanded.
+    /// Activity and global pins precede the selected page's independently scrolling sessions.
+    /// A collapsed Studio or Chats page moves to the dock beside Archived; Projects stays open.
     /// In a Studio: the Studios down the left, then the open Studio's sessions. Elsewhere,
     /// one column.
     @ViewBuilder var sidebarColumn: some View {
@@ -1188,9 +1199,11 @@ extension ContentView {
 
     private var sidebarSessions: some View {
         VStack(spacing: 0) {
-            DesktopOverviewControls().padding(.horizontal, 12).padding(.vertical, 8)
             // Activity first: what's working and what's new, above the sessions.
             SidebarActivityStrip(showsEmptyState: model.showingChatsSidebar).padding(.horizontal, 12).padding(.bottom, 6)
+                #if DEBUG
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { SidebarDebug.activity = $0 }
+                #endif
             if !isFiltering && model.studioSidebarID == nil {
                 #if GOLEM_APP
                 List { Section { dotRow } }
@@ -1200,7 +1213,14 @@ extension ContentView {
                 #endif
             }
             GeometryReader { geometry in
-                sectionStack(height: geometry.size.height)
+                VStack(spacing: 0) {
+                    if !visiblePinnedThreads.isEmpty {
+                        pinnedSection(maxHeight: min(240, geometry.size.height * 0.4))
+                    }
+                    GeometryReader { remaining in
+                        sectionStack(height: remaining.size.height)
+                    }
+                }
             }
             sidebarDock
         }
@@ -1318,6 +1338,9 @@ extension ContentView {
         }
         .padding(.horizontal, 14)
         .frame(height: Self.headerHeight)
+        #if DEBUG
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { SidebarDebug.headers[section.title] = $0 }
+        #endif
     }
 
     private func count(of section: SidebarSection) -> Int {
@@ -1336,12 +1359,16 @@ extension ContentView {
     }
 
     private func cardFamily(_ root: ChatSession) -> [ChatSession] {
+        threadFamily(root).filter(isShown)
+    }
+
+    private func threadFamily(_ root: ChatSession) -> [ChatSession] {
         var threads = [root] + model.sidechats(of: root)
         if root.record.projectFolder != nil || root.record.convertedProjectFolder != nil {
             for branch in model.worktrees(of: root) { threads += [branch] + model.sidechats(of: branch) }
         }
         // Sidequests show inside their chat's card instead of as cards of their own.
-        return threads.filter { isShown($0) && !model.showsInsideParentCard($0) }
+        return threads.filter { !model.showsInsideParentCard($0) }
     }
 
     private func cardGrid(_ threads: [ChatSession]) -> some View {
@@ -1350,27 +1377,9 @@ extension ContentView {
         }
     }
 
-    private func pinnedStudioTiles(_ threads: [ChatSession]) -> some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 80, maximum: 80), spacing: 8)], alignment: .leading, spacing: 8) {
-            ForEach(threads) { row($0, number: nil, card: true, iconOnly: true) }
-        }
-    }
-
     private func cardSection(_ section: SidebarSection) -> some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 10) {
-                let pinned = model.pinnedThreads.filter(isShown)
-                if !pinned.isEmpty {
-                    pinnedHeader
-                    ForEach(pinned.flatMap(cardFamily)) { session in
-                        row(session, number: nil, forceList: true)
-                            .padding(.horizontal, 6).padding(.vertical, 4)
-                            .background(RoundedRectangle(cornerRadius: 8).fill(
-                                session.isWaitingOnYou ? Color.yellow.opacity(0.22)
-                                : model.selectedID == session.id ? Color.white : Color.clear))
-                    }
-                    Divider().padding(.vertical, 4)
-                }
                 switch section {
                 case .projects:
                     let threads = model.sidebarProjects.filter { !model.isPinnedThread($0) }.filter(projectActivity.includes).flatMap(cardFamily)
@@ -1396,23 +1405,7 @@ extension ContentView {
     private func listSection(_ section: SidebarSection) -> some View {
         // ⌘-numbers follow the full sidebar, so they don't shift while filtering.
         let numbers = Dictionary(uniqueKeysWithValues: model.sidebarOrder.prefix(9).enumerated().map { ($1.id, $0 + 1) })
-        let pinned = model.pinnedThreads.filter(isShown)
         return List {
-            if !pinned.isEmpty {
-                pinnedHeader.listRowSeparator(.hidden)
-                if section == .studios {
-                    pinnedStudioTiles(pinned.flatMap(cardFamily)).listRowSeparator(.hidden)
-                } else {
-                    ForEach(pinned) { session in
-                        if session.record.projectFolder != nil {
-                            projectRows(session, numbers: numbers)
-                        } else {
-                            rowWithSidechats(session, numbers: numbers)
-                        }
-                    }
-                }
-                Divider().padding(.vertical, 4).listRowSeparator(.hidden)
-            }
             switch section {
             case .projects:
                 let projects = model.sidebarProjects.filter { !model.isPinnedThread($0) }.filter(isShown).filter(projectActivity.includes)
@@ -1459,7 +1452,59 @@ extension ContentView {
         }
     }
 
-    /// Above the section's own threads: the ones pinned to the top.
+    /// Global pins ignore the selected page and its tag/activity filters.
+    private func matchesPinnedSearch(_ session: ChatSession) -> Bool {
+        matchesSearch(([session.title, session.projectName, model.studio(for: session)?.name ?? ""] + session.tags).joined(separator: " "))
+    }
+
+    private var visiblePinnedThreads: [ChatSession] {
+        model.pinnedThreads.filter { threadFamily($0).contains(where: matchesPinnedSearch) }
+    }
+
+    private func pinnedSection(maxHeight: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            pinnedHeader.padding(.horizontal, 14).frame(height: Self.headerHeight)
+            ScrollView {
+                pinnedSessionList
+            }
+            .frame(height: min(pinnedContentHeight, max(44, maxHeight)))
+            Divider().padding(.horizontal, 12).padding(.vertical, 6)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Pinned sessions")
+        #if DEBUG
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { SidebarDebug.pinned = $0 }
+        #endif
+    }
+
+    private var pinnedSessionList: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(visiblePinnedThreads) { root in pinnedFamilyRows(root) }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 4)
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { pinnedContentHeight = $0 }
+    }
+
+    private func pinnedFamilyRows(_ root: ChatSession) -> some View {
+        let family = threadFamily(root).filter { $0.id == root.id || matchesPinnedSearch($0) }
+        return ForEach(family) { session in
+            pinnedRow(session).padding(.leading, session.id == root.id ? 0 : 18)
+        }
+    }
+
+    private func pinnedRow(_ session: ChatSession) -> some View {
+        let background: Color = session.isWaitingOnYou ? .yellow.opacity(0.22)
+            : model.selectedID == session.id ? .white : .clear
+        return row(session, number: nil, forceList: true)
+            .padding(.horizontal, 6).padding(.vertical, 4)
+            .background(RoundedRectangle(cornerRadius: 8).fill(background))
+            #if DEBUG
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { SidebarDebug.pinnedRows[session.id] = $0 }
+            .onDisappear { SidebarDebug.pinnedRows.removeValue(forKey: session.id) }
+            #endif
+    }
+
+    /// A separate section above the selected page's threads.
     private var pinnedHeader: some View {
         Label("Pinned", systemImage: "pin.fill")
             .font(.caption.weight(.semibold))
@@ -1592,7 +1637,15 @@ extension ContentView {
 
 #if DEBUG
 /// Where each divider is drawn, for interaction tests.
-@MainActor enum SidebarDebug { static var dividers: [String: CGRect] = [:] }
+@MainActor enum SidebarDebug {
+    static var dividers: [String: CGRect] = [:]
+    static var search: CGRect = .zero
+    static var viewToggle: CGRect = .zero
+    static var activity: CGRect = .zero
+    static var pinned: CGRect = .zero
+    static var headers: [String: CGRect] = [:]
+    static var pinnedRows: [UUID: CGRect] = [:]
+}
 #endif
 
 /// The grab area of a divider between sidebar sections: drag to resize (reports how far the
