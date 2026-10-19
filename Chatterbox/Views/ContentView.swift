@@ -1188,6 +1188,8 @@ extension ContentView {
     private var sidebarSessions: some View {
         VStack(spacing: 0) {
             DesktopOverviewControls().padding(.horizontal, 12).padding(.vertical, 8)
+            // Activity first: what's working and what's new, above the sessions.
+            SidebarActivityStrip(showsEmptyState: model.showingChatsSidebar).padding(.horizontal, 12).padding(.bottom, 6)
             if !isFiltering && model.studioSidebarID == nil {
                 #if GOLEM_APP
                 List { Section { dotRow } }
@@ -1199,7 +1201,6 @@ extension ContentView {
             GeometryReader { geometry in
                 sectionStack(height: geometry.size.height)
             }
-            SidebarActivityStrip(showsEmptyState: model.showingChatsSidebar).padding(.horizontal, 12).padding(.vertical, 6)
             sidebarDock
         }
     }

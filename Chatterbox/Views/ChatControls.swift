@@ -488,7 +488,6 @@ struct SidebarActivityStrip: View {
         let count = replies.count + running.count
         if showsEmptyState || count > 0 {
             VStack(alignment: .leading, spacing: 3) {
-                Divider().padding(.bottom, 4)
                 Button { withAnimation(.smooth(duration: 0.2)) { expanded.toggle() } } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "chevron.right").font(.caption2)
@@ -523,6 +522,8 @@ struct SidebarActivityStrip: View {
                         }.frame(height: min(160, CGFloat(count) * 24 + CGFloat((replies.isEmpty ? 0 : 1) + (running.isEmpty ? 0 : 1)) * 20))
                     }
                 }
+                // Below: the strip sits at the top, above the sessions.
+                Divider().padding(.top, 4)
             }
         }
     }

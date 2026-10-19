@@ -1,6 +1,6 @@
 import SwiftUI
 
-// The Studios page: a column of Studios on the left (Pinned first, Activity at the bottom),
+// The Studios page: a column of Studios on the left (Activity at the top, then Pinned),
 // and on the right either the pinned sessions as large previews or one Studio's inspector.
 // Selecting a card or row only changes what this page shows; opening it selects the session.
 
@@ -238,6 +238,11 @@ private struct StudioColumn: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            // The same Working and New replies as the chat sidebar's, at the top as there.
+            SidebarActivityStrip(showsEmptyState: true).padding(.horizontal, 12).padding(.top, 24).padding(.bottom, 4)
+                #if DEBUG
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { MacHomeDebug.activity = $0 }
+                #endif
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack {
@@ -254,13 +259,8 @@ private struct StudioColumn: View {
                               attention: attention(in: studio), icon: "paintpalette")
                     }
                 }
-                .padding(.horizontal, 12).padding(.top, 24)
+                .padding(.horizontal, 12).padding(.top, 12)
             }
-            // The same Working and New replies as the chat sidebar's.
-            SidebarActivityStrip(showsEmptyState: true).padding(.horizontal, 12).padding(.vertical, 10)
-                #if DEBUG
-                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { MacHomeDebug.activity = $0 }
-                #endif
         }
         .background(Color.primary.opacity(0.03))
         #if DEBUG
