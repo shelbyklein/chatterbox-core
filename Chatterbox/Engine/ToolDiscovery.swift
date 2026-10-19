@@ -2,7 +2,7 @@ import Foundation
 
 /// What the agents load on their own, outside Chatterbox: Claude Code's servers, plugins and
 /// skills (~/.claude.json, ~/.claude, a project's .mcp.json and .claude/skills) and Codex's
-/// (~/.codex/config.toml, its skill folders). Read only: Chatterbox never writes these files.
+/// (~/.codex/config.toml, a project's .codex/config.toml, its skill folders). Read only: Chatterbox never writes these files.
 /// The Tools settings list them, can turn them off per level, and can import a server.
 struct DiscoveredTool: Identifiable, Hashable {
     enum Kind: String { case server, skill, connector }
@@ -33,7 +33,7 @@ enum ToolDiscovery {
 
     /// Everything both agents load for a chat in `projectFolder` (nil: outside any project).
     static func discover(projectFolder: String?) -> [DiscoveredTool] {
-        var found = claudeServers(projectFolder: projectFolder) + codexServers() + claudeSkills(projectFolder: projectFolder) + codexSkills()
+        var found = claudeServers(projectFolder: projectFolder) + codexServers(projectFolder: projectFolder) + claudeSkills(projectFolder: projectFolder) + codexSkills()
         found += connectors()
         // Same server in both agents' configs, or the same skill (one folder, or identical
         // copies): one row for both. A skill whose copies differ is marked.
@@ -122,22 +122,27 @@ enum ToolDiscovery {
 
     // MARK: Codex
 
-    static func codexServers() -> [DiscoveredTool] {
-        TOMLSections.read(home.appendingPathComponent(".codex/config.toml"), prefix: "mcp_servers.").map { name, values in
-            var spec: [String: Any] = [:]
-            if let command = values["command"] as? String { spec["command"] = command }
-            if let args = values["args"] as? [String] { spec["args"] = args }
-            if let url = values["url"] as? String { spec["url"] = url }
-            if let cwd = values["cwd"] as? String { spec["cwd"] = cwd }
-            var item = server(name, spec, source: .codex, agents: [.codex])
-            item.importable = item.importable.map { resolveRelative($0, configFolder: home.appendingPathComponent(".codex").path) }
-            item.enabledThere = (values["enabled"] as? Bool) ?? true
-            return item
+    /// ~/.codex/config.toml's servers, then the project's own .codex/config.toml.
+    static func codexServers(projectFolder: String? = nil) -> [DiscoveredTool] {
+        var configs = [(home.appendingPathComponent(".codex").path, DiscoveredTool.Source.codex)]
+        if let folder = projectFolder { configs.append((folder + "/.codex", .project)) }
+        return configs.flatMap { folder, source in
+            TOMLSections.read(URL(fileURLWithPath: folder + "/config.toml"), prefix: "mcp_servers.").map { name, values in
+                var spec: [String: Any] = [:]
+                if let command = values["command"] as? String { spec["command"] = command }
+                if let args = values["args"] as? [String] { spec["args"] = args }
+                if let url = values["url"] as? String { spec["url"] = url }
+                if let cwd = values["cwd"] as? String { spec["cwd"] = cwd }
+                var item = server(name, spec, source: source, agents: [.codex])
+                item.importable = item.importable.map { resolveRelative($0, configFolder: folder) }
+                item.enabledThere = (values["enabled"] as? Bool) ?? true
+                return item
+            }
         }
     }
 
     /// Names of Codex's own servers: only these can be switched off in a thread's config.
-    static func codexServerNames() -> Set<String> { Set(codexServers().map(\.name)) }
+    static func codexServerNames(projectFolder: String? = nil) -> Set<String> { Set(codexServers(projectFolder: projectFolder).map(\.name)) }
 
     static func codexSkills() -> [DiscoveredTool] {
         let disabled = Set(TOMLSections.skillEntries(home.appendingPathComponent(".codex/config.toml")).filter { !$0.enabled }.map(\.path))
@@ -169,6 +174,31 @@ enum ToolDiscovery {
         let known = (try? JSONDecoder().decode([String].self, from: Data(contentsOf: connectorsFile))) ?? []
         let all = Array(Set(known + connectors)).sorted()
         if all != known.sorted() { try? JSONEncoder().encode(all).write(to: connectorsFile, options: .atomic) }
+    }
+
+    // MARK: One chat
+
+    /// An MCP server one chat's agent loads, and where it comes from.
+    struct LoadedServer: Identifiable, Equatable {
+        enum State: Equatable { case on, offInChatterbox, offInConfig, addedInChatterbox }
+        var name: String
+        /// "Claude", "Codex", "Project file", or "Chatterbox".
+        var source: String
+        var state: State
+        var id: String { source + ":" + name }
+    }
+
+    /// The servers `backend` gets in a chat in `projectFolder` with `tools` applied: its own
+    /// config's (switched off by Chatterbox or in the config itself), then what Chatterbox adds.
+    /// One Chatterbox adds under a name the agent already has takes that one's place.
+    static func loadedServers(_ backend: Backend, projectFolder: String?, tools: EffectiveTools) -> [LoadedServer] {
+        let own = backend == .claude ? claudeServers(projectFolder: projectFolder) : codexServers(projectFolder: projectFolder)
+        let added = tools.servers(for: backend)
+        let replaced = Set(added.map(\.name))
+        return own.filter { !replaced.contains($0.name) }.map { item in
+            let state: LoadedServer.State = !item.enabledThere ? .offInConfig : tools.isOff(item.offKey) ? .offInChatterbox : .on
+            return LoadedServer(name: item.name, source: item.source.rawValue, state: state)
+        } + added.map { LoadedServer(name: $0.name, source: "Chatterbox", state: .addedInChatterbox) }
     }
 
     // MARK: Helpers

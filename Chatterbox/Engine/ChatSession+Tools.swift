@@ -165,7 +165,7 @@ extension ChatSession {
     /// Whether `backend` gets an MCP server by this name: its own config, or this session's Tools.
     @MainActor static func agentHasServer(_ name: String, _ backend: Backend, session: ChatSession) -> Bool {
         func same(_ a: String, _ b: String) -> Bool { claudeToolName(a).lowercased() == claudeToolName(b).lowercased() }
-        let own: [String] = backend == .codex ? ToolDiscovery.codexServers().map(\.name)
+        let own: [String] = backend == .codex ? ToolDiscovery.codexServers(projectFolder: session.record.boundFolder).map(\.name)
             : ToolDiscovery.claudeServers(projectFolder: session.record.boundFolder).map(\.name)
         let added = ToolScopes.effective(for: session).servers(for: backend).map(\.name)
         return (own + added).contains { same($0, name) }

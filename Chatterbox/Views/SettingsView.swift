@@ -719,12 +719,17 @@ private struct AppearanceSettingsView: View {
     }
 }
 
-/// Settings → Instructions: what Chatterbox tells both agents, your own instructions for
-/// every chat, and each agent's own global file.
-private struct InstructionsSettingsView: View {
+/// Settings → Instructions: what Chatterbox tells both agents (its own block, each Studio's
+/// note, a session's Brief, the project file handed across), your own instructions for every
+/// chat, and each agent's own global file. Read-only previews come from the same Prompts
+/// functions a launch uses.
+struct InstructionsSettingsView: View {
     @AppStorage("defaultPersonality") private var personality = Personality.friendly
+    @Environment(AppModel.self) private var model
     @State private var draft = Prompts.userInstructions
     @State private var saved = Prompts.userInstructions
+    /// Each project's handed-across file, per agent: (name, folder, Claude's, Codex's).
+    @State private var projectFiles: [(name: String, folder: String, claude: String, codex: String)] = []
 
     var body: some View {
         Form {
@@ -742,6 +747,41 @@ private struct InstructionsSettingsView: View {
                 Text("Added to Claude Code's and Codex's own system prompts in every session: your tone (shown for the default tone), plus notes about the session window. Each agent keeps its own base prompt.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+
+            Section {
+                ForEach(model.activeStudios) { studio in
+                    DisclosureGroup("Studio: \(studio.name)") { preview(Prompts.studioNote(studio)) }
+                }
+                DisclosureGroup("A session's Brief") { preview(Prompts.briefBlock("(The session's Brief, as set in its toolbar.)")) }
+            } header: {
+                Text("Also sent, when it applies")
+            } footer: {
+                Text("After the block above, in this order: the Studio's note (Studio sessions only), the session's Brief (when it has one), your instructions below, then the project file meant for the other agent. Studio notes point to the Studio's design.md; the agent reads it itself.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section {
+                if projectFiles.isEmpty {
+                    Text("No projects yet.").font(.caption).foregroundStyle(.secondary)
+                }
+                ForEach(projectFiles, id: \.folder) { project in
+                    DisclosureGroup {
+                        if !project.claude.isEmpty { Text("Claude gets").font(.caption.weight(.medium)); preview(project.claude) }
+                        if !project.codex.isEmpty { Text("Codex gets").font(.caption.weight(.medium)); preview(project.codex) }
+                    } label: {
+                        LabeledContent(project.name) {
+                            Text(handedAcross(project.folder, claude: project.claude, codex: project.codex)).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    .disabled(project.claude.isEmpty && project.codex.isEmpty)
+                }
+            } header: {
+                Text("Project files handed across")
+            } footer: {
+                Text("Claude gets the project's AGENTS.md and Codex gets its CLAUDE.md, so one file reaches both. Skipped when CLAUDE.md already imports AGENTS.md (an @AGENTS.md line), since Claude reads it then.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            .task(id: model.sidebarProjects.compactMap(\.record.projectFolder)) { loadProjectFiles() }
 
             Section {
                 TextEditor(text: $draft)
@@ -766,7 +806,7 @@ private struct InstructionsSettingsView: View {
             } header: {
                 Text("Each agent's own global instructions")
             } footer: {
-                Text("In a project, Claude reads CLAUDE.md and Codex reads AGENTS.md. Chatterbox also gives each agent the other's file, so either one covers both. Edit them from the project's folder menu in the toolbar.")
+                Text("In a project, Claude reads CLAUDE.md and Codex reads AGENTS.md; Chatterbox hands each agent the other's (see above). Edit them from the project's folder menu in the toolbar.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -790,6 +830,40 @@ private struct InstructionsSettingsView: View {
     private func reveal(_ url: URL) {
         if !FileManager.default.fileExists(atPath: url.path) { save() }
         NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    private func preview(_ text: String) -> some View {
+        ScrollView {
+            Text(text)
+                .font(.system(.caption, design: .monospaced))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(height: 140)
+    }
+
+    /// What each agent gets from the project, in a few words.
+    private func handedAcross(_ folder: String, claude: String, codex: String) -> String {
+        func has(_ name: String) -> Bool {
+            ((try? String(contentsOfFile: folder + "/" + name, encoding: .utf8)) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        }
+        // A file that's there but not sent was skipped for an @ import.
+        let parts = [
+            !claude.isEmpty ? "Claude gets AGENTS.md" : has("AGENTS.md") ? "AGENTS.md not sent (@ import)" : nil,
+            !codex.isEmpty ? "Codex gets CLAUDE.md" : has("CLAUDE.md") ? "CLAUDE.md not sent (@ import)" : nil,
+        ].compactMap { $0 }
+        return parts.isEmpty ? "No CLAUDE.md or AGENTS.md" : parts.joined(separator: " \u{00B7} ")
+    }
+
+    /// Each project's file for the other agent, as a launch builds it.
+    private func loadProjectFiles() {
+        var seen = Set<String>()
+        projectFiles = model.sidebarProjects.compactMap { session in
+            guard let folder = session.record.projectFolder, seen.insert(folder).inserted else { return nil }
+            return (session.projectName, folder,
+                    Prompts.crossAgentProjectFile(for: .claude, folder: folder), Prompts.crossAgentProjectFile(for: .codex, folder: folder))
+        }
+        .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 }
 
@@ -992,7 +1066,7 @@ private struct ProxySection: View {
         } header: {
             Text("EasyCLIProxyAPI")
         } footer: {
-            Text("Spreads sessions across the accounts you've signed in to EasyCLIProxyAPI. Through it, Claude can't use your claude.ai connectors and Codex can't use ChatGPT apps like Gmail, so \(model.dotName) and the email watch always connect directly. Takes effect with each session's next message; if the proxy stops answering, sessions connect directly.")
+            Text("Spreads sessions across the accounts you've signed in to EasyCLIProxyAPI. Through it, Claude can't use your claude.ai connectors and Codex can't use ChatGPT apps like Gmail, so \(model.dotName) and the email watch always connect directly. Claude's MCP tools still load on demand (tool search stays on). Takes effect with each session's next message; if the proxy stops answering, sessions connect directly.")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .task { await proxy.refresh() }

@@ -294,7 +294,7 @@ extension ChatSession {
             params["config"] = .object(config)
         }
         // The Tools settings for this chat's levels: servers to add, what to turn off.
-        let tools = codexToolsConfig(ToolScopes.effective(for: self), codexServers: ToolDiscovery.codexServerNames())
+        let tools = codexToolsConfig(ToolScopes.effective(for: self), codexServers: ToolDiscovery.codexServerNames(projectFolder: settings.folder))
         if !tools.isEmpty {
             var config = params["config"]?.object ?? [:]
             for (key, value) in tools { config[key] = value }
