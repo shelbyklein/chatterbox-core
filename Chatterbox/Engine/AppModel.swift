@@ -24,7 +24,7 @@ final class AppModel {
                 rememberSession(session)
                 // A chat whose Studio is gone is listed under Chats (see sidebarChats).
                 studioSidebarID = session.record.studioID.flatMap { id in activeStudios.contains { $0.id == id } ? id : nil }
-                showingChatsSidebar = studioSidebarID == nil && session.record.projectFolder == nil
+                showingChatsSidebar = studioSidebarID == nil && Self.view(of: session) != .projects
                 if studioSidebarID != nil { AppPreferences.defaults.set(false, forKey: "sidebarStudiosCollapsed") }
             }
             guard selectedID != oldValue, let session = sessions.first(where: { $0.id == selectedID }) else { return }
@@ -61,32 +61,32 @@ final class AppModel {
         AppPreferences.defaults.set(lastInView, forKey: "lastSessionInView")
     }
 
-    /// Switches to a main view, back to the session it was last in. With none (or it's gone):
-    /// Projects and Chats open their newest; Studios opens its overview page.
+    /// Section buttons always open the session columns, including when a remembered
+    /// session was archived or moved. They never leave another section's chat selected.
     func showView(_ view: MainView) {
         showingSettings = false; showingCommandCenter = false; showingAutomations = false
-        let last = lastInView[view.rawValue].flatMap(UUID.init(uuidString:))
-            .flatMap { id in activeSessions.first { $0.id == id && Self.view(of: $0) == view && !$0.isDot } }
-        switch view {
-        case .studios:
-            if let last { selectedID = last.id; return }
-            AppPreferences.defaults.set("Studios", forKey: "macHomePage")
-            showingHome = true
-        case .projects, .chats:
-            showingHome = false
-            if let session = last ?? (view == .projects ? sidebarProjects.first : sidebarChats.first) {
-                selectedID = session.id
-            } else {
-                studioSidebarID = nil
-                showingChatsSidebar = view == .chats
-            }
+        let candidates = activeSessions.filter { session in
+            !session.isDot && Self.view(of: session) == view &&
+            (view != .studios || activeStudios.contains(where: { $0.id == session.record.studioID }))
         }
+        let last = lastInView[view.rawValue].flatMap(UUID.init(uuidString:))
+            .flatMap { id in candidates.first { $0.id == id } }
+        let recent = candidates.sorted { $0.lastActivity > $1.lastActivity }
+        let destination = last ?? recent.first(where: { Attention.shared.needsAttention($0) }) ?? recent.first
+        emptySidebarView = view
+        selectedID = destination?.id
+        showingHome = false
+        studioSidebarID = view == .studios ? destination?.record.studioID : nil
+        showingChatsSidebar = view == .chats
+        sidebarRevealRequest += 1
     }
 
     var showingCloneFromGitHub = false
     var showingNewProject = false
     /// Projects and standalone chats have separate sidebar pages in the Mac UI.
     var showingChatsSidebar = false
+    private var emptySidebarView: MainView = .projects
+    var showingStudiosSidebar: Bool { studioSidebarID != nil || (selectedID == nil && emptySidebarView == .studios) }
     var studioSidebarID: UUID?
     var sidebarStudio: Studio? { studio(studioSidebarID) }
     /// Settings, shown in the main window in place of the chat.
@@ -119,6 +119,8 @@ final class AppModel {
     @ObservationIgnored var revealMainChatWindow: (() -> Void)?
     /// Sidebar toolbar/keyboard requests, consumed by the single column container.
     var sidebarToggleRequest = 0
+    /// Section navigation reveals the sidebar in narrow windows, without toggling it shut.
+    var sidebarRevealRequest = 0
     /// Dot's memory, open for editing.
     var editingDotMemory = false
     /// The Add Pin sheet, when open.

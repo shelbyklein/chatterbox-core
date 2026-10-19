@@ -37,7 +37,7 @@ struct ChatColumns: View {
     @State private var sidebarOverlay = false
     /// A Studio's sidebar has the Studios down its left as well (see ContentView.sidebarColumn).
     static let studioRailWidth: CGFloat = 160
-    private var sidebarExtra: CGFloat { model.studioSidebarID != nil ? Self.studioRailWidth + 1 : 0 }
+    private var sidebarExtra: CGFloat { model.showingStudiosSidebar ? Self.studioRailWidth + 1 : 0 }
 
     var body: some View {
         GeometryReader { geometry in
@@ -85,6 +85,12 @@ struct ChatColumns: View {
             }
             .frame(width: width, height: geometry.size.height, alignment: .topLeading)
             .clipped()
+            .onAppear {
+                if model.sidebarRevealRequest > 0 && sizes.sidebar == 0 { sidebarOverlay = true }
+            }
+            .onChange(of: model.sidebarRevealRequest) {
+                sidebarOverlay = sizes.sidebar == 0
+            }
             .onChange(of: model.sidebarToggleRequest) {
                 if width < 636 + sidebarExtra + (hasRight ? rightMinimum + 6 : 0) { sidebarOverlay.toggle() }
                 else { sidebarOverlay = false }

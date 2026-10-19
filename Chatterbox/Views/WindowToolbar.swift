@@ -188,7 +188,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
 
         // Which of the left-hand views is showing; none while Settings is.
         if let views = items[ID.views] as? NSToolbarItemGroup {
-            let index = model.showingSettings || model.showingAutomations ? -1 : model.showingCommandCenter ? 3 : (model.showingHome || model.studioSidebarID != nil) ? 1 : model.showingChatsSidebar ? 2 : 0
+            let index = model.showingSettings || model.showingAutomations ? -1 : model.showingCommandCenter ? 3 : (model.showingHome || model.showingStudiosSidebar) ? 1 : model.showingChatsSidebar ? 2 : 0
             // Set here, one or none (Settings, Automations): a select-one group always keeps one.
             viewIndex = index
             for i in views.subitems.indices where views.isSelected(at: i) != (i == index) { views.setSelected(i == index, at: i) }
@@ -351,13 +351,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
             model.showingHome = false; model.showingSettings = false; model.showingAutomations = false
             model.showingCommandCenter = true
         default:
-            // Already in Projects (a narrow window): the sidebar slides over instead.
-            if !model.showingHome, !model.showingCommandCenter, !model.showingAutomations, !model.showingSettings,
-               !model.showingChatsSidebar, model.studioSidebarID == nil {
-                showChats()
-            } else {
-                model.showView(.projects)
-            }
+            model.showView(.projects)
         }
         apply()
     }

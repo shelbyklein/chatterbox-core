@@ -15,7 +15,7 @@ struct ContentView: View {
     @AppStorage("macProjectsSidebarCards") private var projectsCards = true
     @AppStorage("macChatsSidebarCards") private var chatsCards = false
     @AppStorage("macStudioSidebarCards") private var studioCards = false
-    private var sidebarCards: Bool { model.studioSidebarID != nil ? studioCards : model.showingChatsSidebar ? chatsCards : projectsCards }
+    private var sidebarCards: Bool { model.showingStudiosSidebar ? studioCards : model.showingChatsSidebar ? chatsCards : projectsCards }
     @AppStorage("showArchived") private var showArchived = false
     @AppStorage("sidebarSectionWeights") private var sectionWeights = "1,1,1"
     @AppStorage("sidebarStudiosCollapsed") private var studiosCollapsed = false
@@ -1207,7 +1207,7 @@ extension ContentView {
     /// In a Studio: the Studios down the left, then the open Studio's sessions. Elsewhere,
     /// one column.
     @ViewBuilder var sidebarColumn: some View {
-        if model.studioSidebarID != nil {
+        if model.showingStudiosSidebar {
             HStack(spacing: 0) {
                 StudioRail(newStudio: { beginNewStudio() }, rename: { studio in studioName = studio.name; renamingStudio = studio }).frame(width: ChatColumns.studioRailWidth)
                 Divider()
@@ -1272,7 +1272,7 @@ extension ContentView {
 
     /// Searching shows every section, so nothing that matches is hidden in the dock.
     private var shownSections: [SidebarSection] {
-        [model.studioSidebarID != nil ? .studios : model.showingChatsSidebar ? .chats : .projects]
+        [model.showingStudiosSidebar ? .studios : model.showingChatsSidebar ? .chats : .projects]
     }
 
     private static let headerHeight: CGFloat = 26
