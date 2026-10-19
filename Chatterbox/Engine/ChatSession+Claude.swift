@@ -151,8 +151,7 @@ extension ChatSession {
             toolsMCPConfig: claudeToolsMCPConfigFile(tools),
             disallowedTools: Self.claudeDisallowedTools(tools),
             pluginDirs: claudeToolsPluginDir(tools).map { [$0] } ?? [],
-            environment: claudeProxyEnvironment.merging(SecretVault.shared.environment(for: self)) { $1 }
-                .merging(["CHATTERBOX_CHAT_ID": id.uuidString]) { $1 },
+            environment: claudeLaunchEnvironment,
             fastMode: record.claudeFastMode == true && supportsClaudeFastMode
         ), id: "claude-\(id.uuidString)-\(UUID().uuidString.prefix(8))")
         // A fresh session gets the current tone and instructions in its system prompt.
@@ -628,5 +627,24 @@ extension ChatSession {
         guard !isDot, let proxy = EasyCLIProxy.shared.active(for: .claude) else { return [:] }
         return ["ANTHROPIC_BASE_URL": proxy.base, "ANTHROPIC_AUTH_TOKEN": proxy.key, "ANTHROPIC_API_KEY": "",
                 "ENABLE_TOOL_SEARCH": "true"]
+    }
+
+    /// What this chat's Claude Code gets on top of the app's environment: the proxy, Secrets
+    /// in scope, and the chat's id.
+    var claudeLaunchEnvironment: [String: String] {
+        claudeProxyEnvironment.merging(SecretVault.shared.environment(for: self)) { $1 }
+            .merging(["CHATTERBOX_CHAT_ID": id.uuidString]) { $1 }
+    }
+
+    /// Whether this chat's Claude Code loads MCP tools on demand (tool search), from the
+    /// environment it launches with.
+    var claudeToolSearch: Bool { Self.claudeToolSearch(BinaryLocator.environment.merging(claudeLaunchEnvironment) { $1 }) }
+
+    /// Claude Code's rule: ENABLE_TOOL_SEARCH decides when set; otherwise it's on, except on a
+    /// base URL that isn't Anthropic's.
+    static func claudeToolSearch(_ env: [String: String]) -> Bool {
+        if let value = env["ENABLE_TOOL_SEARCH"]?.lowercased(), !value.isEmpty { return !["false", "0", "no", "off"].contains(value) }
+        guard let base = env["ANTHROPIC_BASE_URL"], !base.isEmpty else { return true }
+        return URL(string: base)?.host?.hasSuffix("anthropic.com") == true
     }
 }

@@ -155,7 +155,7 @@ struct ToolsPanel: View {
                 Button("Add Skill Folder", systemImage: "plus") { addSkillFolder() }.buttonStyle(.borderless)
             }
         } footer: {
-            Text("A folder holding SKILL.md, or a folder of them. Switching a skill off blocks it in \(levelName).")
+            Text("A folder holding SKILL.md, or a folder of them. Switching a skill off blocks it when called in \(levelName), but Claude still lists it, so it saves no tokens; to drop a plugin's skills, disable the plugin in Claude Code (/plugin).")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }
@@ -407,25 +407,45 @@ struct ToolServerEditor: View {
     }
 }
 
-/// In a chat's Session tools: what this chat gets, and where to change it.
+/// In a chat's Session tools: the MCP servers this chat's agent loads (its own config's, and
+/// what Chatterbox adds or switched off), whether their tools load on demand, and where to
+/// change it.
 struct SessionToolsSummary: View {
     let session: ChatSession
     @Environment(AppModel.self) private var model
     @State private var editingProject = false
+    @State private var servers: [ToolDiscovery.LoadedServer]?
 
     var body: some View {
+        let backend = session.record.backend
         let tools = ToolScopes.effective(for: session)
-        let servers = tools.servers(for: session.record.backend)
+        // Servers are listed above; this is skills, connectors and ChatGPT apps.
+        let otherOff = tools.off.filter { !$0.hasPrefix("server:") }.sorted()
         VStack(alignment: .leading, spacing: 6) {
             Text("Tools").font(.subheadline.weight(.semibold))
-            if tools.isEmpty {
-                Text("The agent's own tools; nothing set in Chatterbox.").font(.caption).foregroundStyle(.secondary)
-            } else {
-                if !servers.isEmpty { Text("Adds " + servers.map(\.name).joined(separator: ", ")).font(.caption) }
-                if !tools.off.isEmpty {
-                    Text("Off: " + tools.off.sorted().map { $0.split(separator: ":", maxSplits: 1).last.map(String.init) ?? $0 }.joined(separator: ", "))
-                        .font(.caption).foregroundStyle(.secondary)
+            if let servers {
+                if servers.isEmpty {
+                    Text("No MCP servers in \(backend.label)'s config or Chatterbox.").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Text("MCP servers \(backend.label) loads").font(.caption.weight(.medium))
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 3) {
+                            ForEach(servers) { serverRow($0) }
+                        }
+                    }
+                    .frame(maxHeight: 220)
+                    .fixedSize(horizontal: false, vertical: true)
                 }
+            } else {
+                ProgressView().controlSize(.small)
+            }
+            if backend == .claude {
+                Text(session.claudeToolSearch ? "Tool search is on: MCP tools load on demand." : "Tool search is off: every MCP tool loads at the start.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if !otherOff.isEmpty {
+                Text("Off: " + otherOff.map { $0.split(separator: ":", maxSplits: 1).last.map(String.init) ?? $0 }.joined(separator: ", "))
+                    .font(.caption).foregroundStyle(.secondary)
             }
             HStack {
                 if let folder = ToolScopes.projectFolder(of: session) {
@@ -443,5 +463,27 @@ struct SessionToolsSummary: View {
             .buttonStyle(.link).font(.caption)
         }
         .accessibilityElement(children: .contain)
+        .task {
+            let backend = session.record.backend, folder = session.record.boundFolder, tools = ToolScopes.effective(for: session)
+            servers = await Task.detached(priority: .userInitiated) {
+                ToolDiscovery.loadedServers(backend, projectFolder: folder, tools: tools)
+            }.value
+        }
+    }
+
+    private func serverRow(_ server: ToolDiscovery.LoadedServer) -> some View {
+        let note: String = switch server.state {
+        case .on: "From \(server.source)"
+        case .offInChatterbox: "Off in Chatterbox"
+        case .offInConfig: "Off in its config"
+        case .addedInChatterbox: "Added in Chatterbox"
+        }
+        let off = server.state == .offInChatterbox || server.state == .offInConfig
+        return HStack(spacing: 6) {
+            Text(server.name).font(.caption).strikethrough(off).foregroundStyle(off ? .secondary : .primary)
+                .lineLimit(1).truncationMode(.middle)
+            Spacer(minLength: 8)
+            Text(note).font(.caption2).foregroundStyle(server.state == .addedInChatterbox ? Color.accentColor : .secondary)
+        }
     }
 }
