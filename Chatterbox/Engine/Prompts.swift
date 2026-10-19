@@ -34,9 +34,24 @@ enum Prompts {
     static func crossAgentProjectFile(for backend: Backend, folder: String?) -> String {
         guard let folder else { return "" }
         let name = backend == .claude ? "AGENTS.md" : "CLAUDE.md"
-        let url = URL(fileURLWithPath: folder).appendingPathComponent(name)
-        guard let text = try? String(contentsOf: url, encoding: .utf8), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return "" }
+        let own = backend == .claude ? "CLAUDE.md" : "AGENTS.md"
+        let dir = URL(fileURLWithPath: folder)
+        guard let text = try? String(contentsOf: dir.appendingPathComponent(name), encoding: .utf8), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return "" }
+        // A CLAUDE.md that's just `@AGENTS.md` already brings the file in, so Claude would get it
+        // twice, and Codex would get only the import line.
+        let ownText = (try? String(contentsOf: dir.appendingPathComponent(own), encoding: .utf8)) ?? ""
+        if imports(ownText, name) || isOnlyImport(text, of: own) { return "" }
         return "# Project instructions (\(name))\n\n" + String(text.prefix(40_000))
+    }
+
+    /// Whether a CLAUDE.md-style file pulls `file` in with an `@file` line.
+    static func imports(_ text: String, _ file: String) -> Bool {
+        text.split(whereSeparator: \.isNewline).contains { ["@\(file)", "@./\(file)"].contains($0.trimmingCharacters(in: .whitespaces)) }
+    }
+
+    /// Whether `text` is nothing but an import of `file`.
+    static func isOnlyImport(_ text: String, of file: String) -> Bool {
+        ["@\(file)", "@./\(file)"].contains(text.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     /// Everything Chatterbox adds for an agent: its own block, then yours, then the project's
