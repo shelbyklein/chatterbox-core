@@ -14,12 +14,18 @@ struct MobileNewChatSheet: View {
     @State private var options: Companion.ChatOptions?
     @State private var problem: String?
     @State private var starting = false
+    /// Its name; empty: named from the first message.
+    @State private var name = ""
 
     var body: some View {
         NavigationStack {
             Group {
                 if let options {
                     ChatSettingsForm(options: options, apply: choose) {
+                        Section("Name") {
+                            TextField("Optional: named from your first message", text: $name)
+                                .accessibilityIdentifier("new-chat-name")
+                        }
                         if !studios.isEmpty {
                             Section("Start in") {
                                 Picker("Start in", selection: $studio) {
@@ -80,7 +86,7 @@ struct MobileNewChatSheet: View {
             do {
                 // The settings as shown, so the chat starts exactly as picked.
                 let settings = Companion.SettingsRequest(model: options.model, effort: options.effort, mode: options.mode, fastMode: options.fastMode)
-                let detail = try await store.newChat(in: studio, backend: options.backend, preset: picks.preset, settings: settings)
+                let detail = try await store.newChat(in: studio, backend: options.backend, preset: picks.preset, settings: settings, title: name)
                 dismiss()
                 start(detail)
                 await store.loadChats()

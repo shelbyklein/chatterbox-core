@@ -492,6 +492,7 @@ final class CompanionServer {
                 ModelPresets.shared.apply(preset, to: session)
             }
             if let settings = body.settings { CompanionMapper.apply(settings, to: session) }
+            if let title = body.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty { session.setTitle(title) }
             if let shown, model.sessions.contains(where: { $0.id == shown }) { model.selectedID = shown }
             return .json(CompanionMapper.detail(session, model: model))
         case ("GET", 2) where parts[1] == "new-chat-options":

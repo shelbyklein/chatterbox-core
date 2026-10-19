@@ -439,6 +439,27 @@ final class AppModel {
         CodexAppServer.shared.terminate()
     }
 
+    /// A new session waiting for its name (ContentView asks): in a Studio or on its own.
+    struct NewSessionRequest: Identifiable {
+        let id = UUID()
+        var studio: UUID?
+        var backend: Backend?
+    }
+    var namingNewSession: NewSessionRequest?
+
+    /// What New Chat and the + buttons do: ask for a name first (it can be left empty).
+    func askNewChat(in studio: Studio? = nil, backend: Backend? = nil) {
+        namingNewSession = NewSessionRequest(studio: studio?.id, backend: backend)
+    }
+
+    /// Starts the session asked for, named if a name was given.
+    @discardableResult func startNewSession(_ request: NewSessionRequest, name: String) -> ChatSession {
+        let session = request.studio.flatMap(studio).map { newChat(in: $0, backend: request.backend) } ?? newChat(backend: request.backend)
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty { session.setTitle(trimmed) }
+        return session
+    }
+
     @discardableResult
     func newChat(backend: Backend? = nil) -> ChatSession {
         let defaults = AppPreferences.defaults

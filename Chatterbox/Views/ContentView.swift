@@ -212,6 +212,7 @@ struct ContentView: View {
         .onAppear { model.revealMainChatWindow = { openWindow(id: "main") } }
         .sheet(isPresented: $model.showingCloneFromGitHub) { CloneFromGitHubView() }
         .sheet(isPresented: $model.showingNewProject) { NewProjectSheet().environment(model) }
+        .sheet(item: $model.namingNewSession) { request in NewSessionSheet(request: request).environment(model) }
         .sheet(isPresented: $model.editingDotMemory) { DotMemorySheet() }
         // Dot asked to show you its computer.
         .sheet(item: $model.pinSheet) { AddPinSheet(request: $0) }
@@ -434,7 +435,7 @@ extension ContentView {
                 }
             }
             if chats.isEmpty {
-                Button { model.newChat(in: studio) } label: {
+                Button { model.askNewChat(in: studio) } label: {
                     Label("New Chat", systemImage: "square.and.pencil").foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
@@ -442,7 +443,7 @@ extension ContentView {
         } label: {
             StudioRow(studio: studio, chats: chats, collapsed: !expanded.wrappedValue,
                       isDropTarget: dropStudio == studio.id,
-                      onNewChat: { model.newChat(in: studio) })
+                      onNewChat: { model.askNewChat(in: studio) })
                 .contentShape(Rectangle())
                 .onTapGesture { expanded.wrappedValue.toggle() }
                 // Drop a chat here to move it in.
@@ -452,8 +453,8 @@ extension ContentView {
                     if over { dropStudio = studio.id } else if dropStudio == studio.id { dropStudio = nil }
                 }
                 .contextMenu {
-                    Button("New Claude Session") { model.newChat(in: studio, backend: .claude) }
-                    Button("New Codex Session") { model.newChat(in: studio, backend: .codex) }
+                    Button("New Claude Session") { model.askNewChat(in: studio, backend: .claude) }
+                    Button("New Codex Session") { model.askNewChat(in: studio, backend: .codex) }
                     Divider()
                     Button("Studio Instructions\u{2026}") { model.editingStudioInstructions = studio.id }
                     Button("Edit design.md") { studio.ensureDesignFile(); openForEditing(studio.designFile) }
@@ -1306,12 +1307,12 @@ extension ContentView {
             case .studios:
                 tagFilterMenu(.studios)
                 if let studio = model.sidebarStudio {
-                    Button { model.newChat(in: studio) } label: { Image(systemName: "plus") }
+                    Button { model.askNewChat(in: studio) } label: { Image(systemName: "plus") }
                         .buttonStyle(.borderless).help("New session in \(studio.name)").accessibilityLabel("New Studio Session")
                 }
             case .chats:
                 tagFilterMenu(.chats)
-                Button { model.newChat() } label: { Image(systemName: "square.and.pencil") }
+                Button { model.askNewChat() } label: { Image(systemName: "square.and.pencil") }
                     .buttonStyle(.borderless).help("New Chat").accessibilityLabel("New Chat")
             }
         }
@@ -1774,8 +1775,8 @@ private struct StudioRail: View {
         .help(studio.name)
         .accessibilityAddTraits(selected ? .isSelected : [])
         .contextMenu {
-            Button("New Claude Session") { model.newChat(in: studio, backend: .claude) }
-            Button("New Codex Session") { model.newChat(in: studio, backend: .codex) }
+            Button("New Claude Session") { model.askNewChat(in: studio, backend: .claude) }
+            Button("New Codex Session") { model.askNewChat(in: studio, backend: .codex) }
             Divider()
             Button("Studio Instructions\u{2026}") { model.editingStudioInstructions = studio.id }
             Button("Edit design.md") { studio.ensureDesignFile(); openForEditing(studio.designFile) }
@@ -1785,5 +1786,46 @@ private struct StudioRail: View {
             Divider()
             Button("Archive Studio") { model.archiveStudio(studio.id) }
         }
+    }
+}
+
+/// A new session's name, asked first. Empty is fine: it's named from the first message.
+private struct NewSessionSheet: View {
+    let request: AppModel.NewSessionRequest
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @FocusState private var focused: Bool
+
+    private var place: String {
+        let agent = request.backend.map { " with \($0.label)" } ?? ""
+        if let studio = model.studio(request.studio) { return "In \(studio.name)" + agent }
+        return "In Chats" + agent
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("New Session").font(.headline)
+            Text(place).font(.callout).foregroundStyle(.secondary)
+            TextField("Name (optional)", text: $name)
+                .textFieldStyle(.roundedBorder)
+                .focused($focused)
+                .onSubmit(start)
+                .accessibilityLabel("Session name")
+            Text("Leave it empty and it's named from your first message.").font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Start") { start() }.keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 380)
+        .onAppear { focused = true }
+    }
+
+    private func start() {
+        model.startNewSession(request, name: name)
+        dismiss()
     }
 }

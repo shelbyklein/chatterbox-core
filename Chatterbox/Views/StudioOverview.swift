@@ -143,7 +143,7 @@ struct ChatHomeView: View {
                     Button("Instructions", systemImage: "doc.text") { model.editingStudioInstructions = studio.id }
                         .help("Edit \(studio.name)'s instructions")
                     Button("New Session", systemImage: "plus") {
-                        model.newChat(in: studio)
+                        model.askNewChat(in: studio)
                         model.showingHome = false
                     }
                     .help("New session in \(studio.name)")
@@ -451,7 +451,7 @@ private struct StudioInspector: View {
             } description: {
                 Text(model.chats(in: studio).isEmpty ? "Start a session in \(studio.name) to see it here." : "Try another search or choose All.")
             } actions: {
-                Button("New Session in \(studio.name)") { model.newChat(in: studio); model.showingHome = false }
+                Button("New Session in \(studio.name)") { model.askNewChat(in: studio); model.showingHome = false }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {

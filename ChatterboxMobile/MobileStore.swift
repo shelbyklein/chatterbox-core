@@ -212,8 +212,8 @@ final class MobileStore {
 
     // MARK: Chat settings and management
 
-    func newChat(in studio: UUID?, backend: String?, preset: UUID? = nil, settings: Companion.SettingsRequest? = nil) async throws -> Companion.ChatDetail {
-        let body = try JSONEncoder().encode(Companion.NewChatRequest(studio: studio, backend: backend, preset: preset, settings: settings))
+    func newChat(in studio: UUID?, backend: String?, preset: UUID? = nil, settings: Companion.SettingsRequest? = nil, title: String? = nil) async throws -> Companion.ChatDetail {
+        let body = try JSONEncoder().encode(Companion.NewChatRequest(studio: studio, backend: backend, preset: preset, settings: settings, title: title))
         return try await call("/v1/chats", method: "POST", body: body)
     }
 

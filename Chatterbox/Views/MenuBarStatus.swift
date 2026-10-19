@@ -93,7 +93,7 @@ struct MenuBarPanel: View {
     }
 
     private func newChat() {
-        model.newChat()
+        model.askNewChat()
         reveal()
     }
 

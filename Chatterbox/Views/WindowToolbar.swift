@@ -333,7 +333,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         model.showingHome = false
         model.showingCommandCenter = false
         model.showingSettings = false
-        model.newChat()
+        model.askNewChat()
         apply()
     }
 

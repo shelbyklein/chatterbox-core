@@ -270,6 +270,8 @@ enum Companion {
         var preset: UUID? = nil
         /// Settings chosen before starting (model, effort, permissions), applied after the preset.
         var settings: SettingsRequest? = nil
+        /// The name you gave it; empty or missing: named from the first message, as before.
+        var title: String? = nil
     }
 
     /// A model preset, for agents: its nickname and what it switches to.
