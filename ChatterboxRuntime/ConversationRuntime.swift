@@ -244,8 +244,8 @@ struct CommandReceipt: Codable {
         let keep=Set(state.commands.sorted{$0.value.date > $1.value.date}.prefix(1000).map(\.key))
         state.commands=state.commands.filter{keep.contains($0.key) || $0.value.state != "completed"}
     }
-    func snapshots() -> [RuntimeChatState] {
-        sessions.map { s in
+    func snapshots(workingOnly: Bool = false) -> [RuntimeChatState] {
+        sessions.filter { !workingOnly || $0.isRunning }.map { s in
             var record=s.record;record.items=Array(record.items.suffix(40))
             return RuntimeChatState(record:record,running:s.isRunning,revision:state.revisions[s.id.uuidString] ?? 0,draft:RuntimeDraft(text:s.draft,attachments:s.draftAttachments),totalCount:s.items.count,pendingItems:s.items.filter{$0.approvalState == .pending})
         }

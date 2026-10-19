@@ -22,6 +22,7 @@ import Darwin
         #endif
     }
     private(set) var connected=false
+    private(set) var supportsPriorityList=false
     private(set) var problem:String?
     var onEvent:((RuntimeEvent)->Void)?
     @ObservationIgnored private var socket:RuntimeSocket?
@@ -43,10 +44,16 @@ import Darwin
                 if self.socket==nil {
                     do {
                         try self.connect()
-                        _ = try await self.request("hello",body:["role":.string(self.role)])
+                        let hello = try await self.request("hello",body:["role":.string(self.role)])
+                        self.supportsPriorityList = hello["priorityList"]?.bool == true
                         let replay=try await self.request("subscribe",body:["after":.number(Double(self.cursor))])
                         self.connected=true;self.problem=nil;delay=1
-                        if let events=try replay["events"]?.decode([RuntimeEvent].self){for event in events{self.deliver(event)}}
+                        // A full snapshot replaces expired/initial history. Replaying it first
+                        // launched thousands of redundant refreshes before the list could load.
+                        if self.cursor > 0, replay["resync"]?.bool != true,
+                           let events=try replay["events"]?.decode([RuntimeEvent].self) {
+                            for event in events { self.deliver(event) }
+                        }
                         self.cursor=max(self.cursor,replay["sequence"]?.int ?? 0)
                         self.onEvent?(RuntimeEvent(sequence:self.cursor,revision:0,kind:"runtime.resync"))
                     }catch{self.problem=error.localizedDescription;self.disconnect()}

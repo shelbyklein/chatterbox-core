@@ -111,6 +111,15 @@ struct ContentView: View {
                     #endif
             }
             .padding(12)
+            if let status = model.sessionLoadStatus {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text(status).font(.caption).foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 12).padding(.bottom, 8)
+                .accessibilityIdentifier("session-loading-status")
+            }
             sidebarColumn
         }.modifier(ThemedSidebar(background: themeBackground)))
     }
@@ -118,10 +127,17 @@ struct ContentView: View {
     private var alternateDetail: some View {
             Group {
             if RuntimeClient.usesDaemon, !RuntimeClient.shared.connected {
-                ContentUnavailableView {
-                    Label("Background service unavailable",systemImage:"network.slash")
-                } description: {
-                    Text(RuntimeClient.shared.problem ?? "Connecting to Chatterbox’s background service…")
+                if RuntimeClient.shared.problem == nil, let status = model.sessionLoadStatus {
+                    VStack(spacing: 12) {
+                        ProgressView()
+                        Text(status).foregroundStyle(.secondary)
+                    }
+                } else {
+                    ContentUnavailableView {
+                        Label("Background service unavailable",systemImage:"network.slash")
+                    } description: {
+                        Text(RuntimeClient.shared.problem ?? "Connecting to Chatterbox’s background service…")
+                    }
                 }
             } else if model.showingSettings {
                 SettingsPage()
@@ -153,6 +169,11 @@ struct ContentView: View {
                 } else {
                     ChatView(session: session)
                         .id(session.id)
+                }
+            } else if let status = model.sessionLoadStatus {
+                VStack(spacing: 12) {
+                    ProgressView()
+                    Text(status).foregroundStyle(.secondary)
                 }
             } else {
                 Text("No session selected").foregroundStyle(.secondary)

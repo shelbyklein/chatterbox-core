@@ -533,6 +533,12 @@ struct SidebarActivityStrip: View {
             .padding(.top, 4).padding(.bottom, 2)
     }
 
+    private func activityHelp(_ session: ChatSession, running: Bool) -> String {
+        let source = session.record.sidequestOf.flatMap { id in model.sessions.first { $0.id == id } }
+        let title = source.map { "\($0.record.projectFolder != nil ? $0.projectName : $0.title) · \(session.title)" } ?? session.title
+        return "\(title) · \(running ? session.record.provider.label + " is working" : "New reply")"
+    }
+
     private func row(_ session: ChatSession, running: Bool) -> some View {
         Button {
             if running { Attention.shared.openWorkingChat(session.id, in: model) }
@@ -545,14 +551,27 @@ struct SidebarActivityStrip: View {
                 } else {
                     Circle().fill(.blue).frame(width: 6, height: 6).frame(width: 11, height: 11)
                 }
-                Text(session.record.projectFolder != nil ? session.projectName : session.title)
-                    .font(.caption).lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                if session.isSidequest {
+                    if let parent = session.record.sidequestOf.flatMap({ id in model.sessions.first { $0.id == id } }) {
+                        Text(parent.record.projectFolder != nil ? parent.projectName : parent.title)
+                            .font(.caption).lineLimit(1).layoutPriority(1)
+                    }
+                    Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .accessibilityLabel("Sidequest")
+                    Text(session.title.hasPrefix("Sidequest · ") ? String(session.title.dropFirst("Sidequest · ".count)) : session.title)
+                        .font(.caption).lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    Text(session.record.projectFolder != nil ? session.projectName : session.title)
+                        .font(.caption).lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }.padding(.vertical, 4).padding(.horizontal, 2).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Open \(running ? "working session" : "new reply") \(session.title)")
-        .help("\(session.title) · \(running ? session.record.provider.label + " is working" : "New reply")")
+        .help(activityHelp(session, running: running))
     }
 }
 

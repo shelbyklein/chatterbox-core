@@ -7,6 +7,9 @@ import Observation
 @Observable
 final class AppModel {
     private(set) var sessions: [ChatSession] = []
+    /// Startup progress remains visible until the first complete list is available.
+    private(set) var sessionLoadStatus: String?
+    private var loadedSessionList = false
     /// Groups of chats sharing a folder (see Studios.swift).
     var studios: [Studio] = []
     /// The Studio whose instructions are open for editing.
@@ -346,6 +349,7 @@ final class AppModel {
         }
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         if RuntimeClient.usesDaemon {
+            sessionLoadStatus = "Connecting to background service…"
             RuntimeClient.shared.onEvent = { [weak self] event in self?.runtimeEvent(event) }
             #if GOLEM_APP
             RuntimeClient.shared.start(role:"golem-ui")
@@ -933,18 +937,35 @@ final class AppModel {
     private func resyncOnce() async -> Bool {
         let started=Date()
         do {
-            // The list is the largest reply; give it longer than the usual 15 s.
-            let states=try await RuntimeClient.shared.request("list",timeout:.seconds(60)).decode([RuntimeChatState].self)
+            // Studio names and membership are small and needed when choosing the first chat.
             studios=try await RuntimeClient.shared.request("getStudios").decode([Studio].self)
+            if !loadedSessionList {
+                sessionLoadStatus = "Loading working sessions…"
+                if RuntimeClient.shared.supportsPriorityList {
+                    let working = try await RuntimeClient.shared.request("list",body:["workingOnly":true],timeout:.seconds(60)).decode([RuntimeChatState].self)
+                    for state in working { applyProjection(state) }
+                    Diagnostics.note("Working sessions ready in \(String(format:"%.1f",Date().timeIntervalSince(started))) s (\(working.count) sessions)")
+                }
+                sessionLoadStatus = "Loading remaining sessions…"
+                await Task.yield()
+            }
+            // Display sessions before waiting for unrelated preferences, Studios and pins.
+            let states=try await RuntimeClient.shared.request("list",timeout:.seconds(60)).decode([RuntimeChatState].self)
+            let ids=Set(states.map{ $0.record.id });sessions.removeAll{!ids.contains($0.id)}
+            for (index, state) in states.enumerated() {
+                applyProjection(state)
+                if index % 20 == 19 { await Task.yield() }
+            }
+            loadedSessionList = true
+            sessionLoadStatus = nil
+            for session in sessions { session.resendDraftIfUnsynced() }
             await RuntimePreferenceProjection.shared.start()
             PinStore.shared.applyRuntimePins(try await RuntimeClient.shared.request("getPins").decode([Pin].self))
-            let ids=Set(states.map{ $0.record.id });sessions.removeAll{!ids.contains($0.id)}
-            for state in states {applyProjection(state)}
-            for session in sessions { session.resendDraftIfUnsynced() }
             let elapsed=Date().timeIntervalSince(started)
             if elapsed > 2 { Diagnostics.note("Session list took \(String(format:"%.1f",elapsed)) s to load from the background service (\(states.count) sessions)") }
             return true
         } catch {
+            if !loadedSessionList { sessionLoadStatus = "Loading sessions failed. Retrying…" }
             Diagnostics.note("Couldn't load the session list from the background service; retrying: \(error.localizedDescription)")
             return false
         }
