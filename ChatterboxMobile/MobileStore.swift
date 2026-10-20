@@ -27,6 +27,10 @@ final class MobileStore {
     }
     /// Why the last call failed, shown until one works again.
     private(set) var problem: String?
+    /// Cached sessions stay visible while the first live list is on its way.
+    private(set) var hasRefreshedChats = false
+    @ObservationIgnored private var listRefresh: Task<Void, Never>?
+    @ObservationIgnored private var listRefreshID = UUID()
     @ObservationIgnored private var token: String?
     /// Persisted text per chat. The shared composer writes this synchronously while typing
     /// and when a submitted draft is consumed, before any network suspension.
@@ -57,6 +61,14 @@ final class MobileStore {
             connection = try? JSONDecoder().decode(Connection.self, from: data)
         }
         token = Keychain.read("token")
+        #if DEBUG
+        // Unsigned simulator fixtures cannot reliably retain Keychain items. An explicit
+        // synthetic token tests cached startup without changing signed device pairing.
+        let env = ProcessInfo.processInfo.environment
+        if token == nil, env["CHATTERBOX_TEST_HOST"] == "127.0.0.1", env["CHATTERBOX_TEST_PORT"] == "47411" {
+            token = env["CHATTERBOX_TEST_PAIR_TOKEN"]
+        }
+        #endif
         // Last session's chats, so they show (with their saved text) before the Mac answers.
         if isPaired { chatList = MobileTranscriptCache.loadList() }
         let saved = AppPreferences.defaults.dictionary(forKey: "drafts") as? [String: String] ?? [:]
@@ -98,6 +110,10 @@ final class MobileStore {
     }
 
     func forget() {
+        listRefresh?.cancel()
+        listRefresh = nil
+        listRefreshID = UUID()
+        hasRefreshedChats = false
         MobileTranscriptCache.clear()
         MobileImageCache.shared.clear()
         prefetched = [:]
@@ -119,14 +135,29 @@ final class MobileStore {
     // MARK: - Calls
 
     func loadChats() async {
+        // The iPad can show several tabs/navigation columns sharing this store.
+        // Await one in-flight refresh instead of sending overlapping list requests.
+        if let listRefresh { await listRefresh.value; return }
+        let id = UUID()
+        listRefreshID = id
+        let task = Task { await fetchChats() }
+        listRefresh = task
+        await task.value
+        if listRefreshID == id { listRefresh = nil }
+    }
+
+    private func fetchChats() async {
         do {
             let fresh: Companion.ChatList = try await call("/v1/chats")
+            guard !Task.isCancelled, isPaired else { return }
             chatList = fresh
+            hasRefreshedChats = true
             MobileTranscriptCache.saveList(fresh)
             prefetchRecent()
             await syncPushRegistration()
             if Date().timeIntervalSince(addressesChecked) > 60 { await refreshAddresses() }
         } catch {
+            guard !Task.isCancelled else { return }
             note(error)
             // The Mac can't be reached: last session's chats, with their saved text, still show.
             if chatList == nil, isPaired { chatList = MobileTranscriptCache.loadList() }
@@ -388,7 +419,7 @@ final class MobileStore {
 
     /// Tries each known address until one answers, and remembers the one that did.
     private func raw(_ path: String, method: String = "GET", body: Data? = nil) async throws -> Data {
-        guard let connection, let token else { throw MobileError(message: "This iPhone isn't paired.") }
+        guard let connection, let token else { throw MobileError(message: "This device isn't paired.") }
         do {
             let result = try await CompanionRetry.load(hosts: connection.hosts, method: method, request: { host, probe in
                 request(host: host, path: probe ? "/v1/addresses" : path,
@@ -396,7 +427,7 @@ final class MobileStore {
             }, validate: { data, response in
                 if let http = response as? HTTPURLResponse, http.statusCode == 401 {
                     forget()
-                    throw MobileError(message: "This iPhone was removed from Chatterbox on the Mac. Pair it again.")
+                    throw MobileError(message: "This device was removed from Chatterbox on the Mac. Pair it again.")
                 }
                 try checkStatus(data, response)
             })

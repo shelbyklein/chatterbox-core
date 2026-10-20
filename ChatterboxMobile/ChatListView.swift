@@ -95,6 +95,20 @@ struct ChatListView: View {
                             } label: { Image(systemName: "ellipsis.circle") }
                             .accessibilityLabel("Studio options")
                         }
+                    } else if sizeClass == .regular {
+                        // Keep the sidebar's title readable alongside its native toggle.
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Menu {
+                                connectionItems
+                                Picker("Sort", selection: $sortName) {
+                                    ForEach(Sort.allCases) { Label($0.title, systemImage: $0.icon).tag($0.rawValue) }
+                                }
+                                Button { withAnimation { showsCards.toggle() } } label: {
+                                    Label(showsCards ? "Show as List" : "Show as Cards", systemImage: showsCards ? "list.bullet" : "square.grid.2x2")
+                                }
+                            } label: { Image(systemName: "ellipsis.circle") }
+                            .accessibilityLabel("Connection")
+                        }
                     } else {
                     ToolbarItem(placement: .topBarTrailing) { connectionMenu }
                     ToolbarItem(placement: .topBarTrailing) {
@@ -114,6 +128,7 @@ struct ChatListView: View {
                     }
                     ToolbarItem(placement: .topBarTrailing) { newChatMenu }
                 }
+                .navigationSplitViewColumnWidth(min: 320, ideal: 380, max: 460)
         } detail: {
             detail
         }
@@ -334,9 +349,30 @@ struct ChatListView: View {
     }
 
     /// The same chats as the list, as cards two to a row under the same headings.
+    /// A narrow iPad sidebar uses one readable card rather than squeezing two phone cards.
+    private var cardColumns: [GridItem] {
+        sizeClass == .regular ? [GridItem(.adaptive(minimum: 160), spacing: 10)] :
+            [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)]
+    }
+
+    @ViewBuilder
+    private var loadingStatus: some View {
+        if !store.hasRefreshedChats, store.problem == nil {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text(store.chatList == nil ? "Connecting to \(store.connection?.macName ?? "your Mac")…" : "Updating saved sessions…")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("session-load-status")
+        }
+    }
+
     private var chatCards: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 18) {
+                loadingStatus
                 if let problem = store.problem {
                     Label(problem, systemImage: "wifi.exclamationmark").font(.callout).foregroundStyle(.orange)
                 }
@@ -347,7 +383,7 @@ struct ChatListView: View {
                     ForEach(groups) { group in
                         VStack(alignment: .leading, spacing: 8) {
                             if showsHeader(group) { header(group).font(.footnote.weight(.semibold)).foregroundStyle(.secondary).textCase(.uppercase) }
-                            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                            LazyVGrid(columns: cardColumns, spacing: 10) {
                                 ForEach(group.chats) { chat in
                                     ChatCard(chat: chat, showsThumbnail: page == .studios || (page == .all && studioChatIDs.contains(chat.id)), selected: sizeClass == .regular && selection == chat.id, activity: sort == .active ? Self.activityLine(chat) : nil) { open(chat) }
                                         .contextMenu { chatActions(chat) }
@@ -355,8 +391,6 @@ struct ChatListView: View {
                             }
                         }
                     }
-                } else if store.problem == nil {
-                    ProgressView().frame(maxWidth: .infinity)
                 }
             }
             .padding(16)
@@ -380,7 +414,7 @@ struct ChatListView: View {
 
     /// Every Studio as a card, to open one.
     private var studioIndex: some View {
-        LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
+        LazyVGrid(columns: cardColumns, spacing: 12) {
             ForEach(studioGroups) { group in
                 StudioIndexCard(group: group) { withAnimation(.easeOut(duration: 0.2)) { selectedStudioID = group.id } }
             }
@@ -390,6 +424,7 @@ struct ChatListView: View {
     private var studioWorkspace: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 16) {
+                loadingStatus
                 if let problem = store.problem {
                     Label(problem, systemImage: "wifi.exclamationmark").font(.callout).foregroundStyle(.orange)
                 }
@@ -431,7 +466,7 @@ struct ChatListView: View {
                                 }
                                 .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
                             } else {
-                                LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                                LazyVGrid(columns: cardColumns, spacing: 10) {
                                     ForEach(group.chats) { chat in
                                         ChatCard(chat: chat, showsThumbnail: true, selected: sizeClass == .regular && selection == chat.id,
                                                  isNew: isNewReply(chat)) { open(chat) }
@@ -441,7 +476,7 @@ struct ChatListView: View {
                             }
                         }
                     }
-                } else if store.problem == nil { ProgressView().frame(maxWidth: .infinity) }
+                }
             }
             .padding(16)
         }
@@ -465,6 +500,7 @@ struct ChatListView: View {
 
     private var chatList: some View {
         List {
+            loadingStatus.listRowBackground(Color.clear)
             if let problem = store.problem {
                 Section {
                     Label(problem, systemImage: "wifi.exclamationmark")
@@ -507,8 +543,6 @@ struct ChatListView: View {
                         }
                     }
                 }
-            } else if store.problem == nil {
-                HStack { Spacer(); ProgressView(); Spacer() }
             }
         }
     }

@@ -136,8 +136,8 @@ struct MobileNewReplies: View {
     var body: some View {
         let replies = replies
         let working = working
-        let entries = working.map { MobileActivityEntry(chat: $0, reply: nil) }
-            + replies.compactMap { reply in summary(reply.chatID).map { MobileActivityEntry(chat: $0, reply: reply) } }
+        let entries = working.map { entry($0, reply: nil) }
+            + replies.compactMap { reply in summary(reply.chatID).map { entry($0, reply: reply) } }
         Group {
             if !entries.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
@@ -182,6 +182,11 @@ struct MobileNewReplies: View {
         } message: { Text(problem ?? "") }
     }
 
+    private func entry(_ chat: Companion.ChatSummary, reply: Companion.TurnCompletion?) -> MobileActivityEntry {
+        let parent = chat.sidequestOf.flatMap { parentID in chats.first { $0.id == parentID } }
+        return MobileActivityEntry(chat: chat, reply: reply, source: parent.map { $0.project ?? $0.title })
+    }
+
     private func dismiss(_ entry: MobileActivityEntry) {
         MobileActivityDismissals.shared.dismiss(entry.chat, reply: entry.reply, activity: activity)
     }
@@ -208,6 +213,9 @@ struct MobileNewReplies: View {
 private struct MobileActivityEntry: Identifiable, Equatable {
     let chat: Companion.ChatSummary
     let reply: Companion.TurnCompletion?
+    let source: String?
+    var title: String { source ?? chat.worktreeBranch ?? chat.project ?? chat.title }
+    var subtitle: String? { chat.isSidequest ? chat.sidequestTask ?? chat.subtitle : chat.subtitle }
     var id: String { reply.map { "reply:\($0.id)" } ?? "working:\(chat.id)" }
     var backend: String { reply?.backend ?? chat.backend }
 }
@@ -344,6 +352,7 @@ private final class MobileActivityCell: UITableViewCell {
     private let spinner = UIActivityIndicatorView(style: .medium)
     private let provider = UIImageView()
     private let name = UILabel()
+    private let sidequest = UIImageView(image: UIImage(systemName: "point.topleft.down.to.point.bottomright.curvepath"))
     private let subtitle = UILabel()
     private let time = UILabel()
 
@@ -367,14 +376,19 @@ private final class MobileActivityCell: UITableViewCell {
         time.font = .preferredFont(forTextStyle: .caption2); time.textColor = .secondaryLabel
         time.numberOfLines = 2; time.textAlignment = .right
         for label in [name, subtitle, time] { label.adjustsFontForContentSizeCategory = true }
-        let text = UIStackView(arrangedSubviews: [name, subtitle]); text.axis = .vertical; text.spacing = 2
+        sidequest.contentMode = .scaleAspectFit; sidequest.tintColor = .secondaryLabel
+        let title = UIStackView(arrangedSubviews: [name, sidequest]); title.spacing = 4; title.alignment = .center
+        let text = UIStackView(arrangedSubviews: [title, subtitle]); text.axis = .vertical; text.spacing = 2
         let row = UIStackView(arrangedSubviews: [status, provider, text, time]); row.spacing = 10; row.alignment = .center
         row.translatesAutoresizingMaskIntoConstraints = false; contentView.addSubview(row)
         text.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         time.setContentCompressionResistancePriority(.required, for: .horizontal)
+        let sidequestWidth = sidequest.widthAnchor.constraint(equalToConstant: 13)
+        sidequestWidth.priority = .defaultHigh // A hidden arranged image collapses to zero.
         NSLayoutConstraint.activate([
             status.widthAnchor.constraint(equalToConstant: 10), status.heightAnchor.constraint(equalToConstant: 20),
             provider.widthAnchor.constraint(equalToConstant: 16), provider.heightAnchor.constraint(equalToConstant: 16),
+            sidequestWidth, sidequest.heightAnchor.constraint(equalToConstant: 13),
             time.widthAnchor.constraint(lessThanOrEqualToConstant: 80),
             row.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
             row.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
@@ -387,8 +401,9 @@ private final class MobileActivityCell: UITableViewCell {
 
     func configure(_ entry: MobileActivityEntry, busy: Bool, now: Date) {
         let chat = entry.chat
-        name.text = chat.worktreeBranch ?? chat.project ?? chat.title
-        subtitle.text = chat.subtitle; subtitle.isHidden = chat.subtitle?.isEmpty != false
+        name.text = entry.title
+        sidequest.isHidden = !chat.isSidequest
+        subtitle.text = entry.subtitle; subtitle.isHidden = entry.subtitle?.isEmpty != false
         let accent = UIColor(MobileConversationStyle.accent(for: entry.backend))
         provider.image = UIImage(named: (Backend(rawValue: entry.backend) ?? .claude).iconName)?.withRenderingMode(.alwaysTemplate)
         provider.tintColor = accent; spinner.color = accent
@@ -399,8 +414,8 @@ private final class MobileActivityCell: UITableViewCell {
             let formatter = RelativeDateTimeFormatter(); formatter.unitsStyle = .short
             time.text = formatter.localizedString(for: reply.endedAt, relativeTo: now)
         } else { time.text = "Working" }
-        accessibilityLabel = "\(entry.reply == nil ? "Working" : "New reply"): \(chat.title)"
-        accessibilityValue = [chat.subtitle, time.text].compactMap { $0 }.joined(separator: ", ")
+        accessibilityLabel = "\(entry.reply == nil ? "Working" : "New reply"): \(chat.isSidequest ? entry.title + " · Sidequest" : chat.title)"
+        accessibilityValue = [entry.subtitle, time.text].compactMap { $0 }.joined(separator: ", ")
         accessibilityHint = "Opens the chat. Swipe left to clear it from Activity, right to archive or delete."
         accessibilityTraits = busy ? [.button, .notEnabled] : .button
     }
