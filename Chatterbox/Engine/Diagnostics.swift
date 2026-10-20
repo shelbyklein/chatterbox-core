@@ -74,8 +74,10 @@ final class Diagnostics {
     /// its faults.
     func stop() {
         watchdog?.stop()
-        try? FileManager.default.moveItem(at: runningMarker, to: lastRunMarker)
-        try? FileManager.default.removeItem(at: runningMarker)
+        if let data = try? Data(contentsOf: runningMarker) {
+            try? data.write(to: lastRunMarker, options: .atomic)
+            try? FileManager.default.removeItem(at: runningMarker)
+        }
     }
 
     // MARK: - The watcher outside the app

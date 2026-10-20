@@ -423,29 +423,30 @@ struct SessionToolsSummary: View {
         let otherOff = tools.off.filter { !$0.hasPrefix("server:") }.sorted()
         VStack(alignment: .leading, spacing: 6) {
             Text("Tools").font(.subheadline.weight(.semibold))
-            if let servers {
-                if servers.isEmpty {
-                    Text("No MCP servers in \(backend.label)'s config or Chatterbox.").font(.caption).foregroundStyle(.secondary)
-                } else {
-                    Text("MCP servers \(backend.label) loads").font(.caption.weight(.medium))
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 3) {
-                            ForEach(servers) { serverRow($0) }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 6) {
+                    if let servers {
+                        if servers.isEmpty {
+                            Text("No MCP servers in \(backend.label)'s config or Chatterbox.").font(.caption).foregroundStyle(.secondary)
+                        } else {
+                            Text("MCP servers \(backend.label) loads").font(.caption.weight(.medium))
+                            VStack(alignment: .leading, spacing: 3) {
+                                ForEach(servers) { serverRow($0) }
+                            }
                         }
+                    } else {
+                        ProgressView().controlSize(.small)
                     }
-                    .frame(maxHeight: 220)
-                    .fixedSize(horizontal: false, vertical: true)
+                    if backend == .claude {
+                        Text(session.claudeToolSearch ? "Tool search is on: MCP tools load on demand." : "Tool search is off: every MCP tool loads at the start.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    if !otherOff.isEmpty {
+                        Text("Off: " + otherOff.map { $0.split(separator: ":", maxSplits: 1).last.map(String.init) ?? $0 }.joined(separator: ", "))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }
-            } else {
-                ProgressView().controlSize(.small)
-            }
-            if backend == .claude {
-                Text(session.claudeToolSearch ? "Tool search is on: MCP tools load on demand." : "Tool search is off: every MCP tool loads at the start.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            if !otherOff.isEmpty {
-                Text("Off: " + otherOff.map { $0.split(separator: ":", maxSplits: 1).last.map(String.init) ?? $0 }.joined(separator: ", "))
-                    .font(.caption).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             HStack {
                 if let folder = ToolScopes.projectFolder(of: session) {

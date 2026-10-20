@@ -232,7 +232,11 @@ struct ToolsButton: View {
             .buttonStyle(.plain).modifier(SideIcon.Tile())
             .help("Tools: MCP servers, connectors and skills for this session")
             .accessibilityLabel("Tools")
-            .popover(isPresented: $open, arrowEdge: .leading) { SessionToolsSummary(session: session).padding(16).frame(width: 320) }
+            .popover(isPresented: $open, arrowEdge: .leading) {
+                // Keep the window the same size while discovery replaces the loading state.
+                // Animated NSPopover resizing can crash macOS's UpdateCycle driver.
+                SessionToolsSummary(session: session).padding(16).frame(width: 320, height: 360)
+            }
     }
 }
 

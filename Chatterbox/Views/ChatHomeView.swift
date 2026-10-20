@@ -164,10 +164,10 @@ struct ThreadCard: View {
                 }
                 Text(preview).font(.system(size: (expanded ? 13 : 10.5) * scale)).foregroundStyle(.secondary)
                     .lineLimit(expanded ? 4 : 2).frame(maxWidth: .infinity, alignment: .leading)
-                let quests = model.sidequests(of: session)
-                if !quests.isEmpty {
+                let children = model.childChats(of: session)
+                if !children.isEmpty {
                     VStack(alignment: .leading, spacing: 3) {
-                        ForEach(quests) { quest in SidequestCardRow(quest: quest, scale: scale) }
+                        ForEach(children) { ChildChatCardRow(chat: $0, scale: scale) }
                     }
                 }
                 Spacer(minLength: 0)

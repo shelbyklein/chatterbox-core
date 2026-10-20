@@ -878,10 +878,21 @@ struct StudioDestinationSheet: View {
 struct NewSidechatControl: View {
     @Environment(AppModel.self) private var model
     let parent: ChatSession
+    var iconOnly = false
 
     var body: some View {
-        Button("New Sidechat", systemImage: "bubble.left.and.bubble.right") { model.newSidechat(of: parent) }
-            .help("A temporary separate thread in the same folder; no Git branch is created")
+        Group {
+            if iconOnly {
+                Button { model.newSidechat(of: parent) } label: {
+                    Image(systemName: "bubble.left.and.bubble.right")
+                }
+                .buttonStyle(.plain).modifier(SideIcon.Tile())
+            } else {
+                Button("New Sidechat", systemImage: "bubble.left.and.bubble.right") { model.newSidechat(of: parent) }
+            }
+        }
+        .accessibilityLabel("New Sidechat")
+        .help("New Sidechat: a separate thread in the same folder; no Git branch is created")
     }
 }
 
@@ -1388,7 +1399,7 @@ extension ContentView {
         if root.record.projectFolder != nil || root.record.convertedProjectFolder != nil {
             for branch in model.worktrees(of: root) { threads += [branch] + model.sidechats(of: branch) }
         }
-        // Sidequests show inside their chat's card instead of as cards of their own.
+        // Child chats show inside their parent's card instead of as cards of their own.
         return threads.filter { !model.showsInsideParentCard($0) }
     }
 

@@ -101,7 +101,10 @@ struct ChatView: View {
                                     ToolsButton(session: session)
                                     SessionImages(bridge: windowToolbar ?? ownToolbar)
                                     ChatQuickActions(session: session)
-                                    if !session.isSidequest { SidequestButton(session: session) }
+                                    if !session.isSidequest {
+                                        NewSidechatControl(parent: session, iconOnly: true)
+                                        SidequestButton(session: session)
+                                    }
                                 }
                                 ChatPins(chat: session.record.id, agentName: session.record.backend == .codex ? "Codex" : "Claude",
                                          panelWidth: min(280, max(220, (geometry.size.width - appearance.style.contentWidth) / 2 - 32))) { pinJump = $0 }

@@ -243,14 +243,20 @@ final class AppModel {
         activeSessions.filter { $0.record.sidechatOf == parent.id }.sorted { $0.lastActivity > $1.lastActivity }
     }
 
-    /// A sidequest whose chat is open shows inside that chat's card; once the chat is
-    /// archived it gets a card of its own again.
+    /// Sidechats and sidequests live inside the original parent's card. Once that parent
+    /// is archived they get cards of their own again.
     func showsInsideParentCard(_ session: ChatSession) -> Bool {
-        guard let parent = session.record.sidequestOf else { return false }
+        guard let parent = session.record.sidechatOf ?? session.record.sidequestOf else { return false }
         return activeSessions.contains { $0.id == parent }
     }
 
-    /// The sidequests a chat started, oldest first; cards show them inside the chat's own card.
+    /// Every child shown inside this card, including sidequests, in creation order.
+    func childChats(of parent: ChatSession) -> [ChatSession] {
+        activeSessions.filter { ($0.record.sidechatOf ?? $0.record.sidequestOf) == parent.id }
+            .sorted { $0.record.createdAt < $1.record.createdAt }
+    }
+
+    /// The sidequests a chat started, oldest first.
     func sidequests(of parent: ChatSession) -> [ChatSession] {
         activeSessions.filter { $0.record.sidequestOf == parent.id }.sorted { $0.record.createdAt < $1.record.createdAt }
     }
@@ -351,6 +357,8 @@ final class AppModel {
             directory = base.appendingPathComponent("Chatterbox/Conversations", isDirectory: true)
         }
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        // The UI can crash or hang even when the daemon owns its conversations.
+        Diagnostics.shared.start()
         if RuntimeClient.usesDaemon {
             restoreNavigationCache()
             sessionLoadStatus = sessions.isEmpty ? "Connecting to background service…" : "Updating sessions…"
@@ -369,8 +377,6 @@ final class AppModel {
             legacyOwnership = try RuntimeOwnership(root: directory.deletingLastPathComponent())
         }
         catch { Diagnostics.note(error.localizedDescription);return }
-        // First, so a hang during launch is caught too.
-        Diagnostics.shared.start()
         #if DEBUG
         // Tests: open a chat some seconds after launch, like clicking it ("8:<chat id>").
         if let spec = ProcessInfo.processInfo.environment["CHATTERBOX_TEST_OPEN_AFTER"], let colon = spec.firstIndex(of: ":"),
@@ -435,11 +441,11 @@ final class AppModel {
 
     /// Replies keep running in the background host after the app quits, unless turned off.
     private func applicationWillTerminate() {
+        Diagnostics.shared.stop()
         if RuntimeClient.usesDaemon {
             if !Self.keepRepliesRunning {for session in sessions where !session.isDot && session.isRunning {session.interrupt()}}
             return
         }
-        Diagnostics.shared.stop()
         for session in sessions { session.killShellJobs() }
         saveUnsaved()
         guard !Self.keepRepliesRunning else { return }

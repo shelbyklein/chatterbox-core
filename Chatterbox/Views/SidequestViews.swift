@@ -148,35 +148,35 @@ struct SidequestWindows: View {
     }
 }
 
-/// A sidequest inside its chat's card: the other agent, the task, and whether it's still
-/// going, waiting on you, or back. Click it to open the sidequest.
-struct SidequestCardRow: View {
-    let quest: ChatSession
+/// A sidechat or sidequest inside its parent's card, with its relationship and live status.
+struct ChildChatCardRow: View {
+    let chat: ChatSession
     var scale: CGFloat = 1
     @Environment(AppModel.self) private var model
     private let appearance = ReaderStyleSettings()
+    private var kind: String { chat.isSidequest ? "Sidequest" : "Sidechat" }
+    private var title: String { chat.record.sidequestTask ?? chat.title }
 
     var body: some View {
-        Button { model.selectedID = quest.id } label: {
+        Button { model.selectedID = chat.id } label: {
             HStack(spacing: 5) {
+                Image(systemName: chat.isSidequest ? "point.topleft.down.to.point.bottomright.curvepath" : "bubble.left.and.bubble.right")
+                    .font(.system(size: 9 * scale)).foregroundStyle(.secondary)
+                Image(chat.record.provider.iconName).resizable().scaledToFit()
+                    .foregroundStyle(appearance.style.color(for: chat.record.provider))
+                    .frame(width: 10 * scale, height: 10 * scale)
+                Text(title).font(.system(size: 10 * scale)).lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 Group {
-                    if quest.isWaitingOnYou {
+                    if chat.isWaitingOnYou {
                         Circle().fill(.yellow).frame(width: 6 * scale, height: 6 * scale)
-                    } else if quest.isRunning {
-                        ActivitySpinner(color: appearance.style.color(for: quest.record.backend))
-                    } else if quest.record.sidequestReturned != nil {
+                    } else if chat.isRunning {
+                        ActivitySpinner(color: appearance.style.color(for: chat.record.provider))
+                    } else if chat.record.sidequestReturned != nil {
                         Image(systemName: "checkmark").font(.system(size: 8 * scale, weight: .bold)).foregroundStyle(.secondary)
-                    } else {
-                        Image(systemName: "point.topleft.down.to.point.bottomright.curvepath").font(.system(size: 8 * scale))
                     }
                 }
                 .frame(width: 10 * scale, height: 10 * scale)
-                Image(quest.record.provider.iconName).resizable().scaledToFit()
-                    .foregroundStyle(appearance.style.color(for: quest.record.provider))
-                    .frame(width: 10 * scale, height: 10 * scale)
-                Text(quest.record.sidequestTask ?? quest.title)
-                    .font(.system(size: 10 * scale)).lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(.horizontal, 6 * scale).padding(.vertical, 3 * scale)
             .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 6))
@@ -184,11 +184,11 @@ struct SidequestCardRow: View {
         }
         .buttonStyle(.plain)
         .contextMenu {
-            Button("Open Sidequest") { model.selectedID = quest.id }
-            Button("End Sidequest") { model.archive(quest) }.disabled(quest.isRunning)
+            Button("Open \(kind)") { model.selectedID = chat.id }
+            Button("End \(kind)") { model.archive(chat) }.disabled(chat.isRunning)
         }
-        .help("Sidequest to \(quest.record.backend.label): \(quest.record.sidequestTask ?? quest.title)"
-              + (quest.isRunning ? " (working)" : quest.record.sidequestReturned != nil ? " (answer sent back)" : ""))
-        .accessibilityLabel("Open sidequest: \(quest.record.sidequestTask ?? quest.title)")
+        .help("\(kind) · \(chat.record.backend.label): \(title)"
+              + (chat.isRunning ? " (working)" : chat.record.sidequestReturned != nil ? " (answer sent back)" : ""))
+        .accessibilityLabel("Open \(kind.lowercased()): \(title)")
     }
 }
