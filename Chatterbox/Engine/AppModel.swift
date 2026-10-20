@@ -979,7 +979,7 @@ final class AppModel {
         guard RuntimeClient.usesDaemon else { return }
         if !session.transcriptLoaded {
             do {
-                let state = try await RuntimeClient.shared.request("get", body: ["chatID": .string(session.id.uuidString), "limit": 80]).decode(RuntimeChatState.self)
+                let state = try await RuntimeClient.shared.request("get", body: ["chatID": .string(session.id.uuidString), "limit": 40]).decode(RuntimeChatState.self)
                 applyProjection(state)
             } catch { session.transcriptProblem = error.localizedDescription; return }
         }
@@ -1002,7 +1002,7 @@ final class AppModel {
             do {
                 repeat {
                     guard let first = session.items.first?.id, wantsTranscript(id) else { return }
-                    let body: JSON = ["chatID": .string(id.uuidString), "before": .string(first.uuidString), "limit": 200]
+                    let body: JSON = ["chatID": .string(id.uuidString), "before": .string(first.uuidString), "limit": .number(complete ? 200 : 40)]
                     let state = try await RuntimeClient.shared.request("get", body: body, timeout: .seconds(60)).decode(RuntimeChatState.self)
                     guard wantsTranscript(id), session.items.first?.id == first else { return }
                     let existing = Set(session.items.map(\.id))
@@ -1084,7 +1084,7 @@ final class AppModel {
                 if visible { session?.transcriptLoading = true; session?.transcriptProblem = nil }
                 do {
                     var body: [String: JSON] = ["chatID": .string(id.uuidString)]
-                    if RuntimeClient.shared.supportsNavigationSummaries { body["limit"] = 80 }
+                    if RuntimeClient.shared.supportsNavigationSummaries { body["limit"] = 40 }
                     if RuntimeClient.shared.supportsNavigationSummaries && !visible { body["summaryOnly"] = true }
                     let state = try await RuntimeClient.shared.request("get", body: .object(body)).decode(RuntimeChatState.self)
                     applyProjection(state)

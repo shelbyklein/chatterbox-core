@@ -167,20 +167,17 @@ struct ChatView: View {
     @State private var previewLink: PreviewLink?
     @State private var selectedPreview: (URL, PreviewDestination)?
     @State private var previewOpenError: String?
-    /// How many of the newest rows to draw; "Show earlier" adds a page at a time.
-    /// A chat opens with `firstRows` so it appears at once, then fills in to `rowPage`.
+    /// Keep the recent transcript small. Only an explicit click reveals another chunk.
     @State private var shownRowCount = ChatView.firstRows
-    /// Scrolling up to the top loads earlier rows, once the chat has settled at its newest.
-    @State private var loadsEarlierOnScroll = false
     /// ⌘F: searching this chat (ChatFind.swift).
     @State private var find = ChatFind()
     /// Messages around a match far back in the history, drawn in place of the latest ones.
     @State private var findWindow: Range<Int>?
-    static let rowPage = 40
+    static let rowPage = 12
     static let firstRows = 12
     /// Step groups you've opened.
     @State private var openStepGroups: Set<UUID> = []
-    /// The "Show earlier" count, kept until the history grows (see earlierRowCount).
+    /// The "Load earlier" count, kept until the history grows (see earlierRowCount).
     @State private var earlierCountCache = EarlierCount()
     @AppStorage("readerGroupSteps") private var groupSteps = true
     @State private var composerFocused = false
@@ -519,30 +516,28 @@ struct ChatView: View {
                         if page.hasEarlier || session.hasEarlierTranscript {
                             let earlier = earlierRowCount(before: page.start) + session.transcriptStart
                             Button {
-                                shownRowCount += Self.rowPage
+                                let anchor = page.rows.first?.id
+                                shownRowCount = page.rows.count + Self.rowPage
                                 if !page.hasEarlier {
-                                    olderPageAnchor = page.rows.first?.id
+                                    olderPageAnchor = anchor
                                     model.loadEarlierTranscript(session)
+                                } else if let anchor {
+                                    // Prepending must leave the message you were reading in place.
+                                    DispatchQueue.main.async { proxy.scrollTo(anchor, anchor: .top) }
                                 }
                             } label: {
-                                Label(session.transcriptLoading ? "Loading earlier messages…" : "Show earlier messages", systemImage: "arrow.up.circle")
+                                Label(session.transcriptLoading ? "Loading earlier messages…" : "Load earlier messages", systemImage: "arrow.up.circle")
                                     .font(.callout)
                                     .foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity, minHeight: 28)
+                                    .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
                             .disabled(session.transcriptLoading)
                             .frame(maxWidth: .infinity)
                             .padding(.bottom, 10)
+                            .accessibilityIdentifier("loadEarlierMessages")
                             .help("\(earlier) earlier rows in this session")
-                            // Scrolling up to here loads the next page: a chat opens with only its
-                            // newest rows, so switching to it doesn't build history you may not read.
-                            .modifier(LoadsWhenScrolledTo(enabled: findWindow == nil && loadsEarlierOnScroll && !session.transcriptLoading) {
-                                shownRowCount += Self.rowPage
-                                if !page.hasEarlier {
-                                    olderPageAnchor = page.rows.first?.id
-                                    model.loadEarlierTranscript(session)
-                                }
-                            })
                             if let problem = session.transcriptProblem {
                                 Text(problem).font(.caption).foregroundStyle(.secondary)
                             }
@@ -604,35 +599,7 @@ struct ChatView: View {
                 guard !Task.isCancelled else { return }
                 proxy.scrollTo("bottom", anchor: .bottom)
                 Diagnostics.signposts.emitEvent("Chat shown")
-                // Each row costs layout up front (the stack is eager), so the rest of the first
-                // page arrives just after the chat is on screen. One step: growing in several
-                // re-lays out the rows already there each time.
-                guard !session.isDot, shownRowCount < Self.rowPage else { return }
-                // macOS 15 and later load earlier rows as you scroll up to them (LoadsWhenScrolledTo):
-                // settle at the newest message first, so the top showing while it opens loads nothing.
-                if #available(macOS 15.0, *) {
-                    keepBottom(proxy)
-                    try? await Task.sleep(for: .milliseconds(400))
-                    guard !Task.isCancelled else { return }
-                    loadsEarlierOnScroll = true
-                    return
-                }
-                if isMainChat {
-                    // Expanding the eager stack during the fade stalls its frames. Let the
-                    // first page become interactive, finish the 100ms incoming fade, then
-                    // prepare extra history only if this chat is still mounted.
-                    while switchingChats {
-                        try? await Task.sleep(for: .milliseconds(10))
-                        guard !Task.isCancelled else { return }
-                    }
-                    try? await Task.sleep(for: .milliseconds(150))
-                } else {
-                    try? await Task.sleep(for: .milliseconds(30))
-                }
-                guard !Task.isCancelled else { return }
-                shownRowCount = Self.rowPage
-                // The new rows can take more than one pass to lay out; keep the newest in view until they settle.
-                keepBottom(proxy)
+                if !session.isDot { keepBottom(proxy) }
             }
             .onChange(of: session.isRunning) { _, running in
                 if !running { stopStatus = nil; requestingStop = false }
@@ -646,6 +613,9 @@ struct ChatView: View {
                     DispatchQueue.main.async { proxy.scrollTo(anchor, anchor: .top) }
                 }
                 if let id = pinJump { pinJump = nil; jump(to: id, proxy) }
+            }
+            .onChange(of: session.transcriptProblem) { _, problem in
+                if problem != nil { olderPageAnchor = nil }
             }
             .onChange(of: find.jumpRequest) { jumpToMatch(proxy) }
             .onChange(of: pinJump) { _, id in
@@ -739,7 +709,7 @@ struct ChatView: View {
         return (page.rows, session.agents(forItemsFrom: page.start), page.start, page.hasEarlier)
     }
 
-    /// Rows before `start`, for the "Show earlier" button; counted once per history length.
+    /// Rows before `start`, for the "Load earlier" button; counted once per history length.
     private func earlierRowCount(before start: Int) -> Int {
         let key = "\(session.items.count)|\(start)|\(appearance.showThinking)|\(groupSteps)"
         if let cached = earlierCountCache.value, earlierCountCache.key == key { return cached }
@@ -1704,19 +1674,6 @@ struct InspectorSize: Equatable {
 struct MainInspectorKey: PreferenceKey {
     static let defaultValue: InspectorSize? = nil
     static func reduce(value: inout InspectorSize?, nextValue: () -> InspectorSize?) { value = value ?? nextValue() }
-}
-
-/// Runs `load` each time the view scrolls into sight (macOS 15 and later).
-private struct LoadsWhenScrolledTo: ViewModifier {
-    var enabled: Bool
-    let load: () -> Void
-    func body(content: Content) -> some View {
-        if #available(macOS 15.0, *), enabled {
-            content.onScrollVisibilityChange(threshold: 0.2) { visible in if visible { load() } }
-        } else {
-            content
-        }
-    }
 }
 
 struct FlexibleWidth: Layout {
