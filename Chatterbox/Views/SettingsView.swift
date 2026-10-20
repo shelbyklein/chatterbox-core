@@ -294,6 +294,9 @@ struct SettingsView: View {
 
     private var diagnosticsPane: some View {
         Form {
+            #if !GOLEM_APP
+            BackgroundServiceSection()
+            #endif
             DiagnosticsSection()
         }
         .formStyle(WideFormStyle())
@@ -997,6 +1000,50 @@ private struct DotActivitySettings: View {
 }
 
 #endif
+
+/// Uses the shared idle-safe job; status survives closing Settings or reopening the app.
+struct BackgroundServiceSection: View {
+    var restart = BackgroundServiceRestart.shared
+
+    var body: some View {
+        Section {
+            LabeledContent("Connection") {
+                Text(RuntimeClient.shared.connected ? "Connected" : "Reconnecting…")
+                    .foregroundStyle(.secondary)
+            }
+            HStack {
+                Text("Restart the background service")
+                Spacer()
+                Button("Restart Background Service") { Task { await restart.restart() } }
+                    .disabled(restart.pending)
+                    .help("Wait for active replies to finish, then restart the service and reconnect")
+                    .accessibilityIdentifier("restart-background-service")
+            }
+            if !restart.message.isEmpty {
+                HStack(alignment: .top, spacing: 12) {
+                    Text(restart.message)
+                        .font(.callout)
+                        .foregroundStyle(restart.phase == .failed ? Color.red : Color.secondary)
+                        .accessibilityIdentifier("background-service-restart-status")
+                    Spacer()
+                    if FileManager.default.fileExists(atPath: restart.reportURL.path) {
+                        Button("Show Restart Report") { NSWorkspace.shared.activateFileViewerSelecting([restart.reportURL]) }
+                    }
+                }
+            }
+        } header: { Text("Background service") }
+        footer: {
+            Text("Waits for active replies to finish. Chatterbox reconnects automatically; chats and drafts are kept.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .task {
+            repeat {
+                restart.refresh()
+                try? await Task.sleep(for: .seconds(2))
+            } while !Task.isCancelled
+        }
+    }
+}
 
 /// Hang and crash reports: what Chatterbox recorded when it stopped responding or didn't
 /// quit cleanly.
