@@ -209,6 +209,17 @@ final class ChatSession: Identifiable {
     /// Where this chat's question and approval rows are (see `pendingRequests`).
     @ObservationIgnored var requestRowCache = RequestRowCache()
     @ObservationIgnored var thumbnailLookupURL: URL?
+    /// A projected, unopened session has navigation data, not an empty conversation.
+    var listSummary: SessionListSummary?
+    var projectedPendingItems: [DisplayItem]?
+    var transcriptTotalCount: Int?
+    var transcriptStart = 0
+    var transcriptLoaded = true
+    var transcriptLoading = false
+    var transcriptProblem: String?
+    var historyPage = 0
+    var hasMessages: Bool { !items.isEmpty || (transcriptTotalCount ?? 0) > 0 }
+    var hasEarlierTranscript: Bool { transcriptStart > 0 }
     var items: [DisplayItem] { record.items }
     var title: String { record.title }
     /// The project's nickname, or else its folder's name.

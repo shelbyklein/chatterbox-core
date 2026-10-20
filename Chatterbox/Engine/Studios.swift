@@ -133,7 +133,7 @@ extension AppModel {
     /// Opens a new chat in the Studio, reusing an empty one that's already there.
     @discardableResult
     func newChat(in studio: Studio, backend: Backend? = nil) -> ChatSession {
-        if let empty = chats(in: studio).first(where: { $0.items.isEmpty && !$0.isRunning }) {
+        if let empty = chats(in: studio).first(where: { !$0.hasMessages && !$0.isRunning }) {
             PermissionModes.applyNewStudioDefaults(to: &empty.record, folder: empty.workingFolder)
             empty.onChange?(empty)
             if let backend { empty.setBackend(backend) }
@@ -186,7 +186,7 @@ extension AppModel {
     /// folder has one chat).
     func canFork(_ session: ChatSession) -> Bool {
         // Dot is one of a kind: a copy would take over as Dot (the first one found wins).
-        !session.isRunning && !session.isDot && session.record.projectFolder == nil && !session.items.isEmpty
+        !session.isRunning && !session.isDot && session.record.projectFolder == nil && session.hasMessages
     }
 
     /// Copies a chat into a new one beside it (in the same Studio, if it's in one) that

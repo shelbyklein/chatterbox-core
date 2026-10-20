@@ -39,7 +39,10 @@ struct SessionImageGrid: View {
             }
         }
         // A session's images change as it works: collect again when any of them changes.
+        .onAppear { model.retainTranscript(session) }
+        .onDisappear { model.releaseTranscript(session.id) }
         .task(id: sessions.map { "\($0.id)|\($0.items.count)" }.joined(separator: ",")) {
+            await model.prepareLibraryTranscript(session)
             images = Self.collect(sessions)
             loaded = true
         }
@@ -101,6 +104,7 @@ struct SessionImageGrid: View {
 /// newest first, with Finder's preview. Click to open (PDFs and text in the viewer, the rest
 /// in their app); right-click to show it in Finder or copy its path.
 struct SessionFileGrid: View {
+    @Environment(AppModel.self) private var model
     let session: ChatSession
     @State private var files: [SessionFile] = []
     @State private var loaded = false
@@ -151,7 +155,10 @@ struct SessionFileGrid: View {
                 }
             }
         }
+        .onAppear { model.retainTranscript(session) }
+        .onDisappear { model.releaseTranscript(session.id) }
         .task(id: "\(session.id)|\(session.items.count)") {
+            await model.prepareLibraryTranscript(session)
             let session = session
             files = Self.collect(session)
             loaded = true

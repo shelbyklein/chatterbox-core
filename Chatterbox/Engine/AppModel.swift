@@ -27,12 +27,13 @@ final class AppModel {
                 showingChatsSidebar = studioSidebarID == nil && Self.view(of: session) != .projects
                 if studioSidebarID != nil { AppPreferences.defaults.set(false, forKey: "sidebarStudiosCollapsed") }
             }
+            if RuntimeClient.usesDaemon, selectedID != oldValue, let oldValue { releaseUnseenTranscript(oldValue) }
             guard selectedID != oldValue, let session = sessions.first(where: { $0.id == selectedID }) else { return }
             Diagnostics.note("Opened \u{201C}\(session.title)\u{201D} (\(session.items.count) rows\(session.isRunning ? ", working" : ""))")
-            if RuntimeClient.usesDaemon {Task { [weak self] in
-                do {let state=try await RuntimeClient.shared.request("get",body:["chatID":.string(session.id.uuidString)]).decode(RuntimeChatState.self);self?.applyProjection(state)}
-                catch {Diagnostics.note(error.localizedDescription)}
-            }}
+            if RuntimeClient.usesDaemon {
+                if !restoringNavigation { AppPreferences.defaults.set(session.id.uuidString, forKey: "macLastOpenSession") }
+                if RuntimeClient.shared.connected { refreshSession(session.id, immediately: true) }
+            }
         }
     }
     /// The main views, each returning to where it was left.
@@ -351,7 +352,8 @@ final class AppModel {
         }
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         if RuntimeClient.usesDaemon {
-            sessionLoadStatus = "Connecting to background service…"
+            restoreNavigationCache()
+            sessionLoadStatus = sessions.isEmpty ? "Connecting to background service…" : "Updating sessions…"
             RuntimeClient.shared.onEvent = { [weak self] event in self?.runtimeEvent(event) }
             #if GOLEM_APP
             RuntimeClient.shared.start(role:"golem-ui")
@@ -470,7 +472,7 @@ final class AppModel {
     func newChat(backend: Backend? = nil) -> ChatSession {
         let defaults = AppPreferences.defaults
         let backend = backend ?? Backend(rawValue: defaults.string(forKey: "defaultBackend") ?? "") ?? .claude
-        if let empty = sessions.first(where: { $0.items.isEmpty && !$0.isRunning && $0.record.projectFolder == nil && $0.record.studioID == nil && $0.record.archivedAt == nil && !$0.isDot && !carriesUserIntent($0.record) }) {
+        if let empty = sessions.first(where: { !$0.hasMessages && !$0.isRunning && $0.record.projectFolder == nil && $0.record.studioID == nil && $0.record.archivedAt == nil && !$0.isDot && !carriesUserIntent($0.record) }) {
             empty.setBackend(backend)
             selectedID = empty.id
             return empty
@@ -499,7 +501,7 @@ final class AppModel {
     /// Hides a chat from the main lists and stops its agent. Nothing is removed; a project
     /// chat keeps its folder, and opening that folder again brings the chat back.
     func archive(_ session: ChatSession) {
-        guard !session.items.isEmpty || session.record.projectFolder != nil || session.record.sidechatOf != nil else { return delete(session) }
+        guard session.hasMessages || session.record.projectFolder != nil || session.record.sidechatOf != nil else { return delete(session) }
         session.shutdown()
         session.setArchived(true)
         if selectedID == session.id { selectedID = activeSessions.first?.id }
@@ -890,30 +892,210 @@ final class AppModel {
             RuntimeClient.shared.command("metadata",body:["record":(try? .value(metadata)) ?? .null])
         }
     }
-    private func applyProjection(_ state:RuntimeChatState) {
-        #if !GOLEM_APP
-        guard state.record.isDot != true else{return}
+    @ObservationIgnored private var projectionRevisions: [UUID: Int] = [:]
+    @ObservationIgnored private var navigationStates: [UUID: RuntimeChatState] = [:]
+    @ObservationIgnored private var restoringNavigation = false
+    @ObservationIgnored private var transcriptReaders: [UUID: Int] = [:]
+    @ObservationIgnored private var historyTasks: [UUID: Task<Void, Never>] = [:]
+    @ObservationIgnored private var navigationSave: Task<Void, Never>?
+
+    private var navigationFile: URL {
+        #if GOLEM_APP
+        directory.deletingLastPathComponent().appendingPathComponent("golem-navigation.json")
+        #else
+        directory.deletingLastPathComponent().appendingPathComponent("mac-navigation.json")
         #endif
-        projecting=true;defer{projecting=false}
-        if let session=sessions.first(where:{$0.id==state.record.id}) {
-            session.applyingRemoteState=true
-            var record=state.record
-            if let total=state.totalCount,total>record.items.count,let first=record.items.first?.id,
-               let index=session.items.firstIndex(where:{$0.id==first}) {record.items=Array(session.items.prefix(index))+record.items}
-            session.record=record;session.isRunning=state.running
-            // Sent messages the service hasn't added yet stay showing.
-            session.keepSentEchoes()
-            // Never over a draft typed here that the service hasn't confirmed yet.
-            if let draft=state.draft, !session.draftUnsynced {session.draft=draft.text;session.draftAttachments=draft.attachments}
-            session.applyingRemoteState=false
-            Attention.shared.update(session,model:self)
-        }else{
-            let session=ChatSession(record:state.record);session.isRunning=state.running
-            if let draft=state.draft{session.draft=draft.text;session.draftAttachments=draft.attachments}
-            bindProjection(session);sessions.append(session)
+    }
+    private struct NavigationCache: Codable { var schema = 1; var states: [RuntimeChatState]; var studios: [Studio] }
+
+    private func restoreNavigationCache() {
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        guard let data = try? Data(contentsOf: navigationFile),
+              let cache = try? decoder.decode(NavigationCache.self, from: data), cache.schema == 1 else { return }
+        restoringNavigation = true
+        studios = cache.studios
+        for state in cache.states where state.summaryOnly == true { applyProjection(state, updateAttention: false) }
+        // Cached revisions belong to the last connection, not the new service handshake.
+        projectionRevisions.removeAll()
+        restoreSelectedSession()
+        restoringNavigation = false
+    }
+
+    private func saveNavigationSoon() {
+        guard RuntimeClient.shared.supportsNavigationSummaries, navigationSave == nil else { return }
+        navigationSave = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard let self else { return }
+            self.navigationSave = nil
+            let cache = NavigationCache(states: self.sessions.compactMap { self.navigationStates[$0.id] }, studios: self.studios)
+            let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
+            guard let data = try? encoder.encode(cache) else { return }
+            let file = self.navigationFile
+            _ = await Task.detached(priority: .utility) {
+                do {
+                    try data.write(to: file, options: .atomic)
+                    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+                } catch { NSLog("Chatterbox: navigation cache: \(error.localizedDescription)") }
+            }.value
         }
-        // Choosing a chat to have ready doesn't leave the Home page Chatterbox opens on.
-        if selectedID==nil {let home=showingHome;selectedID=sessions.first(where:{!$0.isDot})?.id;showingHome=home}
+    }
+
+    private func restoreSelectedSession() {
+        guard selectedID == nil || !sessions.contains(where: { $0.id == selectedID }) else { return }
+        let saved = AppPreferences.defaults.string(forKey: "macLastOpenSession").flatMap(UUID.init(uuidString:))
+        let session = saved.flatMap { id in sessions.first { $0.id == id && $0.record.archivedAt == nil } }
+            ?? activeSessions.first { !$0.isDot }
+        let home = showingHome; selectedID = session?.id; showingHome = home
+    }
+
+    private func wantsTranscript(_ id: UUID) -> Bool { selectedID == id || (transcriptReaders[id] ?? 0) > 0 }
+
+    /// Standalone windows and tiles retain their own transcripts, as well as the selected chat.
+    func retainTranscript(_ session: ChatSession) {
+        guard RuntimeClient.usesDaemon else { return }
+        transcriptReaders[session.id, default: 0] += 1
+        if RuntimeClient.shared.connected, !session.transcriptLoaded { refreshSession(session.id, immediately: true) }
+    }
+    func releaseTranscript(_ id: UUID) {
+        guard RuntimeClient.usesDaemon else { return }
+        let count = (transcriptReaders[id] ?? 0) - 1
+        transcriptReaders[id] = count > 0 ? count : nil
+        releaseUnseenTranscript(id)
+    }
+    private func releaseUnseenTranscript(_ id: UUID) {
+        guard RuntimeClient.shared.supportsNavigationSummaries, !wantsTranscript(id),
+              let session = sessions.first(where: { $0.id == id }), session.sentEchoes.isEmpty,
+              navigationStates[id] != nil else { return }
+        session.record = session.record.navigationMetadata()
+        session.transcriptLoaded = false; session.transcriptStart = 0
+        session.transcriptLoading = false; session.transcriptProblem = nil
+        // Drafts typed on this Mac stay in the session until confirmed; they are never cached.
+    }
+
+    func loadTranscript(_ session: ChatSession) { refreshSession(session.id, immediately: true) }
+
+    /// Opening All Images or Files explicitly asks for this session's complete library.
+    func prepareLibraryTranscript(_ session: ChatSession) async {
+        guard RuntimeClient.usesDaemon else { return }
+        if !session.transcriptLoaded {
+            do {
+                let state = try await RuntimeClient.shared.request("get", body: ["chatID": .string(session.id.uuidString), "limit": 80]).decode(RuntimeChatState.self)
+                applyProjection(state)
+            } catch { session.transcriptProblem = error.localizedDescription; return }
+        }
+        if session.hasEarlierTranscript {
+            loadEarlierTranscript(session, complete: true)
+            await historyTasks[session.id]?.value
+        }
+    }
+
+    /// Earlier pages use stable message ids, even when the selected chat is streaming.
+    /// Find and Library request all pages explicitly, without a single oversized wire reply.
+    func loadEarlierTranscript(_ session: ChatSession, complete: Bool = false) {
+        guard RuntimeClient.usesDaemon, historyTasks[session.id] == nil,
+              session.hasEarlierTranscript, session.items.first != nil else { return }
+        let id = session.id
+        session.transcriptLoading = true; session.transcriptProblem = nil
+        historyTasks[id] = Task { [weak self, weak session] in
+            guard let self, let session else { return }
+            defer { historyTasks[id] = nil; session.transcriptLoading = false }
+            do {
+                repeat {
+                    guard let first = session.items.first?.id, wantsTranscript(id) else { return }
+                    let body: JSON = ["chatID": .string(id.uuidString), "before": .string(first.uuidString), "limit": 200]
+                    let state = try await RuntimeClient.shared.request("get", body: body, timeout: .seconds(60)).decode(RuntimeChatState.self)
+                    guard wantsTranscript(id), session.items.first?.id == first else { return }
+                    let existing = Set(session.items.map(\.id))
+                    let earlier = state.record.items.filter { !existing.contains($0.id) }
+                    guard !earlier.isEmpty || state.historyStart == 0 else { throw RuntimeFailure("Earlier history did not advance; try again.") }
+                    session.record.items.insert(contentsOf: earlier, at: 0)
+                    session.transcriptStart = state.historyStart ?? 0
+                } while complete && session.hasEarlierTranscript && !Task.isCancelled
+                session.historyPage += 1
+            } catch { session.transcriptProblem = error.localizedDescription }
+        }
+    }
+
+    private func applyProjection(_ state: RuntimeChatState, updateAttention: Bool = true) {
+        #if !GOLEM_APP
+        guard state.record.isDot != true else { return }
+        #endif
+        let id = state.record.id
+        if let revision = projectionRevisions[id], state.revision < revision { return }
+        if state.summaryOnly == true, projectionRevisions[id] == state.revision,
+           sessions.contains(where: { $0.id == id }) {
+            releaseUnseenTranscript(id)
+            return
+        }
+        projectionRevisions[id] = state.revision
+        if let summary = state.summary {
+            navigationStates[id] = RuntimeChatState(record: state.record.navigationMetadata(), running: state.running,
+                revision: state.revision, totalCount: state.totalCount, pendingItems: state.pendingItems,
+                summary: summary, summaryOnly: true)
+        }
+        projecting = true; defer { projecting = false }
+        let session: ChatSession
+        if let existing = sessions.first(where: { $0.id == id }) { session = existing }
+        else {
+            session = ChatSession(record: state.record.navigationMetadata())
+            session.transcriptLoaded = false
+            bindProjection(session); sessions.append(session)
+        }
+        session.applyingRemoteState = true
+        var record = state.record
+        if state.summaryOnly == true {
+            if wantsTranscript(id) || !session.sentEchoes.isEmpty {
+                record.items = session.items
+                record.brief = session.record.brief
+            } else {
+                record.items = []
+                session.transcriptLoaded = false; session.transcriptStart = 0
+            }
+        } else if !RuntimeClient.shared.supportsNavigationSummaries || wantsTranscript(id) {
+            if let first = record.items.first?.id, let index = session.items.firstIndex(where: { $0.id == first }) {
+                record.items = Array(session.items.prefix(index)) + record.items
+                session.transcriptStart = min(session.transcriptStart, state.historyStart ?? 0)
+            } else { session.transcriptStart = state.historyStart ?? 0 }
+            session.transcriptLoaded = true
+        } else { record.items = []; session.transcriptLoaded = false }
+        session.record = record; session.isRunning = state.running
+        session.listSummary = state.summary
+        session.projectedPendingItems = state.pendingItems
+        session.transcriptTotalCount = state.totalCount
+        // Summary replies have no message acknowledgements. Never match a local sent echo
+        // against itself in the transcript preserved above.
+        if state.summaryOnly != true { session.keepSentEchoes() }
+        if let draft = state.draft, !session.draftUnsynced { session.draft = draft.text; session.draftAttachments = draft.attachments }
+        session.applyingRemoteState = false
+        if updateAttention { Attention.shared.update(session, model: self, updatesBadge: !restoringNavigation) }
+        if !restoringNavigation { saveNavigationSoon() }
+    }
+
+    private func refreshSession(_ id: UUID, immediately: Bool = false) {
+        guard RuntimeClient.usesDaemon, RuntimeClient.shared.connected else { return }
+        guard refreshTasks[id] == nil else { refreshAgain.insert(id); return }
+        refreshTasks[id] = Task { [weak self] in
+            guard let self else { return }
+            if !immediately { try? await Task.sleep(for: .milliseconds(100)) }
+            repeat {
+                refreshAgain.remove(id)
+                let visible = wantsTranscript(id)
+                let session = sessions.first { $0.id == id }
+                if visible { session?.transcriptLoading = true; session?.transcriptProblem = nil }
+                do {
+                    var body: [String: JSON] = ["chatID": .string(id.uuidString)]
+                    if RuntimeClient.shared.supportsNavigationSummaries { body["limit"] = 80 }
+                    if RuntimeClient.shared.supportsNavigationSummaries && !visible { body["summaryOnly"] = true }
+                    let state = try await RuntimeClient.shared.request("get", body: .object(body)).decode(RuntimeChatState.self)
+                    applyProjection(state)
+                } catch {
+                    if visible { session?.transcriptProblem = error.localizedDescription }
+                    Diagnostics.note(error.localizedDescription)
+                }
+                session?.transcriptLoading = false
+            } while refreshAgain.contains(id) && RuntimeClient.shared.connected
+            refreshTasks[id] = nil
+        }
     }
     /// Reloads the chat list from the background service. One at a time: a request during a
     /// reload runs once after it. A failed reload retries (1, 2, 4 s, then every 10 s) while
@@ -941,25 +1123,31 @@ final class AppModel {
         do {
             // Studio names and membership are small and needed when choosing the first chat.
             studios=try await RuntimeClient.shared.request("getStudios").decode([Studio].self)
+            let summaries = RuntimeClient.shared.supportsNavigationSummaries
             if !loadedSessionList {
                 sessionLoadStatus = "Loading working sessions…"
                 if RuntimeClient.shared.supportsPriorityList {
-                    let working = try await RuntimeClient.shared.request("list",body:["workingOnly":true],timeout:.seconds(60)).decode([RuntimeChatState].self)
+                    let working = try await RuntimeClient.shared.request("list", body: ["workingOnly": true, "summaryOnly": .bool(summaries)], timeout: .seconds(60)).decode([RuntimeChatState].self)
                     for state in working { applyProjection(state) }
                     Diagnostics.note("Working sessions ready in \(String(format:"%.1f",Date().timeIntervalSince(started))) s (\(working.count) sessions)")
                 }
-                sessionLoadStatus = "Loading remaining sessions…"
+                if let selectedID { refreshSession(selectedID, immediately: true) }
+                sessionLoadStatus = "Loading session summaries…"
                 await Task.yield()
             }
-            // Display sessions before waiting for unrelated preferences, Studios and pins.
-            let states=try await RuntimeClient.shared.request("list",timeout:.seconds(60)).decode([RuntimeChatState].self)
-            let ids=Set(states.map{ $0.record.id });sessions.removeAll{!ids.contains($0.id)}
-            for (index, state) in states.enumerated() {
-                applyProjection(state)
-                if index % 20 == 19 { await Task.yield() }
-            }
+            let states = try await RuntimeClient.shared.request("list", body: ["summaryOnly": .bool(summaries)], timeout: .seconds(60)).decode([RuntimeChatState].self)
+            let ids = Set(states.map { $0.record.id }); sessions.removeAll { !ids.contains($0.id) }
+            navigationStates = navigationStates.filter { ids.contains($0.key) }
+            projectionRevisions = projectionRevisions.filter { ids.contains($0.key) }
+            restoringNavigation = true
+            for state in states { applyProjection(state) }
+            restoreSelectedSession()
+            restoringNavigation = false
+            Attention.shared.refreshBadge()
+            if let selectedID, let selected, !selected.transcriptLoaded { refreshSession(selectedID, immediately: true) }
             loadedSessionList = true
             sessionLoadStatus = nil
+            saveNavigationSoon()
             for session in sessions { session.resendDraftIfUnsynced() }
             await RuntimePreferenceProjection.shared.start()
             PinStore.shared.applyRuntimePins(try await RuntimeClient.shared.request("getPins").decode([Pin].self))
@@ -986,19 +1174,11 @@ final class AppModel {
         #if !GOLEM_APP
         if event.kind=="pin.open",let raw=event.payload,let pin=try? raw.decode(Pin.self){PinStore.shared.open(pin);return}
         #endif
+        if event.kind == "runtime.resync" { projectionRevisions.removeAll() }
         if event.kind=="runtime.resync" || event.kind=="runtime.configuration" || event.kind=="chat.created" || event.kind=="chat.deleted" {
             requestResync()
-        }else if let id=event.chatID {
-            // One refresh per chat at a time; a change that lands mid-refresh gets one more after
-            // it, since the refresh in flight may have read the chat before that change.
-            guard refreshTasks[id]==nil else{refreshAgain.insert(id);return}
-            refreshTasks[id]=Task {
-                try? await Task.sleep(for:.milliseconds(100))
-                do{let state=try await RuntimeClient.shared.request("get",body:["chatID":.string(id.uuidString),"limit":40]).decode(RuntimeChatState.self);applyProjection(state)}
-                catch{Diagnostics.note(error.localizedDescription)}
-                refreshTasks[id]=nil
-                if refreshAgain.remove(id) != nil { runtimeEvent(event) }
-            }
+        } else if let id = event.chatID {
+            refreshSession(id)
         }
     }
 

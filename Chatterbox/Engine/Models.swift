@@ -108,6 +108,17 @@ struct DisplayItem: Identifiable, Codable, Equatable {
     enum ApprovalStyle: String, Codable { case plan }
 }
 
+/// Bounded display data for navigation. Never used as provider history or saved over a chat.
+struct SessionListSummary: Codable, Equatable {
+    var preview: String?
+    var reply: String?
+    var action: String?
+    var lastNotice: String?
+    var messageCount: Int
+    var thumbnailPath: String?
+    var imageDate: Date?
+}
+
 /// Everything persisted for a conversation.
 struct ConversationRecord: Codable {
     var id = UUID()
@@ -243,6 +254,20 @@ struct ConversationRecord: Codable {
     var codexHost: HostLink?
     /// Subagents and background commands still running (see BackgroundTasks.swift).
     var backgroundTasks: [BackgroundTask]?
+
+    /// Navigation has no reason to retain agent instructions, replay state or messages.
+    func navigationMetadata() -> ConversationRecord {
+        var copy = self
+        copy.items = []
+        copy.claudeHost = nil; copy.codexHost = nil
+        copy.pendingHandoff = nil; copy.pendingShellContext = nil
+        copy.sentPersonality = nil; copy.instructionsVersion = nil
+        copy.sentUserInstructions = nil; copy.sentSecretsKey = nil
+        copy.sentStudioInstructions = nil; copy.sentBrief = nil; copy.brief = nil
+        copy.sentDotName = nil; copy.sentComputerNote = nil
+        copy.claudeTasks = nil; copy.sidequestTask = nil
+        return copy
+    }
 }
 
 /// Where a chat's agent runs in ChatterboxHost and how far its output had been handled when

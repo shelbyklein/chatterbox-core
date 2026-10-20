@@ -40,6 +40,7 @@ struct StudioSessionSummary {
 
     /// The first sentence of the latest finished reply.
     static func note(_ session: ChatSession, limit: Int) -> String {
+        if let summary = session.listSummary { return summary.reply.map { String($0.prefix(limit)) } ?? "No replies yet" }
         guard let text = session.items.last(where: { $0.kind == .assistant && $0.phase == .final && !$0.text.isEmpty })?.text
         else { return "No replies yet" }
         return ChatSession.firstSentence(of: text, limit: limit) ?? "Open to view the conversation"
@@ -47,6 +48,7 @@ struct StudioSessionSummary {
 
     /// When the row holding the newest image was added.
     static func imageDate(_ session: ChatSession) -> Date? {
+        if let summary = session.listSummary { return summary.imageDate }
         guard let url = session.latestThumbnailURL() else { return nil }
         let row = session.items.last { item in
             item.attachments?.contains { $0.url == url } == true || item.text.contains(url.path) || item.text.contains(url.lastPathComponent)

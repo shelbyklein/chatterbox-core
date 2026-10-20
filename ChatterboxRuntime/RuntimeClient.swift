@@ -23,6 +23,7 @@ import Darwin
     }
     private(set) var connected=false
     private(set) var supportsPriorityList=false
+    private(set) var supportsNavigationSummaries=false
     private(set) var problem:String?
     var onEvent:((RuntimeEvent)->Void)?
     @ObservationIgnored private var socket:RuntimeSocket?
@@ -46,6 +47,7 @@ import Darwin
                         try self.connect()
                         let hello = try await self.request("hello",body:["role":.string(self.role)])
                         self.supportsPriorityList = hello["priorityList"]?.bool == true
+                        self.supportsNavigationSummaries = hello["navigationSummaries"]?.bool == true
                         let replay=try await self.request("subscribe",body:["after":.number(Double(self.cursor))])
                         self.connected=true;self.problem=nil;delay=1
                         // A full snapshot replaces expired/initial history. Replaying it first

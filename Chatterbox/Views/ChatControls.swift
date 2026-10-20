@@ -435,7 +435,7 @@ struct FinishedChatsList: View {
             }.padding(.horizontal, 10).padding(.vertical, 6).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(session.items.last(where: { $0.kind == .assistant && $0.phase == .final })?.text.prefix(200).description ?? "")
+        .help(session.listSummary?.reply ?? session.items.last(where: { $0.kind == .assistant && $0.phase == .final })?.text.prefix(200).description ?? "")
     }
 
     private func activityRow(_ session: ChatSession, running: Bool) -> some View {
@@ -462,7 +462,7 @@ struct FinishedChatsList: View {
                             Text(started, style: .timer).font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
                         }
                     } else {
-                        Text(session.items.last(where: { $0.kind == .assistant && $0.phase == .final })?.text ?? "Reply finished")
+                        Text(session.listSummary?.reply ?? session.items.last(where: { $0.kind == .assistant && $0.phase == .final })?.text ?? "Reply finished")
                             .font(.caption).foregroundStyle(.secondary).lineLimit(2)
                         Text(session.record.updatedAt, style: .relative).font(.caption2).foregroundStyle(.secondary)
                     }
@@ -631,6 +631,6 @@ struct UnseenRepliesStrip: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(session.items.last(where: { $0.kind == .assistant && $0.phase == .final })?.text.prefix(200).description ?? "Reply finished")
+        .help(session.listSummary?.reply ?? session.items.last(where: { $0.kind == .assistant && $0.phase == .final })?.text.prefix(200).description ?? "Reply finished")
     }
 }

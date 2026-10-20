@@ -33,6 +33,9 @@ struct RuntimeChatState: Codable {
     var draft: RuntimeDraft? = nil
     var totalCount: Int? = nil
     var pendingItems:[DisplayItem]? = nil
+    var summary: SessionListSummary? = nil
+    var summaryOnly: Bool? = nil
+    var historyStart: Int? = nil
 }
 struct RuntimeState: Codable {
     var schema = 1
@@ -74,6 +77,7 @@ struct CommandReceipt: Codable {
     private var wasRunning: [UUID:Bool] = [:]
     /// Each chat's approval and question cards still waiting on the user.
     private var pendingByChat: [UUID: Set<UUID>] = [:]
+    private var navigationSnapshots: [UUID: RuntimeChatState] = [:]
     private let encoder: JSONEncoder = { let e=JSONEncoder();e.dateEncodingStrategy = .iso8601;return e }()
     private let decoder: JSONDecoder = { let d=JSONDecoder();d.dateDecodingStrategy = .iso8601;return d }()
 
@@ -216,6 +220,7 @@ struct CommandReceipt: Codable {
     func remove(_ id: UUID) throws {
         guard let s=session(id) else { throw RuntimeFailure("Conversation not found") }
         s.shutdown();sessions.removeAll { $0.id == id };dirty.remove(id)
+        navigationSnapshots[id] = nil
         // Retain attachments: deletion can otherwise destroy files used by forks or a retry.
         // After any save still queued for it, so the file doesn't come back.
         let url=file(id)
@@ -244,11 +249,46 @@ struct CommandReceipt: Codable {
         let keep=Set(state.commands.sorted{$0.value.date > $1.value.date}.prefix(1000).map(\.key))
         state.commands=state.commands.filter{keep.contains($0.key) || $0.value.state != "completed"}
     }
-    func snapshots(workingOnly: Bool = false) -> [RuntimeChatState] {
+    func snapshots(workingOnly: Bool = false, summaryOnly: Bool = false) -> [RuntimeChatState] {
         sessions.filter { !workingOnly || $0.isRunning }.map { s in
+            if summaryOnly { return navigationSnapshot(s) }
             var record=s.record;record.items=Array(record.items.suffix(40))
             return RuntimeChatState(record:record,running:s.isRunning,revision:state.revisions[s.id.uuidString] ?? 0,draft:RuntimeDraft(text:s.draft,attachments:s.draftAttachments),totalCount:s.items.count,pendingItems:s.items.filter{$0.approvalState == .pending})
         }
+    }
+
+    func navigationSnapshot(_ s: ChatSession) -> RuntimeChatState {
+        let revision = state.revisions[s.id.uuidString] ?? 0
+        if let cached = navigationSnapshots[s.id], cached.revision == revision { return cached }
+        // Work on bounded prose before stripping markdown; a single reply can be megabytes.
+        func preview(_ item: DisplayItem?) -> String? {
+            item.flatMap { ChatSession.firstSentence(of: String($0.text.prefix(4000)), limit: 320) }
+        }
+        let reply = s.items.last { $0.kind == .assistant && $0.phase == .final && !$0.text.isEmpty }
+        let latest = s.items.last { $0.kind == .assistant || $0.kind == .user }
+        let image = s.latestThumbnailURL()
+        let imageRow = image.flatMap { url in s.items.suffix(300).last { item in
+            item.attachments?.contains { $0.url == url } == true || item.text.contains(url.path) || item.text.contains(url.lastPathComponent)
+        } }
+        let pending = s.pendingRequests
+        let action: String?
+        if let waiting = pending.last { action = waiting.kind == .questions ? "Has a question for you" : "Waiting for your approval" }
+        else if s.isRunning {
+            switch s.items.last?.kind {
+            case .tool?: action = s.items.last.map { String($0.text.prefix(320)) }
+            case .thought?: action = "Thinking…"
+            case .assistant?: action = "Writing a reply…"
+            default: action = "Working…"
+            }
+        } else { action = preview(reply) }
+        let summary = SessionListSummary(preview: preview(latest), reply: preview(reply), action: action,
+            lastNotice: s.items.last.flatMap { $0.kind == .notice ? String($0.text.prefix(320)) : nil },
+            messageCount: s.items.filter { $0.kind == .user || $0.kind == .assistant }.count,
+            thumbnailPath: image?.path, imageDate: imageRow?.timestamp)
+        let snapshot = RuntimeChatState(record: s.record.navigationMetadata(), running: s.isRunning,
+            revision: revision, totalCount: s.items.count, pendingItems: pending, summary: summary, summaryOnly: true)
+        navigationSnapshots[s.id] = snapshot
+        return snapshot
     }
     func events(after cursor: Int) -> (resync: Bool, events: [RuntimeEvent]) {
         let oldest=state.events.first?.sequence ?? state.sequence

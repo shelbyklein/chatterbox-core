@@ -196,7 +196,7 @@ final class Attention: NSObject, UNUserNotificationCenterDelegate {
     }
 
     /// Called on every change to a chat: notices new requests and finished turns.
-    func update(_ session: ChatSession, model: AppModel) {
+    func update(_ session: ChatSession, model: AppModel, updatesBadge: Bool = true) {
         #if GOLEM_APP
         if RuntimeClient.usesDaemon,!session.isDot{return}
         #endif
@@ -222,7 +222,7 @@ final class Attention: NSObject, UNUserNotificationCenterDelegate {
             session.skipFinishedAlert = false
             if session.isDot, !watching, dotUnreadCount(session) > 0 { unread.insert(session.id) }
         } else if finished {
-            let reply = session.items.last { $0.kind == .assistant && $0.phase == .final }?.text ?? "Reply finished."
+            let reply = session.listSummary?.reply ?? session.items.last { $0.kind == .assistant && $0.phase == .final }?.text ?? "Reply finished."
             if !RuntimeClient.usesDaemon {MobilePush.shared.post(title: title(for: session), body: reply, chat: session.id, kind: "replies")}
             if watching {
                 unread.remove(session.id)
@@ -231,10 +231,10 @@ final class Attention: NSObject, UNUserNotificationCenterDelegate {
                 if notifyReplies { notifyFinished(session) }
             }
         }
-        refreshBadge()
+        if updatesBadge { refreshBadge() }
     }
 
-    private func refreshBadge() {
+    func refreshBadge() {
         // An archived chat's unread mark would never clear, so drop it.
         let archived = Set((model?.sessions ?? []).filter { $0.record.archivedAt != nil }.map(\.id))
         if !unread.isDisjoint(with: archived) { unread.subtract(archived) }
@@ -268,11 +268,12 @@ final class Attention: NSObject, UNUserNotificationCenterDelegate {
     private func notifyFinished(_ session: ChatSession) {
         let content = UNMutableNotificationContent()
         content.title = title(for: session)
-        if let last = session.items.last, last.kind == .notice, last.text.hasPrefix("Claude Code reported") || last.text.contains("stopped unexpectedly") {
+        let notice = session.listSummary?.lastNotice ?? session.items.last.flatMap { $0.kind == .notice ? $0.text : nil }
+        if let notice, notice.hasPrefix("Claude Code reported") || notice.contains("stopped unexpectedly") {
             content.subtitle = "Something went wrong"
-            content.body = last.text
+            content.body = notice
         } else {
-            let reply = session.items.last { $0.kind == .assistant && $0.phase == .final }?.text ?? ""
+            let reply = session.listSummary?.reply ?? session.items.last { $0.kind == .assistant && $0.phase == .final }?.text ?? ""
             content.subtitle = "\(session.record.backend.label) finished"
             content.body = String(reply.replacingOccurrences(of: "\n", with: " ").prefix(180))
         }

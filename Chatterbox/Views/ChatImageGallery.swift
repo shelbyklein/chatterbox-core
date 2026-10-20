@@ -8,6 +8,7 @@ import SwiftUI
 /// files. Clicking an image opens it in the image viewer; its circles pick images to add to
 /// the chat.
 struct ChatImageGallery: View {
+    @Environment(AppModel.self) private var model
     let session: ChatSession
     let onOpen: (Attachment) -> Void
     /// Puts the chosen images in the message box, ready to send back to the chat.
@@ -117,6 +118,7 @@ struct ChatImageGallery: View {
         }
         .frame(minWidth: 720, idealWidth: 960, minHeight: 520, idealHeight: 720)
         .task {
+            await model.prepareLibraryTranscript(session)
             images = Self.collect(session)
             loaded = true
         }

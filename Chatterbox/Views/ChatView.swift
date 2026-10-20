@@ -184,6 +184,8 @@ struct ChatView: View {
     @State private var earlierCountCache = EarlierCount()
     @AppStorage("readerGroupSteps") private var groupSteps = true
     @State private var composerFocused = false
+    @State private var retainedTranscript: UUID?
+    @State private var olderPageAnchor: UUID?
     /// The chat's height, so the message box can grow to a good share of it before scrolling.
     @State private var chatHeight: CGFloat = 600
     private let appearance = ReaderStyleSettings()
@@ -193,7 +195,7 @@ struct ChatView: View {
     /// of the window.
     static let minWidth: CGFloat = 400
 
-    var body: some View {
+    private var chatWithLifecycle: some View {
         Group {
             if sidebar != nil || standaloneWindow || mainWindow {
                 ChatColumns(sidebar: sidebar, chat: AnyView(chatContent),
@@ -212,6 +214,7 @@ struct ChatView: View {
         .modifier(OwnChatToolbar(enabled: tileContext == nil && windowToolbar == nil, bridge: ownToolbar))
         .modifier(ChatWindowTitle(title: session.title, embedded: tileContext != nil || windowToolbar != nil))
         .onAppear {
+            if retainedTranscript == nil { model.retainTranscript(session); retainedTranscript = session.id }
             if standaloneWindow && session.isDot { golemPanelOpen = true }
             becameShown()
         }
@@ -220,7 +223,19 @@ struct ChatView: View {
         .onChange(of: model.showingDot) { _, miniVisible in
             if standaloneWindow && session.isDot && !miniVisible { golemPanelOpen = true }
         }
-        .onDisappear { (windowToolbar ?? ownToolbar).detach(owner: toolbarOwner) }
+        .onChange(of: session.id) { _, id in
+            if let retainedTranscript { model.releaseTranscript(retainedTranscript) }
+            model.retainTranscript(session); retainedTranscript = id
+        }
+        .onDisappear {
+            if let retainedTranscript { model.releaseTranscript(retainedTranscript) }
+            retainedTranscript = nil
+            (windowToolbar ?? ownToolbar).detach(owner: toolbarOwner)
+        }
+    }
+
+    var body: some View {
+        chatWithLifecycle
         .background(ChatWindowReader { windowNumber = $0.windowNumber })
         .modifier(FindShortcut(find: find, session: session, enabled: tileContext == nil))
         // Agents often link files by bare path ("/Users/…/Print.pdf"), which macOS can't open as a URL.
@@ -455,7 +470,16 @@ struct ChatView: View {
     private var transcript: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                if session.items.isEmpty {
+                if !session.transcriptLoaded {
+                    VStack(spacing: 12) {
+                        if let problem = session.transcriptProblem {
+                            Text("Couldn’t load this conversation").font(.headline)
+                            Text(problem).font(.caption).foregroundStyle(.secondary)
+                            Button("Retry") { model.loadTranscript(session) }
+                        } else { ProgressView("Loading recent messages…") }
+                    }
+                    .frame(maxWidth: .infinity).padding(.top, 60)
+                } else if session.items.isEmpty {
                     EmptyChatView(session: session) { draft = $0; submit() }
                         .padding(.top, 60)
                 } else {
@@ -492,22 +516,36 @@ struct ChatView: View {
                             .padding(.bottom, 10)
                         }
                         // Long chats draw only their newest rows; the rest wait behind a button.
-                        if page.hasEarlier {
-                            let earlier = earlierRowCount(before: page.start)
+                        if page.hasEarlier || session.hasEarlierTranscript {
+                            let earlier = earlierRowCount(before: page.start) + session.transcriptStart
                             Button {
                                 shownRowCount += Self.rowPage
+                                if !page.hasEarlier {
+                                    olderPageAnchor = page.rows.first?.id
+                                    model.loadEarlierTranscript(session)
+                                }
                             } label: {
-                                Label("Show \(min(Self.rowPage, earlier)) earlier", systemImage: "arrow.up.circle")
+                                Label(session.transcriptLoading ? "Loading earlier messages…" : "Show earlier messages", systemImage: "arrow.up.circle")
                                     .font(.callout)
                                     .foregroundStyle(.secondary)
                             }
                             .buttonStyle(.plain)
+                            .disabled(session.transcriptLoading)
                             .frame(maxWidth: .infinity)
                             .padding(.bottom, 10)
                             .help("\(earlier) earlier rows in this session")
                             // Scrolling up to here loads the next page: a chat opens with only its
                             // newest rows, so switching to it doesn't build history you may not read.
-                            .modifier(LoadsWhenScrolledTo(enabled: findWindow == nil && loadsEarlierOnScroll) { shownRowCount += Self.rowPage })
+                            .modifier(LoadsWhenScrolledTo(enabled: findWindow == nil && loadsEarlierOnScroll && !session.transcriptLoading) {
+                                shownRowCount += Self.rowPage
+                                if !page.hasEarlier {
+                                    olderPageAnchor = page.rows.first?.id
+                                    model.loadEarlierTranscript(session)
+                                }
+                            })
+                            if let problem = session.transcriptProblem {
+                                Text(problem).font(.caption).foregroundStyle(.secondary)
+                            }
                         }
                         ForEach(page.rows) { row in
                             switch row {
@@ -601,10 +639,21 @@ struct ChatView: View {
                 // The typing dots appear when the agent starts, after the message showed: keep them in view.
                 else if !find.isOpen { keepBottom(proxy) }
             }
-            .onChange(of: session.items.count) { if !find.isOpen { scrollToBottom(proxy) } else { find.recompute() } }
+            .onChange(of: session.items.count) { if find.isOpen { find.recompute() } else if olderPageAnchor == nil { scrollToBottom(proxy) } }
+            .onChange(of: session.historyPage) {
+                if let anchor = olderPageAnchor {
+                    olderPageAnchor = nil
+                    DispatchQueue.main.async { proxy.scrollTo(anchor, anchor: .top) }
+                }
+                if let id = pinJump { pinJump = nil; jump(to: id, proxy) }
+            }
             .onChange(of: find.jumpRequest) { jumpToMatch(proxy) }
             .onChange(of: pinJump) { _, id in
                 guard let id else { return }
+                if !session.items.contains(where: { $0.id == id }), session.hasEarlierTranscript {
+                    model.loadEarlierTranscript(session, complete: true)
+                    return
+                }
                 pinJump = nil
                 jump(to: id, proxy)
                 flashedID = id
@@ -612,6 +661,7 @@ struct ChatView: View {
             }
             // Closing find goes back to the latest messages if a match was far back.
             .onChange(of: find.isOpen) { _, open in
+                if open, session.hasEarlierTranscript { model.loadEarlierTranscript(session, complete: true) }
                 if !open, findWindow != nil { findWindow = nil; keepBottom(proxy) }
             }
             // The terminal takes room from the bottom: keep the newest messages in view above it.
@@ -766,7 +816,7 @@ struct ChatView: View {
     }
 
     /// The earliest waiting card; the rest follow once it's answered.
-    private var waitingCard: DisplayItem? { session.items.first(where: isWaitingOnYou) }
+    private var waitingCard: DisplayItem? { session.pendingRequests.first(where: isWaitingOnYou) }
 
     private func waitingMarker(_ item: DisplayItem) -> some View {
         Label(item.kind == .questions ? "Waiting for your answer below" : "Waiting for your approval below",

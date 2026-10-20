@@ -34,6 +34,7 @@ extension ChatSession {
     /// Same bounded latest-image lookup for Mac tiles and mobile previews. Cache by
     /// transcript structure so list polling does not repeatedly scan long conversations.
     func latestThumbnailURL() -> URL? {
+        if let listSummary { return listSummary.thumbnailPath.map { URL(fileURLWithPath: $0) } }
         let key = "\(workingFolder ?? "")|\(items.count)|\(items.last?.id.uuidString ?? "")|\(items.last?.phase.rawValue ?? "")"
         if thumbnailLookupKey == key { return thumbnailLookupURL }
         thumbnailLookupKey = key

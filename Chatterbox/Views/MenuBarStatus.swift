@@ -28,7 +28,7 @@ struct MenuBarPanel: View {
         let waiting = model.activeSessions.filter { $0.isWaitingOnYou && !$0.isDot }
         let replies = Attention.shared.finishedChats(in: model).filter { !$0.isWaitingOnYou }
         let working = Attention.shared.workingChats(in: model).filter { !$0.isWaitingOnYou }
-        let recent = Array(Attention.shared.recentChats(in: model).filter { !$0.isWaitingOnYou && !$0.items.isEmpty }.prefix(5))
+        let recent = Array(Attention.shared.recentChats(in: model).filter { !$0.isWaitingOnYou && $0.hasMessages }.prefix(5))
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("Chatterbox").font(.headline)

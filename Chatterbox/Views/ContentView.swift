@@ -691,7 +691,7 @@ extension ContentView {
             renamingChat = session
         }
         RestartThreadControl(session: session)
-        if session.record.projectFolder == nil, !session.items.isEmpty {
+        if session.record.projectFolder == nil, session.hasMessages {
             Button("Fork Session") { model.fork(session) }
                 .disabled(!model.canFork(session))
         }

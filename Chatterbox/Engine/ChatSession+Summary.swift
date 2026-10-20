@@ -8,6 +8,7 @@ extension ChatSession {
     /// Questions and approvals still waiting for you, oldest first. The sidebar asks for every
     /// chat on each redraw, so this checks only the request rows (see `requestRows`), not every row.
     var pendingRequests: [DisplayItem] {
+        if let projectedPendingItems { return projectedPendingItems }
         let items = items
         return requestRows(in: items).compactMap { index in items[index].approvalState == .pending ? items[index] : nil }
     }
@@ -34,6 +35,7 @@ extension ChatSession {
     }
 
     var lastActionSummary: String? {
+        if let listSummary { return listSummary.action }
         if let waiting = items.last(where: { ($0.kind == .approval || $0.kind == .questions) && $0.approvalState == .pending }) {
             return waiting.kind == .questions ? "Has a question for you" : "Waiting for your approval"
         }

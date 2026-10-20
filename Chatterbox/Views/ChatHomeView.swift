@@ -35,7 +35,7 @@ struct ThreadCard: View {
         if Attention.shared.unread.contains(session.id) { return "New reply" }
         return "Ready"
     }
-    private var messageCount: Int { session.items.filter { $0.kind == .user || $0.kind == .assistant }.count }
+    private var messageCount: Int { session.listSummary?.messageCount ?? session.items.filter { $0.kind == .user || $0.kind == .assistant }.count }
     private var tint: Color { appearance.style.color(for: session.record.provider) }
     private var activityIndicator: some View { SessionActivityIndicator(session: session) }
     // Cards are also used outside List, where listRowBackground cannot highlight them.
@@ -45,6 +45,7 @@ struct ThreadCard: View {
         return selected ? .white : Color.primary.opacity(hovered ? 0.10 : 0.055)
     }
     private var preview: String {
+        if let summary = session.listSummary { return summary.preview ?? "No messages yet" }
         guard let text = session.items.last(where: { $0.kind == .assistant || $0.kind == .user })?.text else { return "No messages yet" }
         return ChatSession.firstSentence(of: text, limit: expanded ? 320 : 110) ?? "Open to view the conversation"
     }
@@ -362,7 +363,7 @@ final class ThreadThumbnails {
 
     /// Changes when the chat gains a row, not while a reply streams into the last one.
     static func key(_ session: ChatSession) -> String {
-        "\(session.id)|\(session.items.count)|\(session.items.last?.id.uuidString ?? "")|\(session.items.last?.phase.rawValue ?? "")"
+        "\(session.id)|\(session.listSummary?.thumbnailPath ?? "")|\(session.items.count)|\(session.items.last?.id.uuidString ?? "")|\(session.items.last?.phase.rawValue ?? "")"
     }
 
     func refresh(_ session: ChatSession) {

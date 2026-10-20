@@ -121,7 +121,7 @@ struct GolemSidePanel: View {
     /// Question cards and approvals waiting in other chats, with Golem's suggestion if he made one.
     private var waiting: [(chat: ChatSession, item: DisplayItem)] {
         model.sessions.filter { !$0.isDot }.flatMap { chat in
-            chat.items.filter { ($0.kind == .questions || $0.kind == .approval) && $0.approvalState == .pending }.map { (chat, $0) }
+            chat.pendingRequests.map { (chat, $0) }
         }
     }
 
