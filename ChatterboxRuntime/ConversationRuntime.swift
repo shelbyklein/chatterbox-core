@@ -214,6 +214,14 @@ struct CommandReceipt: Codable {
     }
     @discardableResult func insert(_ record: ConversationRecord) throws -> ChatSession {
         guard session(record.id) == nil else { throw RuntimeFailure("Conversation already exists") }
+        var record = record
+        // The Mac may have only a sidebar summary or a few visible rows. Capture context
+        // here, from the authoritative parent, before saving/publishing the new child.
+        if record.sidechatOf != nil, record.items.isEmpty, record.automationID == nil, record.forkedFrom == nil,
+           let source = record.parentContext?.sourceID ?? record.sidequestOf ?? record.sidechatOf,
+           let parent = session(source) {
+            record.prepareParentContext(from: parent)
+        }
         let s=ChatSession(record:record);sessions.insert(s,at:0);attach(s)
         dirty.insert(s.id);publish(s,kind:"chat.created");try flush();return s
     }

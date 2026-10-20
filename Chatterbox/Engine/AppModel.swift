@@ -1053,6 +1053,7 @@ final class AppModel {
             if wantsTranscript(id) || !session.sentEchoes.isEmpty {
                 record.items = session.items
                 record.brief = session.record.brief
+                record.parentContext = session.record.parentContext
             } else {
                 record.items = []
                 session.transcriptLoaded = false; session.transcriptStart = 0

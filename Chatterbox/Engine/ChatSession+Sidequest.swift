@@ -27,8 +27,7 @@ extension ChatSession {
         }
         record.codex?.canEdit = true
         if backend == .claude, ["default", "plan"].contains(record.claudeModeID) { record.claudeMode = "acceptEdits" }
-        record.pendingHandoff = Prompts.sidequestStart(from: parent.record.backend.label, to: backend, chat: parent.title,
-                                                       transcript: transcript(parent.record.items[...]))
+        record.prepareParentContext(from: parent)
         return record
     }
 
@@ -46,6 +45,7 @@ extension ChatSession {
                                      task: ProjectAutomations.message(for: automation, manual: manual))
         record.automationID = automation.id
         record.title = "Automation \u{00B7} " + automation.title
+        record.parentContext = nil
         record.pendingHandoff = Prompts.automationStart(title: automation.title, project: project.projectName)
         return record
     }

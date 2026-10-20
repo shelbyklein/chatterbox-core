@@ -529,6 +529,9 @@ final class ChatSession: Identifiable {
             record.pendingHandoff = transcript.isEmpty ? nil
                 : Prompts.handoff(from: leaving.label, transcript: transcript, isWholeConversation: seen == nil,
                                   toolsUsed: Self.toolsUsed(record.items[start...]))
+            if seen == nil, let context = record.parentContext {
+                record.pendingHandoff = Prompts.parentContext(context.text) + (record.pendingHandoff.map { "\n\n" + $0 } ?? "")
+            }
             noteMissingServers(used: record.items[start...], by: leaving, now: backend)
         }
         // The incoming agent may be picking up a thread from before the Brief changed: it gets
@@ -850,7 +853,42 @@ extension ChatSession {
         record.codex?.forkFrom = nil
         record.codex?.sentRoute = nil
         record.codex?.folder = parent.workingFolder
+        record.prepareParentContext(from: parent)
         return record
+    }
+}
+
+extension ConversationRecord {
+    /// At creation only. Recent conversation is bounded so starting a child stays cheap;
+    /// captured paths and the parent's Brief survive even when its UI history is unloaded.
+    @MainActor mutating func prepareParentContext(from parent: ChatSession) {
+        guard automationID == nil else { return }
+        let limit = 24_000
+        var recent: [String] = []
+        var remaining = limit
+        var omitted = false
+        for item in parent.record.items.reversed() {
+            let text = ChatSession.transcript([item][...], limit: 8_000)
+            guard !text.isEmpty else { continue }
+            guard text.count + 2 <= remaining else { omitted = true; break }
+            recent.append(text)
+            remaining -= text.count + 2
+        }
+        var sections = ["Source: \(parent.title)\nSession: \(parent.id.uuidString)\nAgent: \(parent.record.backend.label)\nWorking folder: \(parent.workingFolder)"]
+        if let brief = parent.record.brief, !brief.isEmpty { sections.append("Session brief:\n" + String(brief.prefix(6_000))) }
+        // A fresh sidechat may itself start a child before it has messages. Preserve its
+        // inherited context, with a fixed budget rather than recursively copying histories.
+        if let inherited = parent.record.parentContext {
+            sections.append("Earlier parent context (excerpt):\n" + String(inherited.text.suffix(6_000)))
+        }
+        if let tools = ChatSession.toolsUsed(parent.record.items.suffix(120)) { sections.append("Tools used: \(tools)") }
+        sections.append("Recent conversation\(omitted ? " (earlier messages omitted)" : ""):\n" + (recent.isEmpty ? "(No messages yet.)" : recent.reversed().joined(separator: "\n\n")))
+        if parent.isRunning { sections.append("The source session is still working. Its current task may be unfinished; do not assume it completed.") }
+        let context = ParentContext(sourceID: parent.id, sourceTitle: parent.title, sourceBackend: parent.record.backend,
+                                    capturedAt: Date(), text: sections.joined(separator: "\n\n"))
+        parentContext = context
+        pendingHandoff = sidequestOf == nil ? Prompts.parentContext(context.text)
+            : Prompts.sidequestStart(from: context.sourceBackend.label, to: backend, chat: context.sourceTitle, transcript: context.text)
     }
 }
 

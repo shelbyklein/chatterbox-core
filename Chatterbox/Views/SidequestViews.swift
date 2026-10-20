@@ -39,7 +39,7 @@ struct SidequestForm: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Sidequest to \(agent)").font(.headline)
-            Text("\(agent) reads this session, does the task in its own Sidechat, and its answer comes back here for \(from) to carry on from.")
+            Text("\(agent) gets a handoff with this session's brief and recent conversation, does the task in its own Sidechat, and its answer comes back here for \(from) to carry on from.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             TextField("What should \(agent) do?", text: $task, axis: .vertical)
                 .textFieldStyle(.roundedBorder).lineLimit(3...8)
@@ -54,6 +54,49 @@ struct SidequestForm: View {
         }
         .padding(16)
         .frame(width: 340)
+    }
+}
+
+/// Context stays inspectable after the one-shot provider handoff has been consumed.
+struct ParentContextBanner: View {
+    let context: ParentContext
+    @State private var showing = false
+
+    var body: some View {
+        Button { showing.toggle() } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "doc.text")
+                Text("Context from \u{201C}\(context.sourceTitle)\u{201D}").lineLimit(1)
+                Spacer(minLength: 8)
+                Text("View handoff").foregroundStyle(.secondary)
+                Image(systemName: "chevron.right").font(.caption)
+            }
+            .font(.callout)
+            .padding(.horizontal, 16).padding(.vertical, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(Color.primary.opacity(0.04))
+        .accessibilityLabel("View context handoff from \(context.sourceTitle)")
+        .popover(isPresented: $showing, arrowEdge: .top) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("Context handoff").font(.headline)
+                    Spacer()
+                    Button("Done") { showing = false }
+                }
+                Text("Saved at creation · recent conversation excerpt")
+                    .font(.caption).foregroundStyle(.secondary)
+                Text(context.capturedAt.formatted(date: .abbreviated, time: .shortened))
+                    .font(.caption).foregroundStyle(.secondary)
+                Divider()
+                ScrollView {
+                    Text(context.text).textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(16).frame(width: 520, height: 440)
+        }
     }
 }
 

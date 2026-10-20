@@ -183,6 +183,8 @@ struct ConversationRecord: Codable {
     var worktreeBranch: String?
     /// A temporary independent conversation sharing its parent's working folder.
     var sidechatOf: UUID?
+    /// Saved once at creation, independently of the child's messages and provider threads.
+    var parentContext: ParentContext?
     /// A sidequest (a Sidechat on the other agent): the chat its answer goes back to, the task
     /// it was sent on, and the last reply already sent back (see ChatSession+Sidequest).
     var sidequestOf: UUID?
@@ -261,6 +263,7 @@ struct ConversationRecord: Codable {
         copy.items = []
         copy.claudeHost = nil; copy.codexHost = nil
         copy.pendingHandoff = nil; copy.pendingShellContext = nil
+        copy.parentContext = nil
         copy.sentPersonality = nil; copy.instructionsVersion = nil
         copy.sentUserInstructions = nil; copy.sentSecretsKey = nil
         copy.sentStudioInstructions = nil; copy.sentBrief = nil; copy.brief = nil
@@ -268,6 +271,14 @@ struct ConversationRecord: Codable {
         copy.claudeTasks = nil; copy.sidequestTask = nil
         return copy
     }
+}
+
+struct ParentContext: Codable, Equatable {
+    var sourceID: UUID
+    var sourceTitle: String
+    var sourceBackend: Backend
+    var capturedAt: Date
+    var text: String
 }
 
 /// Where a chat's agent runs in ChatterboxHost and how far its output had been handled when

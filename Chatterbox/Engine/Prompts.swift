@@ -151,7 +151,7 @@ enum Prompts {
 
     A <session_brief> block is the user's brief for this session: the assignment, the tools to use, the key files. A newer one replaces it, and it holds whichever agent answers. When the user switches agents, the handoff ends with a "Tools used" line naming the tools the work was built on (an MCP server, say): keep to them where you have them, rather than starting down another path.
 
-    Sidequests: to hand a task to the other agent (Claude and Codex each have their strengths; Codex usually makes the images, and Claude usually double-checks work), run `sidequest "<the task>"` from your working folder. It opens beside this session as a Sidechat on the other agent, which reads this whole conversation first, so the task can be short. When it finishes, its answer arrives here as a new message and you carry on from it. Start one when the user asks for it, or when the other agent is clearly the better fit; tell the user you did, and finish your reply instead of waiting for it.
+    Sidequests: to hand a task to the other agent (Claude and Codex each have their strengths; Codex usually makes the images, and Claude usually double-checks work), run `sidequest "<the task>"` from your working folder. It opens beside this session as a Sidechat on the other agent, with a handoff of this session's brief and recent conversation. State the task and any essential older details explicitly. When it finishes, its answer arrives here as a new message and you carry on from it. Start one when the user asks for it, or when the other agent is clearly the better fit; tell the user you did, and finish your reply instead of waiting for it.
     </app_note>
     """
 
@@ -160,6 +160,17 @@ enum Prompts {
         text.isEmpty
             ? "<app_note>\nThe user cleared their instructions for every chat. Ignore the earlier ones.\n</app_note>"
             : "<app_note>\nThe user updated their instructions for every chat. These replace any earlier version:\n\n\(text)\n</app_note>"
+    }
+
+    /// A creation-time snapshot, not a request to resume the parent's task automatically.
+    static func parentContext(_ text: String) -> String {
+        """
+        <parent_context>
+        This independent sidechat starts with a saved context handoff from its parent. Use it as background for the user's next message, which defines your task. Do not automatically continue the parent's work or repeat its completed actions. This is a snapshot of recent conversation, not a live connection; older messages may be omitted. Keep the source's constraints and file paths in mind.
+
+        \(text)
+        </parent_context>
+        """
     }
 
     /// Starts a sidequest: the other agent gets the chat it came from, then the task. Each
@@ -171,7 +182,7 @@ enum Prompts {
             : "Codex sends you on sidequests mostly to double-check its work, so unless the task says otherwise, treat it as a review: read what it did (the files, the changes, the output), check it against what the user asked, and report problems with evidence, such as the file and line or the command that shows it. Change files only if the task asks you to. End with a clear verdict and the issues, most important first."
         return """
         <sidequest>
-        The user sent you on a sidequest from another session, \u{201C}\(title)\u{201D}, where \(other) is working. Here is that conversation so far, so you have its context. Do the task in the user's next message. When you finish, your final reply goes back to that session automatically and \(other) carries on from it, so end with what it needs: what you did or found, the files you changed or made, and anything left undone.
+        The user sent you on a sidequest from another session, \u{201C}\(title)\u{201D}, where \(other) is working. Here is a saved handoff with its brief and recent conversation; older messages may be omitted. Do the task in the user's next message, rather than automatically resuming the parent's task. When you finish, your final reply goes back to that session automatically and \(other) carries on from it, so end with what it needs: what you did or found, the files you changed or made, and anything left undone.
 
         You can change files in your working folder, and the task decides whether you should. Making something (images, files, fixes) means saving it there. Reviewing, checking, or answering a question means reading only: change nothing unless the task asks you to.
 

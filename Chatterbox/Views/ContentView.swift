@@ -892,7 +892,7 @@ struct NewSidechatControl: View {
             }
         }
         .accessibilityLabel("New Sidechat")
-        .help("New Sidechat: a separate thread in the same folder; no Git branch is created")
+        .help("New Sidechat: a separate thread with a context handoff from this session, in the same folder")
     }
 }
 

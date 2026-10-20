@@ -81,6 +81,7 @@ struct ChatView: View {
         VStack(spacing: 0) {
             if session.record.archivedAt != nil { archivedBanner }
             if session.isSidequest { SidequestBanner(session: session) }
+            if let context = session.record.parentContext { ParentContextBanner(context: context) }
             if session.record.backend == .claude, let status = ClaudeModels.shared.statusMessage { claudeBanner(status) }
             if session.record.backend == .codex, let status = CodexAppServer.shared.statusMessage { claudeBanner(status) }
             if find.isOpen { ChatFindBar(find: find) }
