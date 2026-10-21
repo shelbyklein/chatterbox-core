@@ -161,18 +161,12 @@ struct ImageReviewView: View {
                         .interpolation(.high)
                         .frame(width: fitted.width, height: fitted.height)
                         .offset(x: fitted.minX, y: fitted.minY)
-                    Canvas { context, size in
-                        let rect = CGRect(origin: .zero, size: size)
-                        let width = max(size.width, size.height) * 0.004
-                        for stroke in strokes + (activePoints.isEmpty ? [] : [ImageStroke(points: activePoints)]) {
-                            if stroke.points.count == 1, let point = stroke.points.first {
-                                let dot = CGRect(x: point.x * size.width - width / 2, y: point.y * size.height - width / 2,
-                                                 width: width, height: width)
-                                context.fill(Path(ellipseIn: dot), with: .color(markColor))
-                            } else {
-                                context.stroke(Path(stroke.path(in: rect)), with: .color(markColor),
-                                               style: StrokeStyle(lineWidth: width, lineCap: .round, lineJoin: .round))
-                            }
+                    ZStack(alignment: .topLeading) {
+                        ForEach(strokes) { stroke in
+                            strokeView(stroke, size: fitted.size)
+                        }
+                        if !activePoints.isEmpty {
+                            strokeView(ImageStroke(points: activePoints), size: fitted.size)
                         }
                     }
                     .frame(width: fitted.width, height: fitted.height)
@@ -241,6 +235,20 @@ struct ImageReviewView: View {
         .padding(16)
     }
 
+    private func strokeView(_ stroke: ImageStroke, size: CGSize) -> some View {
+        let width = max(size.width, size.height) * 0.004
+        return Group {
+            if stroke.points.count == 1, let point = stroke.points.first {
+                Path(ellipseIn: CGRect(x: point.x * size.width - width / 2, y: point.y * size.height - width / 2,
+                                       width: width, height: width))
+                    .fill(markColor)
+            } else {
+                Path(stroke.path(in: CGRect(origin: .zero, size: size)))
+                    .stroke(markColor, style: StrokeStyle(lineWidth: width, lineCap: .round, lineJoin: .round))
+            }
+        }
+    }
+
     private func markView(_ number: Int, _ rect: CGRect, in fitted: CGRect, highlighted: Bool) -> some View {
         let origin = CGPoint(x: fitted.minX + rect.minX * fitted.width, y: fitted.minY + rect.minY * fitted.height)
         let size = CGSize(width: rect.width * fitted.width, height: rect.height * fitted.height)
@@ -277,9 +285,19 @@ struct ImageReviewView: View {
             .labelsHidden()
             Text(tool == .pen ? "Drag on the image to draw." : "Drag to mark an area, or click to mark a spot. Add a note for each mark.")
                 .font(.caption).foregroundStyle(.secondary)
-            Button(action: undo) { Label("Undo", systemImage: "arrow.uturn.backward") }
-                .disabled(edits.isEmpty)
-                .accessibilityLabel("Undo annotation")
+            HStack {
+                Button(action: undo) { Label("Undo", systemImage: "arrow.uturn.backward") }
+                    .disabled(edits.isEmpty)
+                    .accessibilityLabel("Undo annotation")
+                Spacer()
+                Menu("More") {
+                    Button("Copy Image") { ImageClipboard.copy(attachment.url) }
+                    Button("Open in Preview") { NSWorkspace.shared.open(attachment.url) }
+                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([attachment.url]) }
+                    Button("Clear Annotations") { marks.removeAll(); strokes.removeAll(); edits.removeAll() }
+                }
+                .fixedSize()
+            }
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
@@ -313,13 +331,6 @@ struct ImageReviewView: View {
             if let error { Text(error).font(.caption).foregroundStyle(.orange) }
 
             HStack {
-                Menu("More") {
-                    Button("Copy Image") { ImageClipboard.copy(attachment.url) }
-                    Button("Open in Preview") { NSWorkspace.shared.open(attachment.url) }
-                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([attachment.url]) }
-                    Button("Clear Annotations") { marks.removeAll(); strokes.removeAll(); edits.removeAll() }
-                }
-                .fixedSize()
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Send to Session") { send() }
