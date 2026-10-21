@@ -45,15 +45,19 @@ enum Attachments {
     /// Copies a file into the attachment store, converting images Claude can't read (HEIC, TIFF, …).
     static func importFile(_ source: URL) throws -> Attachment {
         let type = UTType(filenameExtension: source.pathExtension) ?? .data
+        return try importFile(source, name: source.lastPathComponent, type: type)
+    }
+
+    private static func importFile(_ source: URL, name: String, type: UTType) throws -> Attachment {
         // Only photos and screenshots are resized for the agent. Design files that macOS also
         // counts as images (Illustrator, Photoshop, EPS, SVG) are kept as the original file.
         if rasterTypes.contains(where: type.conforms(to:)) {
-            return try importImage(at: source, name: source.deletingPathExtension().lastPathComponent)
+            return try importImage(at: source, name: name)
         }
         let id = UUID()
-        let dest = try folder(for: id).appendingPathComponent(safeName(source.lastPathComponent))
+        let dest = try folder(for: id).appendingPathComponent(safeName(name))
         try FileManager.default.copyItem(at: source, to: dest)
-        return Attachment(id: id, name: source.lastPathComponent, path: dest.path,
+        return Attachment(id: id, name: name, path: dest.path,
                           mediaType: type.preferredMIMEType ?? "application/octet-stream", kind: kind(of: type, at: dest))
     }
 
@@ -82,10 +86,10 @@ enum Attachments {
 
         // Already fine as-is: keep the original bytes.
         if native.contains(sourceType), max(width, height) <= maxImageEdge, size <= maxImageBytes {
-            let ext = sourceType.preferredFilenameExtension ?? "png"
-            let dest = folder.appendingPathComponent(safeName(name) + "." + ext)
+            let filename = imageFilename(name, type: sourceType)
+            let dest = folder.appendingPathComponent(safeName(filename))
             try FileManager.default.copyItem(at: source, to: dest)
-            return Attachment(id: id, name: dest.lastPathComponent, path: dest.path,
+            return Attachment(id: id, name: filename, path: dest.path,
                               mediaType: sourceType.preferredMIMEType ?? "image/png", kind: .image)
         }
 
@@ -99,15 +103,73 @@ enum Attachments {
         }
         let hasAlpha = ![.none, .noneSkipFirst, .noneSkipLast].contains(image.alphaInfo)
         let outType: UTType = hasAlpha ? .png : .jpeg
-        let dest = folder.appendingPathComponent(safeName(name) + "." + (outType.preferredFilenameExtension ?? "png"))
+        let filename = imageFilename(name, type: outType)
+        let dest = folder.appendingPathComponent(safeName(filename))
         guard let out = CGImageDestinationCreateWithURL(dest as CFURL, outType.identifier as CFString, 1, nil) else {
             throw AttachmentError("Couldn't convert \(name).")
         }
         CGImageDestinationAddImage(out, image, [kCGImageDestinationLossyCompressionQuality: 0.88] as CFDictionary)
         guard CGImageDestinationFinalize(out) else { throw AttachmentError("Couldn't convert \(name).") }
-        return Attachment(id: id, name: dest.lastPathComponent, path: dest.path,
+        return Attachment(id: id, name: filename, path: dest.path,
                           mediaType: outType.preferredMIMEType ?? "image/png", kind: .image)
     }
+
+    /// Keep an existing matching extension verbatim. Only replace a raster extension when
+    /// conversion changes the format; a dotted stem such as "Proof v1.2" is still a stem.
+    private static func imageFilename(_ name: String, type: UTType) -> String {
+        let ext = (name as NSString).pathExtension
+        let namedType = UTType(filenameExtension: ext.lowercased())
+        if namedType == type { return name }
+        let stem = namedType.map { named in rasterTypes.contains(where: named.conforms(to:)) } == true
+            ? (name as NSString).deletingPathExtension : name
+        return stem + "." + (type.preferredFilenameExtension ?? "png")
+    }
+
+    #if !CHATTERBOX_HEADLESS
+    /// Import a drop before a provider's temporary representation disappears. The display
+    /// name comes from the sender, independently of our sanitized storage path.
+    @discardableResult
+    static func importDrop(_ provider: NSItemProvider,
+                           completion: @escaping (Result<Attachment, Error>) -> Void) -> Bool {
+        let suggestedName = provider.suggestedName.flatMap { $0.isEmpty ? nil : $0 }
+        if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+            _ = provider.loadObject(ofClass: URL.self) { url, error in
+                guard let url else {
+                    completion(.failure(error ?? AttachmentError("Couldn't read the dropped file.")))
+                    return
+                }
+                completion(Result { try importFile(url) })
+            }
+        } else if let type = provider.registeredTypeIdentifiers.lazy.compactMap(UTType.init).first(where: { type in
+            type.conforms(to: .data) && !rasterTypes.contains(where: type.conforms(to:))
+                && type != .data && type != .image
+        }) {
+            _ = provider.loadFileRepresentation(forTypeIdentifier: type.identifier) { url, error in
+                guard let url else {
+                    completion(.failure(error ?? AttachmentError("Couldn't read the dropped file.")))
+                    return
+                }
+                var name = suggestedName ?? url.lastPathComponent
+                if name.isEmpty { name = "Dropped file" }
+                if (name as NSString).pathExtension.isEmpty, let ext = type.preferredFilenameExtension {
+                    name += "." + ext
+                }
+                completion(Result { try importFile(url, name: name, type: type) })
+            }
+        } else if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+            provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, error in
+                guard let data else {
+                    completion(.failure(error ?? AttachmentError("Couldn't read the dropped image.")))
+                    return
+                }
+                completion(Result { try importImageData(data, name: suggestedName ?? "Dropped image") })
+            }
+        } else {
+            return false
+        }
+        return true
+    }
+    #endif
 
     private static func kind(of type: UTType, at url: URL) -> Attachment.Kind {
         if type.conforms(to: .pdf) { return .pdf }

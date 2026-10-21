@@ -397,46 +397,18 @@ struct ChatView: View {
     }
 
     private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
+        var accepted = false
         for provider in providers {
-            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-                _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                    guard let url else { return }
-                    Task { @MainActor in add([importOrReport(url)].compactMap { $0 }) }
-                }
-            } else if let type = Self.fileType(of: provider) {
-                // A file dragged from an app without a Finder path (an .ai from a design app):
-                // keep the file itself, under its own name, not a picture of it.
-                let name = (provider.suggestedName ?? "Dropped file") + (type.preferredFilenameExtension.map { ".\($0)" } ?? "")
-                _ = provider.loadFileRepresentation(forTypeIdentifier: type.identifier) { url, _ in
-                    guard let url else { return }
-                    // The file is only there until this returns, so copy it now.
-                    let copy = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-                    try? FileManager.default.createDirectory(at: copy, withIntermediateDirectories: true)
-                    let file = copy.appendingPathComponent(name)
-                    guard (try? FileManager.default.copyItem(at: url, to: file)) != nil else { return }
-                    Task { @MainActor in
-                        add([importOrReport(file)].compactMap { $0 })
-                        try? FileManager.default.removeItem(at: copy)
+            if Attachments.importDrop(provider, completion: { result in
+                Task { @MainActor in
+                    switch result {
+                    case .success(let attachment): add([attachment])
+                    case .failure(let error): attachError = error.localizedDescription
                     }
                 }
-            } else if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
-                provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
-                    guard let data else { return }
-                    Task { @MainActor in
-                        do { add([try Attachments.importImageData(data, name: provider.suggestedName ?? "Dropped image")]) } catch { attachError = error.localizedDescription }
-                    }
-                }
-            }
+            }) { accepted = true }
         }
-        return true
-    }
-
-    /// The most specific file type a drag offers, unless it's only a plain picture.
-    private static func fileType(of provider: NSItemProvider) -> UTType? {
-        provider.registeredTypeIdentifiers.lazy.compactMap(UTType.init).first { type in
-            type.conforms(to: .data) && !Attachments.rasterTypes.contains(where: type.conforms(to:))
-                && type != .data && type != .image
-        }
+        return accepted
     }
 
     private func importOrReport(_ url: URL) -> Attachment? {
