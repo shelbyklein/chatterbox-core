@@ -703,7 +703,7 @@ final class CompanionServer {
         }
         let accounts: [Companion.Usage.Account]? = configured ? proxy.accounts.map { account in
             .init(provider: account.provider, name: account.name, status: account.status,
-                  windows: account.windows.map { .init(label: $0.title, fraction: $0.remaining, resetsAt: $0.reset) },
+                  windows: account.windows.map { .quota(label: $0.title, remainingPercent: $0.remaining, resetsAt: $0.reset) },
                   problem: account.problem)
         } : nil
         return .json(Companion.Usage(claude: windows(UsageLimits.shared.claude), codex: windows(UsageLimits.shared.codex),

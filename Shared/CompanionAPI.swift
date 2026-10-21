@@ -295,6 +295,11 @@ enum Companion {
             /// 0 to 1: used for a limit window, remaining for a proxy quota.
             var fraction: Double?
             var resetsAt: Date?
+
+            /// Proxy quota is measured in percent; the wire contract always uses 0–1.
+            static func quota(label: String, remainingPercent: Double?, resetsAt: Date?) -> Self {
+                .init(label: label, fraction: remainingPercent.map { $0 / 100 }, resetsAt: resetsAt)
+            }
         }
         struct Account: Codable, Hashable {
             var provider: String
