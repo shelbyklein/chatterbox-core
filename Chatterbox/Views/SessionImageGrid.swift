@@ -93,6 +93,7 @@ struct SessionImageGrid: View {
         .buttonStyle(.plain)
         .help(image.url.lastPathComponent)
         .contextMenu {
+            Button("Annotate Image…") { reviewing = image }
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([image.url]) }
             Button("Copy Image") { ImageClipboard.copy(image.url) }
         }

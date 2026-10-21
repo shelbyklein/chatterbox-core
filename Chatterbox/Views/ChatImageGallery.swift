@@ -125,13 +125,7 @@ struct ChatImageGallery: View {
     }
 
     private func tile(_ image: GalleryImage) -> some View {
-        Button {
-            let attachment = Attachment(name: image.url.lastPathComponent, path: image.url.path,
-                                        mediaType: "image/" + image.url.pathExtension.lowercased(), kind: .image)
-            dismiss()
-            // The viewer is a sheet too: open it once this one has gone.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { onOpen(attachment) }
-        } label: {
+        Button { annotate(image) } label: {
             VStack(alignment: .leading, spacing: 4) {
                 GalleryThumbnail(url: image.url)
                     .frame(height: 170)
@@ -147,10 +141,11 @@ struct ChatImageGallery: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("View \(image.url.lastPathComponent)")
+        .help("View and annotate \(image.url.lastPathComponent)")
         // ⌘-click picks it too, like Finder.
         .simultaneousGesture(TapGesture().modifiers(.command).onEnded { toggle(image) })
         .contextMenu {
+            Button("Annotate Image…") { annotate(image) }
             Button(isSelected(image) ? "Deselect" : "Select") { toggle(image) }
             Button("Add to Session") { onAdd([image.url]); dismiss() }
             Divider()
@@ -158,6 +153,14 @@ struct ChatImageGallery: View {
             Button("Open in Preview") { NSWorkspace.shared.open(image.url) }
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([image.url]) }
         }
+    }
+
+    private func annotate(_ image: GalleryImage) {
+        let attachment = Attachment(name: image.url.lastPathComponent, path: image.url.path,
+                                    mediaType: "image/" + image.url.pathExtension.lowercased(), kind: .image)
+        dismiss()
+        // The viewer is a sheet too: open it once this one has gone.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { onOpen(attachment) }
     }
 }
 

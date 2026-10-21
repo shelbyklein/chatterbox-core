@@ -26,8 +26,26 @@ struct ImageMark: Identifiable {
     var isPoint: Bool { rect.width < 0.01 && rect.height < 0.01 }
 }
 
-/// A large view of an image where you mark areas and write a note for each. Sending attaches
-/// a copy with the numbered marks drawn on it, plus the original, and lists the notes.
+/// Points are normalized to the image, independent of the review window's size.
+struct ImageStroke: Identifiable {
+    var id = UUID()
+    var points: [CGPoint]
+
+    func path(in rect: CGRect, flipped: Bool = false) -> CGPath {
+        let path = CGMutablePath()
+        for (index, point) in points.enumerated() {
+            let position = CGPoint(x: rect.minX + point.x * rect.width,
+                                   y: rect.minY + (flipped ? 1 - point.y : point.y) * rect.height)
+            if index == 0 { path.move(to: position) } else { path.addLine(to: position) }
+        }
+        return path
+    }
+}
+
+enum ImageReviewTool: Hashable { case pen, notes }
+private enum ImageReviewEdit: Equatable { case stroke(UUID), mark(UUID) }
+
+/// Draw feedback on a copy of the image and send it, together with the original, to the chat.
 struct ImageReviewView: View {
     /// The image showing; Previous and Next move it through the chat's other images.
     @State private var attachment: Attachment
@@ -35,18 +53,23 @@ struct ImageReviewView: View {
     let gallery: [URL]
     let onSend: (_ text: String, _ attachments: [Attachment]) -> Void
 
-    init(attachment: Attachment, gallery: [URL] = [], onSend: @escaping (_ text: String, _ attachments: [Attachment]) -> Void) {
+    init(attachment: Attachment, gallery: [URL] = [], initialTool: ImageReviewTool = .pen,
+         onSend: @escaping (_ text: String, _ attachments: [Attachment]) -> Void) {
         _attachment = State(initialValue: attachment)
+        _tool = State(initialValue: initialTool)
         self.gallery = gallery
         self.onSend = onSend
     }
     /// Marks and notes made on other images while browsing, kept until the sheet closes.
-    @State private var drafts: [String: (marks: [ImageMark], overall: String)] = [:]
+    @State private var drafts: [String: (marks: [ImageMark], strokes: [ImageStroke], edits: [ImageReviewEdit], overall: String)] = [:]
     @Environment(\.dismiss) private var dismiss
 
     @State private var image: NSImage?
     @State private var marks: [ImageMark] = []
-    @State private var dragStart: CGPoint?
+    @State private var strokes: [ImageStroke] = []
+    @State private var activePoints: [CGPoint] = []
+    @State private var edits: [ImageReviewEdit] = []
+    @State private var tool: ImageReviewTool
     @State private var dragRect: CGRect?
     @State private var overall = ""
     @State private var error: String?
@@ -75,9 +98,13 @@ struct ImageReviewView: View {
     private func step(_ offset: Int) {
         guard let position, gallery.indices.contains(position + offset) else { return }
         let url = gallery[position + offset]
-        drafts[attachment.path] = (marks, overall)
+        drafts[attachment.path] = (marks, strokes, edits, overall)
         let draft = drafts[url.path]
         marks = draft?.marks ?? []
+        strokes = draft?.strokes ?? []
+        edits = draft?.edits ?? []
+        activePoints = []
+        dragRect = nil
         overall = draft?.overall ?? ""
         error = nil
         image = nil
@@ -134,6 +161,24 @@ struct ImageReviewView: View {
                         .interpolation(.high)
                         .frame(width: fitted.width, height: fitted.height)
                         .offset(x: fitted.minX, y: fitted.minY)
+                    Canvas { context, size in
+                        let rect = CGRect(origin: .zero, size: size)
+                        let width = max(size.width, size.height) * 0.004
+                        for stroke in strokes + (activePoints.isEmpty ? [] : [ImageStroke(points: activePoints)]) {
+                            if stroke.points.count == 1, let point = stroke.points.first {
+                                let dot = CGRect(x: point.x * size.width - width / 2, y: point.y * size.height - width / 2,
+                                                 width: width, height: width)
+                                context.fill(Path(ellipseIn: dot), with: .color(markColor))
+                            } else {
+                                context.stroke(Path(stroke.path(in: rect)), with: .color(markColor),
+                                               style: StrokeStyle(lineWidth: width, lineCap: .round, lineJoin: .round))
+                            }
+                        }
+                    }
+                    .frame(width: fitted.width, height: fitted.height)
+                    .clipped()
+                    .offset(x: fitted.minX, y: fitted.minY)
+                    .allowsHitTesting(false)
                     ForEach(Array(marks.enumerated()), id: \.element.id) { index, mark in
                         markView(index + 1, mark.rect, in: fitted, highlighted: focusedMark == mark.id)
                     }
@@ -152,8 +197,16 @@ struct ImageReviewView: View {
                 .gesture(
                     DragGesture(minimumDistance: 0)
                         .onChanged { value in
+                            guard fitted.contains(value.startLocation) else { return }
                             let start = normalized(value.startLocation, in: fitted)
                             let end = normalized(value.location, in: fitted)
+                            if tool == .pen {
+                                if activePoints.isEmpty { activePoints = [start] }
+                                if let last = activePoints.last, hypot(end.x - last.x, end.y - last.y) > 0.001 {
+                                    activePoints.append(end)
+                                }
+                                return
+                            }
                             dragRect = CGRect(x: min(start.x, end.x), y: min(start.y, end.y),
                                               width: abs(end.x - start.x), height: abs(end.y - start.y))
                         }
@@ -163,11 +216,21 @@ struct ImageReviewView: View {
                             dragRect = nil
                             // Clicks outside the picture don't make marks.
                             guard fitted.contains(value.startLocation) else { return }
+                            if tool == .pen {
+                                var points = activePoints.isEmpty ? [start] : activePoints
+                                if points.last != end { points.append(end) }
+                                let stroke = ImageStroke(points: points)
+                                strokes.append(stroke)
+                                edits.append(.stroke(stroke.id))
+                                activePoints = []
+                                return
+                            }
                             let rect = CGRect(x: min(start.x, end.x), y: min(start.y, end.y),
                                               width: abs(end.x - start.x), height: abs(end.y - start.y))
                             let mark = ImageMark(rect: rect.width < 0.01 && rect.height < 0.01
                                                  ? CGRect(origin: start, size: .zero) : rect)
                             marks.append(mark)
+                            edits.append(.mark(mark.id))
                             focusedMark = mark.id
                         }
                 )
@@ -206,8 +269,17 @@ struct ImageReviewView: View {
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(attachment.name).font(.headline).lineLimit(1).truncationMode(.middle)
-            Text("Drag to mark an area, or click to mark a spot. Add a note for each mark.")
+            Picker("Annotation tool", selection: $tool) {
+                Label("Pen", systemImage: "pencil.tip").tag(ImageReviewTool.pen)
+                Text("Numbered notes").tag(ImageReviewTool.notes)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            Text(tool == .pen ? "Drag on the image to draw." : "Drag to mark an area, or click to mark a spot. Add a note for each mark.")
                 .font(.caption).foregroundStyle(.secondary)
+            Button(action: undo) { Label("Undo", systemImage: "arrow.uturn.backward") }
+                .disabled(edits.isEmpty)
+                .accessibilityLabel("Undo annotation")
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
@@ -220,12 +292,15 @@ struct ImageReviewView: View {
                                 .textFieldStyle(.roundedBorder)
                                 .lineLimit(1...4)
                                 .focused($focusedMark, equals: mark.id)
-                            Button { marks.removeAll { $0.id == mark.id } } label: { Image(systemName: "xmark.circle.fill") }
+                            Button {
+                                marks.removeAll { $0.id == mark.id }
+                                edits.removeAll { $0 == .mark(mark.id) }
+                            } label: { Image(systemName: "xmark.circle.fill") }
                                 .buttonStyle(.plain).foregroundStyle(.secondary).help("Remove mark")
                         }
                     }
-                    if marks.isEmpty {
-                        Text("No marks yet.").font(.callout).foregroundStyle(.tertiary)
+                    if marks.isEmpty && strokes.isEmpty {
+                        Text("No annotations yet.").font(.callout).foregroundStyle(.tertiary)
                     }
                 }
             }
@@ -242,14 +317,14 @@ struct ImageReviewView: View {
                     Button("Copy Image") { ImageClipboard.copy(attachment.url) }
                     Button("Open in Preview") { NSWorkspace.shared.open(attachment.url) }
                     Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([attachment.url]) }
-                    Button("Clear Marks") { marks.removeAll() }
+                    Button("Clear Annotations") { marks.removeAll(); strokes.removeAll(); edits.removeAll() }
                 }
                 .fixedSize()
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Send to Session") { send() }
                     .keyboardShortcut(.return, modifiers: .command)
-                    .disabled(marks.isEmpty && overall.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .disabled(image == nil || (marks.isEmpty && strokes.isEmpty && overall.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
             }
         }
         .padding(16)
@@ -257,27 +332,36 @@ struct ImageReviewView: View {
 
     // MARK: - Sending
 
+    private func undo() {
+        guard let edit = edits.popLast() else { return }
+        switch edit {
+        case .stroke(let id): strokes.removeAll { $0.id == id }
+        case .mark(let id): marks.removeAll { $0.id == id }
+        }
+    }
+
     private func send() {
         guard let image else { return }
         var attachments = [attachment]
-        if !marks.isEmpty {
+        let hasAnnotations = !marks.isEmpty || !strokes.isEmpty
+        if hasAnnotations {
             do {
-                attachments.insert(try Attachments.importImageData(Self.annotated(image, marks: marks), name: "Marked up \((attachment.name as NSString).deletingPathExtension)"), at: 0)
+                attachments.insert(try Attachments.importImageData(Self.annotated(image, marks: marks, strokes: strokes), name: "Marked up \((attachment.name as NSString).deletingPathExtension)"), at: 0)
             } catch {
                 self.error = "Couldn't draw the marks: \(error.localizedDescription)"
                 return
             }
         }
         var lines: [String] = []
-        if !marks.isEmpty {
-            lines.append("Feedback on \(attachment.name). The first attached image has numbered marks; the second is the original.")
+        if hasAnnotations {
+            lines.append("Feedback on \(attachment.name). The first attached image is annotated; the second is the original.")
             for (index, mark) in marks.enumerated() {
                 let note = mark.comment.trimmingCharacters(in: .whitespacesAndNewlines)
                 lines.append("\(index + 1). \(Self.describe(mark.rect)): \(note.isEmpty ? "(no note)" : note)")
             }
         }
         let overallNote = overall.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !overallNote.isEmpty { lines.append(marks.isEmpty ? overallNote : "\nOverall: \(overallNote)") }
+        if !overallNote.isEmpty { lines.append(hasAnnotations ? "\nOverall: \(overallNote)" : overallNote) }
         onSend(lines.joined(separator: "\n"), attachments)
         dismiss()
     }
@@ -295,8 +379,8 @@ struct ImageReviewView: View {
         return "area at \(place) (x \(pct(rect.minX))–\(pct(rect.maxX))%, y \(pct(rect.minY))–\(pct(rect.maxY))%)"
     }
 
-    /// The image at full size with numbered orange marks drawn on it, as PNG data.
-    static func annotated(_ image: NSImage, marks: [ImageMark]) -> Data {
+    /// The image at full size with pen strokes and numbered marks drawn on it, as PNG data.
+    static func annotated(_ image: NSImage, marks: [ImageMark], strokes: [ImageStroke] = []) -> Data {
         let size = image.representations.first.map { CGSize(width: $0.pixelsWide, height: $0.pixelsHigh) } ?? image.size
         let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width), pixelsHigh: Int(size.height),
                                    bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
@@ -306,6 +390,26 @@ struct ImageReviewView: View {
         image.draw(in: CGRect(origin: .zero, size: size))
         let scale = max(size.width, size.height) / 1000
         let orange = NSColor.systemOrange
+        if let context = NSGraphicsContext.current?.cgContext {
+            context.saveGState()
+            context.clip(to: CGRect(origin: .zero, size: size))
+            context.setStrokeColor(orange.cgColor)
+            context.setFillColor(orange.cgColor)
+            context.setLineWidth(4 * scale)
+            context.setLineCap(.round)
+            context.setLineJoin(.round)
+            for stroke in strokes {
+                if stroke.points.count == 1, let point = stroke.points.first {
+                    context.fillEllipse(in: CGRect(x: point.x * size.width - 2 * scale,
+                                                   y: (1 - point.y) * size.height - 2 * scale,
+                                                   width: 4 * scale, height: 4 * scale))
+                } else {
+                    context.addPath(stroke.path(in: CGRect(origin: .zero, size: size), flipped: true))
+                    context.strokePath()
+                }
+            }
+            context.restoreGState()
+        }
         for (index, mark) in marks.enumerated() {
             // Flip: marks use a top-left origin, AppKit drawing uses bottom-left.
             let rect = CGRect(x: mark.rect.minX * size.width, y: (1 - mark.rect.maxY) * size.height,

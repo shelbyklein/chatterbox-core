@@ -388,13 +388,14 @@ private struct GeneratedImages: View {
                     HStack(spacing: 6) {
                         CopyImageButton(url: image.url)
                         Button { review.open(image) } label: {
-                            Label("Review", systemImage: "pencil.and.scribble").imageOverlayPill()
+                            Label("Annotate", systemImage: "pencil.tip").imageOverlayPill()
                         }
                         .buttonStyle(.plain)
                     }
                     .padding(8)
                 }
                 .contextMenu {
+                    Button("Annotate Image…") { review.open(image) }
                     Button("Copy Image") { ImageClipboard.copy(image.url) }
                     Button("Open in Preview") { NSWorkspace.shared.open(image.url) }
                     Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([image.url]) }
@@ -478,6 +479,7 @@ private struct SentAttachments: View {
                         .buttonStyle(.plain)
                         .help(image.name)
                         .contextMenu {
+                            Button("Annotate Image…") { review.open(image) }
                             Button("Copy Image") { ImageClipboard.copy(image.url) }
                             Button("Open in Preview") { NSWorkspace.shared.open(image.url) }
                             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([image.url]) }

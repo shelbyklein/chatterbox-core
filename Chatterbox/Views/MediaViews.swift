@@ -166,10 +166,19 @@ struct ReplyImages: View {
             .help("View \(url.lastPathComponent)")
             HStack(spacing: 12) {
                 Text(url.deletingPathExtension().lastPathComponent).foregroundStyle(.secondary).lineLimit(1)
+                Button {
+                    review.open(Attachment(name: url.lastPathComponent, path: url.path,
+                                           mediaType: "image/" + url.pathExtension.lowercased(), kind: .image))
+                } label: { Label("Annotate", systemImage: "pencil.tip") }
+                    .buttonStyle(.plain).foregroundStyle(.secondary)
                 CopyImageButton(url: url, overlayPill: false).foregroundStyle(.secondary)
             }.font(.caption)
         }
         .contextMenu {
+            Button("Annotate Image…") {
+                review.open(Attachment(name: url.lastPathComponent, path: url.path,
+                                       mediaType: "image/" + url.pathExtension.lowercased(), kind: .image))
+            }
             Button("Copy Image") { ImageClipboard.copy(url) }
             Button("Open") { NSWorkspace.shared.open(url) }
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
