@@ -8,21 +8,48 @@ struct PendingImage: Identifiable {
     var upload: Companion.Upload
 }
 
-/// Counts the reader's drags; scroll work queued before one is dropped. Reference-typed so a drag
-/// doesn't redraw the chat.
-final class ScrollWork { var generation = 0 }
+/// Invalidates queued scroll work when the reader drags or a newer follow request replaces it.
+/// Reference-typed so every drag update doesn't redraw the chat.
+final class ScrollWork {
+    var generation = 0
+    var request = 0
+    var dragging = false
+    var towardNewest = false
+}
 
 /// Reports whether the visible part of a scroll view is within a couple of lines of its end,
 /// measured from the scroll geometry (iOS 18 and later).
 private struct NearBottom: ViewModifier {
     var report: (Bool) -> Void
+    var settled: (Bool) -> Void
+    @available(iOS 18, *)
+    private func nearBottom(_ geometry: ScrollGeometry) -> Bool {
+        geometry.contentSize.height - geometry.visibleRect.maxY < 40
+    }
     func body(content: Content) -> some View {
         if #available(iOS 18, *) {
-            content.onScrollGeometryChange(for: Bool.self) { $0.contentSize.height - $0.visibleRect.maxY < 40 } action: { _, near in
+            content.onScrollGeometryChange(for: Bool.self) { nearBottom($0) } action: { _, near in
                 report(near)
+            }
+            .onScrollPhaseChange { _, phase, context in
+                if phase == .idle { settled(nearBottom(context.geometry)) }
             }
         } else {
             content
+        }
+    }
+}
+
+/// Bottom alignment is useful on opening and for short chats. Applying it to every size change
+/// also shifts a reader upward when a new row is appended below them; following is explicit.
+private struct TranscriptAnchors: ViewModifier {
+    var following: Bool
+    func body(content: Content) -> some View {
+        if #available(iOS 18, *) {
+            content.defaultScrollAnchor(.bottom)
+                .defaultScrollAnchor(.top, for: .sizeChanges)
+        } else {
+            content.defaultScrollAnchor(following ? .bottom : .top)
         }
     }
 }
@@ -66,10 +93,10 @@ struct ChatDetailView: View {
         nonmutating set { composerState.images = newValue }
     }
     private var sending: Bool { composerState.sending }
-    /// Whether the reader is at the end of the transcript (measured against the scroll view's
-    /// visible area, not row appearance), and until when to keep them there.
+    /// Visibility and intent are separate: the keyboard or a taller composer can temporarily
+    /// cover the end without the reader choosing to stop following it.
     @State private var atBottom = true
-    @State private var pinUntil = Date.distantPast
+    @State private var followingNewest = true
     /// Counts the reader's drags: scroll work queued before one is dropped.
     @State private var scrollWork = ScrollWork()
     @State private var pinRequests = 0
@@ -344,27 +371,47 @@ struct ChatDetailView: View {
                     if let error = error ?? history.problem {
                         Label(error, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.orange)
                     }
-                    Color.clear.frame(height: 1).id("bottom")
+                    // Include the bottom margin in the target, so scrolling reaches the true end.
+                    Color.clear.frame(height: 1).padding(.bottom, 16).id("bottom")
                         // Before iOS 18 there's no scroll geometry: row appearance stands in for it
                         // (lazy rows, so it can mean prefetched rather than visible).
                         .onAppear { if !Self.measuresScroll { atBottom = true } }
                         .onDisappear { if !Self.measuresScroll { atBottom = false } }
                 }
-                .padding(16)
+                .padding(.horizontal, 16).padding(.top, 16)
                 // A readable width on iPad, centered.
                 .frame(maxWidth: 760)
                 .frame(maxWidth: .infinity)
             }
-            .modifier(NearBottom { atBottom = $0 })
-            // Reading: a drag takes over from any scroll still queued, and ends the follow window.
-            .simultaneousGesture(DragGesture(minimumDistance: 10).onChanged { _ in
+            .accessibilityIdentifier("chatTranscript")
+            .modifier(NearBottom(report: { near in
+                atBottom = near
+            }, settled: { near in
+                guard scrollWork.dragging else { return }
+                scrollWork.dragging = false
+                atBottom = near
+                // A drag toward older messages means "let me read", even if it ends inside
+                // the bottom tolerance. Resume only when the reader deliberately returns.
+                followingNewest = near && scrollWork.towardNewest
+            }))
+            // Reading takes over until the reader returns to the end or explicitly jumps there.
+            .simultaneousGesture(DragGesture(minimumDistance: 10).onChanged { drag in
                 scrollWork.generation += 1
-                if pinUntil > .distantPast { pinUntil = .distantPast }
+                scrollWork.dragging = true
+                scrollWork.towardNewest = drag.translation.height < 0
+                followingNewest = false
                 #if GOLEM_APP
                 if anchoredMessage != nil { anchoredMessage = nil }
                 #endif
+            }.onEnded { _ in
+                // On modern iOS use the actual settled geometry, after deceleration. The
+                // last Boolean delivered during a drag can still describe the old viewport.
+                if !Self.measuresScroll {
+                    scrollWork.dragging = false
+                    followingNewest = atBottom && scrollWork.towardNewest
+                }
             })
-            .defaultScrollAnchor(.bottom)
+            .modifier(TranscriptAnchors(following: followingNewest))
             .scrollDismissesKeyboard(.interactively)
             .refreshable { await refresh(force: true) }
             // New messages follow only if you're at the end (or it's just opened), so scrolling
@@ -373,45 +420,51 @@ struct ChatDetailView: View {
                 if !pinnedLoaded, detail != nil {
                     pinnedLoaded = true
                     pin(proxy, for: 1.5)
-                } else if atBottom || Date() < pinUntil {
+                } else if followingNewest {
                     pin(proxy, for: 1.0)
                 }
             }
             .onAppear {
-                pinnedLoaded = detail == nil ? false : pinnedLoaded
+                // A prefetched or cached detail is already covered by this opening pin.
+                // Otherwise its first subsequent update (often a send) looks like first load.
+                pinnedLoaded = detail != nil
                 #if GOLEM_APP
                 anchoredMessage = nil
                 #endif
                 pin(proxy, for: 1.5)
             }
+            .onDisappear { scrollWork.generation += 1; scrollWork.dragging = false }
             // Above the newest messages: a button back down, above the message box.
             .overlay(alignment: .bottomTrailing) {
-                if !atBottom, detail != nil {
-                    Button {
-                        #if GOLEM_APP
-                        anchoredMessage = nil
-                        #endif
-                        pin(proxy, for: 0.8)
-                    } label: {
-                        Image(systemName: "arrow.down")
-                            .font(.system(size: 16, weight: .semibold))
-                            .frame(width: 44, height: 44)
-                            .background(.regularMaterial, in: Circle())
-                            .overlay(Circle().strokeBorder(Color.primary.opacity(0.12)))
-                            .shadow(color: .black.opacity(0.18), radius: 6, y: 2)
+                ZStack {
+                    if !atBottom || !followingNewest, detail != nil {
+                        Button {
+                            #if GOLEM_APP
+                            anchoredMessage = nil
+                            #endif
+                            pin(proxy, for: 0.8)
+                        } label: {
+                            Image(systemName: "arrow.down")
+                                .font(.system(size: 16, weight: .semibold))
+                                .frame(width: 44, height: 44)
+                                .background(.regularMaterial, in: Circle())
+                                .overlay(Circle().strokeBorder(Color.primary.opacity(0.12)))
+                                .shadow(color: .black.opacity(0.18), radius: 6, y: 2)
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.trailing, 16)
+                        .padding(.bottom, 12)
+                        .transition(.scale(scale: 0.6).combined(with: .opacity))
+                        .accessibilityLabel("Scroll to newest message")
+                        .accessibilityHint("Jumps to the end of the session")
                     }
-                    .buttonStyle(.plain)
-                    .padding(.trailing, 16)
-                    .padding(.bottom, 12)
-                    .transition(.scale(scale: 0.6).combined(with: .opacity))
-                    .accessibilityLabel("Scroll to newest message")
-                    .accessibilityHint("Jumps to the end of the session")
                 }
+                .animation(.easeOut(duration: 0.18), value: atBottom)
             }
-            .animation(.easeOut(duration: 0.18), value: atBottom)
             .onChange(of: pinRequests) { pin(proxy, for: 1.5) }
             // The tab bar coming or going resizes the list: keep a reader at the end there, not one above it.
-            .onChange(of: layoutRequests) { if atBottom || Date() < pinUntil { pin(proxy, for: 1.5) } }
+            .onChange(of: layoutRequests) { if followingNewest { pin(proxy, for: 1.5) } }
+            .onChange(of: composing) { if followingNewest { pin(proxy, for: 1.5) } }
             #if GOLEM_APP
             // "Read new replies aloud": each reply that arrives while this chat is open, read
             // sentence by sentence as it streams in (the chat refreshes about every second meanwhile).
@@ -601,15 +654,16 @@ struct ChatDetailView: View {
 
     private static let measuresScroll: Bool = { if #available(iOS 18, *) { true } else { false } }()
 
-    /// Scrolls to the newest message, again a few times while rows load and get measured
-    /// (a lazy list only estimates the height of rows it hasn't drawn). If the reader drags the
-    /// transcript before the repeats run, they're dropped.
+    /// Scrolls to the newest message, again a few times while lazy rows get measured. Only the
+    /// newest request can run; a reader drag cancels the whole batch.
     private func pin(_ proxy: ScrollViewProxy, for seconds: Double) {
-        pinUntil = max(pinUntil, Date().addingTimeInterval(seconds))
+        followingNewest = true
+        scrollWork.request += 1
         let work = scrollWork, generation = work.generation
+        let request = work.request
         for delay in [0, 0.05, 0.15, 0.35, 0.7, 1.1] where delay <= seconds + 0.05 {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                guard work.generation == generation else { return }
+                guard work.generation == generation, work.request == request else { return }
                 var instant = Transaction()
                 instant.disablesAnimations = true
                 withTransaction(instant) {
@@ -774,18 +828,22 @@ struct ChatDetailView: View {
     private func send(now: Bool = false) async {
         // A voice conversation keeps its microphone running across the send.
         if dictation.isListening, !dictation.conversationActive { dictation.stop() }
-        pinRequests += 1   // Your own message: always go to the end.
         let state = composerState
         guard let submission = state.beginSend() else { return }
+        let generation = scrollWork.generation
         do {
             let result = try await store.send(submission.text.trimmingCharacters(in: .whitespacesAndNewlines),
                                               images: submission.images.map(\.upload), now: now, to: chat.id)
             state.finish(submission)
             history.apply(result)
+            // Follow the actual message, after it exists. A reader who dragged while the send
+            // was in flight keeps their chosen position instead.
+            if scrollWork.generation == generation {
             #if GOLEM_APP
-            anchoredMessage = result.items.last { $0.kind == .user }?.id
-            pinRequests += 1
+                anchoredMessage = result.items.last { $0.kind == .user }?.id
             #endif
+                pinRequests += 1
+            }
             error = nil
         } catch {
             state.finish(submission, failed: true)
@@ -886,6 +944,8 @@ struct ChatDetailView: View {
         .frame(maxWidth: 784)
         .frame(maxWidth: .infinity)
         .background(.bar)
+        // Line wrapping, attachments and clearing a draft all change the transcript's viewport.
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { _ in layoutRequests += 1 }
     }
 
     /// Tap to talk, tap again to stop. Words land after whatever's already typed.
