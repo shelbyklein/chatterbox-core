@@ -1475,6 +1475,21 @@ private struct ItemRow: View {
     }
 }
 
+/// Visibility rather than lazy-row creation controls image downloads on iOS 18+.
+private struct ImageVisibility: ViewModifier {
+    let report: (Bool) -> Void
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18, *) {
+            // Lazy rows may exist before they enter the viewport. Start at the first sliver.
+            content.onScrollVisibilityChange(threshold: 0.01, report)
+                .onDisappear { report(false) }
+        } else {
+            content.onAppear { report(true) }.onDisappear { report(false) }
+        }
+    }
+}
+
 /// An image from the chat, fetched from the Mac at the size it shows here (and kept on this
 /// phone); viewing, marking up or copying it gets the original. Hold it for those.
 private struct RemoteImage: View {
@@ -1482,10 +1497,19 @@ private struct RemoteImage: View {
     let chat: UUID
     let onMarkUp: (UIImage) -> Void
     @Environment(MobileStore.self) private var store
+    @Environment(\.scenePhase) private var scenePhase
     @State private var image: UIImage?
     @State private var original: UIImage?
     @State private var viewing = false
     @State private var failed = false
+    @State private var visible = false
+    @State private var retry = 0
+    @State private var loadedKey: String?
+    private struct LoadRequest: Hashable {
+        let key: String
+        let visible: Bool
+        let retry: Int
+    }
     /// 320 points wide on a 3x screen, with room to zoom a little.
     static let displayPixels = 1200
 
@@ -1500,14 +1524,17 @@ private struct RemoteImage: View {
         Group {
             if let image {
                 Image(uiImage: image).resizable().aspectRatio(contentMode: .fit)
+                    .accessibilityLabel(file.name)
+                    .accessibilityIdentifier("chat-image-\(file.id.uuidString.lowercased())")
                     .onTapGesture { viewing = true }
             } else {
                 RoundedRectangle(cornerRadius: 10).fill(Color(uiColor: .secondarySystemBackground))
                     .frame(height: 160)
                     .overlay {
                         if failed {
-                            Button("Couldn't load \(file.name). Tap to retry.") { failed = false; Task { await load() } }
+                            Button("Couldn't load \(file.name). Tap to retry.") { retry += 1 }
                                 .font(.caption).foregroundStyle(.secondary).padding(8)
+                                .accessibilityIdentifier("retry-image-\(file.id.uuidString.lowercased())")
                         } else { ProgressView() }
                     }
             }
@@ -1526,13 +1553,41 @@ private struct RemoteImage: View {
         }
         // The viewer opens on the shown copy and sharpens to the original when it arrives.
         .onChange(of: viewing) { _, open in if open { Task { _ = await full() } } }
-        .task(id: "\(file.id)|\(file.revision ?? "")") { await load() }
+        .modifier(ImageVisibility(report: { visible = $0 }))
+        .task(id: LoadRequest(key: imageKey, visible: visible && scenePhase == .active, retry: retry)) {
+            await load()
+        }
+    }
+
+    private var imageKey: String {
+        MobileImageCache.key(chat: chat, file: file, size: String(Self.displayPixels))
     }
 
     private func load() async {
+        guard !Task.isCancelled else { return }
+        if loadedKey != imageKey {
+            image = nil
+            original = nil
+            failed = false
+            loadedKey = imageKey
+        }
+        guard visible, scenePhase == .active else { return }
         guard image == nil else { return }
-        image = try? await store.image(file, in: chat, maxPixels: Self.displayPixels)
-        failed = image == nil
+        failed = false
+        // One attempt on entering view, then two short retries for transient failures.
+        // The view task cancels both the request and the backoff on leaving/backgrounding.
+        for delay in [0.0, 0.75, 2.0] {
+            do {
+                try await Task.sleep(for: .seconds(delay))
+                let fetched = try await store.image(file, in: chat, maxPixels: Self.displayPixels)
+                try Task.checkCancellation()
+                if let fetched { image = fetched; return }
+            } catch {
+                // Lazy-row cancellation is ordinary scrolling, not a broken image.
+                if Task.isCancelled { return }
+            }
+        }
+        failed = true
     }
 }
 
