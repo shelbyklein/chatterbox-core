@@ -104,6 +104,9 @@ struct ChatDetailView: View {
     /// Whether the transcript has been scrolled to the end since it opened with messages in it.
     /// On a slow connection the messages come long after the view does.
     @State private var pinnedLoaded = false
+    /// A cover or navigation transition can make this same transcript appear again.
+    /// Only a genuinely new view gets the unconditional opening scroll.
+    @State private var opened = false
     @Environment(\.scenePhase) private var scenePhase
     @State private var error: String?
     @FocusState private var composing: Bool
@@ -425,6 +428,11 @@ struct ChatDetailView: View {
                 }
             }
             .onAppear {
+                if opened {
+                    if followingNewest { pin(proxy, for: 1.5) }
+                    return
+                }
+                opened = true
                 // A prefetched or cached detail is already covered by this opening pin.
                 // Otherwise its first subsequent update (often a send) looks like first load.
                 pinnedLoaded = detail != nil
@@ -482,9 +490,9 @@ struct ChatDetailView: View {
                 if phase == .background { endVoiceConversation() }
                 #endif
                 guard phase == .active else { return }
-                // Already loaded: this pin covers it. Otherwise the first load will.
-                pinnedLoaded = detail != nil
-                pin(proxy, for: 1.5)
+                // App/overlay return must not take a reader away from older messages.
+                // First-load handling remains with the revision observer above.
+                if followingNewest { pin(proxy, for: 1.5) }
             }
             #if DEBUG
             // Simulator tests: scroll to the top, then tap the button.
