@@ -42,7 +42,7 @@ struct SecretEntry: Codable, Identifiable, Hashable {
 @Observable
 final class SecretVault {
     static let shared = SecretVault()
-    private static let service = "com.shelbyklein.Chatterbox.secrets"
+    private nonisolated static let service = "com.shelbyklein.Chatterbox.secrets"
 
     private(set) var entries: [SecretEntry] = []
     /// Values, read from Keychain once; never shown in the app.
@@ -50,23 +50,56 @@ final class SecretVault {
     /// Bumped on every change, so chats can tell their environment needs refreshing.
     private(set) var revision = 0
 
-    private var file: URL {
-        let base: URL
-        if let dir = ProcessInfo.processInfo.environment["CHATTERBOX_DATA_DIR"], !dir.isEmpty {
-            base = URL(fileURLWithPath: dir)
-        } else {
-            base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Chatterbox")
-        }
-        return base.appendingPathComponent("Secrets.json")
+    private let directory: URL
+    private var file: URL { directory.appendingPathComponent("Secrets.json") }
+    private var fixtureDirectory: URL? { Self.usesFixtureStorage(directory) ? directory : nil }
+
+    /// The service explicitly sets the *production* data directory. Only an isolated
+    /// directory uses test files; setting the environment variable alone isn't test mode.
+    static func usesFixtureStorage(_ directory: URL) -> Bool {
+        let production = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Chatterbox")
+        return directory.resolvingSymlinksInPath().standardizedFileURL.path != production.resolvingSymlinksInPath().standardizedFileURL.path
     }
 
-    private var isTest: Bool { ProcessInfo.processInfo.environment["CHATTERBOX_DATA_DIR"] != nil }
+    init(directory: URL? = nil) {
+        self.directory = directory ?? ProcessInfo.processInfo.environment["CHATTERBOX_DATA_DIR"]
+            .flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
+            ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Chatterbox")
+        try? reload()
+    }
 
-    init() {
-        if let data = try? Data(contentsOf: file), let saved = try? JSONDecoder().decode([SecretEntry].self, from: data) {
+    /// Another process owns the Settings editor. Refresh without writing metadata or
+    /// prompting, and discard removed values rather than leaving them in agent environments.
+    func reload() throws {
+        let saved: [SecretEntry]
+        do { saved = try JSONDecoder().decode([SecretEntry].self, from: Data(contentsOf: file)) }
+        catch let error as NSError where error.domain == NSCocoaErrorDomain && error.code == NSFileReadNoSuchFileError { saved = [] }
+        let loaded = Dictionary(saved.compactMap { entry in
+            Self.read(entry.id, fixtureDirectory: fixtureDirectory).map { (entry.id, $0) }
+        }, uniquingKeysWith: { _, last in last })
+        if entries != saved || values != loaded {
             entries = saved
+            values = loaded
+            revision += 1
         }
-        for entry in entries { values[entry.id] = Self.read(entry.id, test: isTest) }
+    }
+
+    /// Called only after a user gesture in Settings, by the process that needs access.
+    /// The native prompt runs off-main; its result stays in memory, never in an RPC reply.
+    func authorize(_ id: UUID) async -> Bool {
+        guard entries.contains(where: { $0.id == id }) else { return false }
+        let fixture = fixtureDirectory
+        let value = await Task.detached(priority: .userInitiated) {
+            Self.read(id, fixtureDirectory: fixture, allowInteraction: true)
+        }.value
+        // The prompt may have been open while Settings removed or rescoped an entry.
+        // Reconcile disk metadata before accepting its result; never resurrect a removal.
+        do { try reload() } catch { return false }
+        guard entries.contains(where: { $0.id == id }) else { return false }
+        values[id] = value
+        revision += 1
+        return !(value ?? "").isEmpty
     }
 
     func hasValue(_ entry: SecretEntry) -> Bool { !(values[entry.id] ?? "").isEmpty }
@@ -79,7 +112,7 @@ final class SecretVault {
     /// Adds or updates an entry. A nil value keeps the one already stored.
     func save(_ entry: SecretEntry, value: String?) throws {
         if let value, !value.isEmpty {
-            try Self.write(value, for: entry.id, test: isTest)
+            try Self.write(value, for: entry.id, fixtureDirectory: fixtureDirectory)
             values[entry.id] = value
         }
         if let index = entries.firstIndex(where: { $0.id == entry.id }) { entries[index] = entry } else { entries.append(entry) }
@@ -87,7 +120,7 @@ final class SecretVault {
     }
 
     func remove(_ entry: SecretEntry) {
-        Self.delete(entry.id, test: isTest)
+        Self.delete(entry.id, fixtureDirectory: fixtureDirectory)
         values[entry.id] = nil
         entries.removeAll { $0.id == entry.id }
         persist()
@@ -156,23 +189,22 @@ final class SecretVault {
 
     // MARK: - Keychain (a JSON file in the test data folder instead, under tests)
 
-    private static func testFile(_ id: UUID) -> URL {
-        URL(fileURLWithPath: ProcessInfo.processInfo.environment["CHATTERBOX_DATA_DIR"] ?? NSTemporaryDirectory())
-            .appendingPathComponent("test-secret-\(id.uuidString)")
+    private nonisolated static func testFile(_ id: UUID, directory: URL) -> URL {
+        directory.appendingPathComponent("test-secret-\(id.uuidString)")
     }
 
-    private static func read(_ id: UUID, test: Bool) -> String? {
-        if test { return try? String(contentsOf: testFile(id), encoding: .utf8) }
+    private nonisolated static func read(_ id: UUID, fixtureDirectory: URL?, allowInteraction: Bool = false) -> String? {
+        if let fixtureDirectory { return try? String(contentsOf: testFile(id, directory: fixtureDirectory), encoding: .utf8) }
         var value: CFTypeRef?
         let status = SecItemCopyMatching([kSecClass: kSecClassGenericPassword, kSecAttrService: service, kSecAttrAccount: id.uuidString,
                                           kSecReturnData: true, kSecMatchLimit: kSecMatchLimitOne,
-                                          kSecUseAuthenticationUI: kSecUseAuthenticationUIFail] as CFDictionary, &value)
+                                          kSecUseAuthenticationUI: allowInteraction ? kSecUseAuthenticationUIAllow : kSecUseAuthenticationUIFail] as CFDictionary, &value)
         guard status == errSecSuccess, let data = value as? Data else { return nil }
         return String(data: data, encoding: .utf8)
     }
 
-    private static func write(_ value: String, for id: UUID, test: Bool) throws {
-        if test { try value.write(to: testFile(id), atomically: true, encoding: .utf8); return }
+    private static func write(_ value: String, for id: UUID, fixtureDirectory: URL?) throws {
+        if let fixtureDirectory { try value.write(to: testFile(id, directory: fixtureDirectory), atomically: true, encoding: .utf8); return }
         let query = [kSecClass: kSecClassGenericPassword, kSecAttrService: service, kSecAttrAccount: id.uuidString] as CFDictionary
         let data = Data(value.utf8)
         var status = SecItemUpdate(query, [kSecValueData: data] as CFDictionary)
@@ -186,8 +218,8 @@ final class SecretVault {
         }
     }
 
-    private static func delete(_ id: UUID, test: Bool) {
-        if test { try? FileManager.default.removeItem(at: testFile(id)); return }
+    private static func delete(_ id: UUID, fixtureDirectory: URL?) {
+        if let fixtureDirectory { try? FileManager.default.removeItem(at: testFile(id, directory: fixtureDirectory)); return }
         SecItemDelete([kSecClass: kSecClassGenericPassword, kSecAttrService: service, kSecAttrAccount: id.uuidString] as CFDictionary)
     }
 }

@@ -1147,6 +1147,9 @@ struct SecretsSection: View {
     private let vault = SecretVault.shared
     @State private var editing: SecretEntry?
     @State private var removing: SecretEntry?
+    @State private var serviceAvailability: [String: Bool]?
+    @State private var serviceStatus: String?
+    @State private var authorizing: UUID?
 
     var body: some View {
         Section {
@@ -1166,6 +1169,17 @@ struct SecretsSection: View {
                     }
                     Spacer()
                     if !vault.hasValue(entry) { Text("No value").font(.caption).foregroundStyle(.orange) }
+                    if RuntimeClient.usesDaemon, let available = serviceAvailability?[entry.id.uuidString] {
+                        if available {
+                            Text("Available to sessions").font(.caption).foregroundStyle(.secondary)
+                        } else {
+                            Button(authorizing == entry.id ? "Waiting for Keychain…" : "Allow Background Access") {
+                                authorize(entry)
+                            }
+                            .disabled(authorizing != nil)
+                            .help("Let macOS ask whether chatterboxd may read \(entry.name) from Keychain")
+                        }
+                    }
                     Button("Edit") { editing = entry }
                     Button(role: .destructive) { removing = entry } label: { Image(systemName: "trash") }
                         .buttonStyle(.borderless).help("Remove \(entry.name)").accessibilityLabel("Remove \(entry.name)")
@@ -1175,11 +1189,18 @@ struct SecretsSection: View {
                 Spacer()
                 Button("Add Secret\u{2026}") { editing = SecretEntry(name: "", variable: "") }
             }
+            if let serviceStatus {
+                Text(serviceStatus).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+            }
         } header: {
             Text("Secrets & Accounts")
         } footer: {
             Text("Values are kept in your Mac's Keychain and never shown here again. Sessions in scope get each one as an environment variable for the commands their agent runs; the agent is told only its name and what it's for, and any value that shows up in a session is masked. A command that prints a value would still show it to the agent's model, so agents are told never to.")
                 .font(.caption).foregroundStyle(.secondary)
+        }
+        .task { await refreshServiceSecrets() }
+        .onChange(of: RuntimeClient.shared.connected) { _, connected in
+            if connected { Task { await refreshServiceSecrets() } }
         }
         .sheet(item: $editing) { entry in
             SecretEditor(entry: entry, isNew: !vault.entries.contains { $0.id == entry.id },
@@ -1208,7 +1229,41 @@ struct SecretsSection: View {
 
     /// Claude Code reads its environment at launch: idle chats restart into the new one.
     private func restartClaudeChats() {
-        for session in model.sessions where session.record.backend == .claude { session.restartClaudeForNewTools() }
+        if RuntimeClient.usesDaemon {
+            Task { await refreshServiceSecrets() }
+        } else {
+            for session in model.sessions where session.record.backend == .claude { session.restartClaudeForNewTools() }
+        }
+    }
+
+    /// Status contains only entry IDs and booleans. Secret values never cross this socket.
+    private func refreshServiceSecrets() async {
+        guard RuntimeClient.usesDaemon, authorizing == nil else { return }
+        do {
+            let reply = try await RuntimeClient.shared.request("refreshSecrets")
+            serviceAvailability = reply["availability"]?.object?.compactMapValues(\.bool)
+            serviceStatus = nil
+        } catch {
+            serviceAvailability = nil
+            serviceStatus = "Couldn't check background access. If the service is awaiting an update, restart it, then reopen Secrets."
+        }
+    }
+
+    private func authorize(_ entry: SecretEntry) {
+        authorizing = entry.id
+        serviceStatus = "macOS may ask you to allow “chatterboxd” to read this saved key. Choose Always Allow to keep access after a service restart."
+        Task {
+            defer { authorizing = nil }
+            do {
+                let reply = try await RuntimeClient.shared.request("authorizeSecret", body: ["secretID": .string(entry.id.uuidString)], timeout: .seconds(180))
+                serviceAvailability = reply["availability"]?.object?.compactMapValues(\.bool)
+                serviceStatus = reply["authorized"]?.bool == true
+                    ? "Background access verified. Sessions in scope receive this key with their next message."
+                    : "Background access wasn't granted. Try again and approve the macOS Keychain prompt."
+            } catch {
+                serviceStatus = "Couldn't authorize background access. Check the service connection, then try again."
+            }
+        }
     }
 }
 

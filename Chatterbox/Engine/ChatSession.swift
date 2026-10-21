@@ -111,6 +111,7 @@ final class ChatSession: Identifiable {
     @ObservationIgnored var restartForToolsAfterTurn = false
     /// The Tools settings the running Claude process started with (see ChatSession+Tools).
     @ObservationIgnored var claudeToolsFingerprint = ""
+    @ObservationIgnored var claudeSecretsFingerprint = ""
 
     /// Claude Code's commands and skills (including the project's), or Codex's skills.
     var availableSlashCommands: [SlashCommand] {
