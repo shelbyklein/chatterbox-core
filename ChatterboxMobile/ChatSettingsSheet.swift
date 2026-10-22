@@ -24,24 +24,30 @@ struct ChatSettingsForm<Leading: View>: View {
     let apply: (Companion.SettingsRequest) -> Void
     @ViewBuilder var leading: () -> Leading
 
+    /// Which agent's models the list shows; picking one from the other agent switches to it.
+    @State private var browsing: String?
     private var isCodex: Bool { options.backend == "codex" }
     private var models: [Companion.ModelOption] { isCodex ? options.codexModels : options.claudeModels }
     private var currentModel: Companion.ModelOption? { models.first { $0.id == options.model } }
+    private var shownAgent: String { browsing ?? options.backend }
+    private var shownModels: [Companion.ModelOption] { shownAgent == "codex" ? options.codexModels : options.claudeModels }
 
     var body: some View {
             Form {
                 leading()
-                if !options.presets.isEmpty {
-                    Section("Presets") {
-                        // Four to a row: small tiles, so effort and permissions fit below at half height.
-                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 6) {
-                            ForEach(options.presets) { preset in
-                                PresetBubble(preset: preset) { apply(.init(preset: preset.id)) }
+                if let favorites = options.favorites, !favorites.isEmpty {
+                    Section("Favorites") {
+                        ForEach(Array(favorites.enumerated()), id: \.element) { index, favorite in
+                            Button { apply(.init(backend: favorite.backend, model: favorite.model)) } label: {
+                                HStack {
+                                    Text("\(index + 1)").monospacedDigit().foregroundStyle(.tertiary).frame(width: 18)
+                                    row(favorite.name, detail: favorite.backend == options.backend ? "" : "switches to \(favorite.backend == "codex" ? "Codex" : "Claude")",
+                                        isOn: favorite.backend == options.backend && favorite.model == options.model)
+                                }
                             }
+                            .buttonStyle(ChoiceRowStyle())
+                            .accessibilityIdentifier("favorite-\(index + 1)")
                         }
-                        .padding(.vertical, 4)
-                        .listRowBackground(Color.clear)
-                        .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
                     }
                 }
 
@@ -71,21 +77,23 @@ struct ChatSettingsForm<Leading: View>: View {
                     }
                 }
 
-                Section("Agent") {
-                    Picker("Agent", selection: Binding(get: { options.backend }, set: { apply(.init(backend: $0)) })) {
+                Section("All models") {
+                    // Browses either agent's list; picking from the other one switches to it.
+                    Picker("Agent", selection: Binding(get: { shownAgent }, set: { browsing = $0 })) {
                         Text("Claude").tag("claude")
                         Text("Codex").tag("codex")
                     }
                     .pickerStyle(.segmented)
-                }
-
-                Section("Model") {
-                    if models.isEmpty {
-                        Text("Models load once \(isCodex ? "Codex" : "Claude Code") starts on the Mac.").foregroundStyle(.secondary)
+                    if shownModels.isEmpty {
+                        Text("Models load once \(shownAgent == "codex" ? "Codex" : "Claude Code") starts on the Mac.").foregroundStyle(.secondary)
                     }
-                    ForEach(models) { model in
-                        Button { apply(.init(model: model.id)) } label: {
-                            row(model.name, detail: model.detail, isOn: model.id == options.model)
+                    ForEach(shownModels) { model in
+                        Button {
+                            apply(shownAgent == options.backend ? .init(model: model.id) : .init(backend: shownAgent, model: model.id))
+                            browsing = nil
+                        } label: {
+                            row(model.name, detail: shownAgent == options.backend ? model.detail : "switches to \(shownAgent == "codex" ? "Codex" : "Claude")",
+                                isOn: shownAgent == options.backend && model.id == options.model)
                         }
                         .buttonStyle(ChoiceRowStyle())
                     }
@@ -129,46 +137,6 @@ private struct ChoiceRowStyle: ButtonStyle {
     }
 }
 
-/// A preset as a small tile, four to a row: its agent and name (what it switches to on a
-/// long press), filled with its own agent's color when it's the chat's current setup.
-private struct PresetBubble: View {
-    let preset: Companion.PresetOption
-    let choose: () -> Void
-
-    var body: some View {
-        let provider = preset.provider ?? preset.backend
-        let color = MobileConversationStyle.accent(for: provider)
-        // Older Macs send a nickname beside the name; it was the name you see.
-        let name = preset.nickname ?? preset.title
-        let detail = preset.summary ?? (preset.backend == "codex" ? (provider == "claude" ? "Claude via Codex" : "Codex") : "Claude")
-        Button(action: choose) {
-            VStack(spacing: 5) {
-                Image(provider == "codex" ? "AgentCodex" : "AgentClaude")
-                    .resizable().scaledToFit()
-                    .frame(width: 16, height: 16)
-                    .foregroundStyle(preset.isActive ? Color.white : color)
-                Text(name).font(.caption.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.75)
-            }
-            .foregroundStyle(preset.isActive ? Color.white : Color.primary)
-            .padding(.horizontal, 4)
-            .frame(maxWidth: .infinity, minHeight: 56)
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(preset.isActive ? AnyShapeStyle(color) : AnyShapeStyle(Color(.secondarySystemGroupedBackground)))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(preset.isActive ? Color.clear : Color.primary.opacity(0.08))
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .contextMenu { Text(detail) }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(name) preset, \(detail)")
-        .accessibilityAddTraits(preset.isActive ? [.isButton, .isSelected] : .isButton)
-    }
-}
 
 /// Effort as a slider that snaps to the levels the model supports, weakest first. With no
 /// effort chosen it rests on the model's default; the change is sent when you let go.

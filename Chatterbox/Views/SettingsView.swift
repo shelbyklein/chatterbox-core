@@ -14,9 +14,6 @@ struct SettingsView: View {
     @AppStorage("defaultEffort") private var defaultEffort = ""
     @AppStorage("codexDefaultModel") private var codexDefaultModel = ""
     @AppStorage("codexDefaultEffort") private var codexDefaultEffort = ""
-    @AppStorage(ModelPresets.newStudioKey) private var newStudioPreset = ""
-    /// The preset open for editing, if any.
-    @State private var editingPreset: UUID?
     @AppStorage("showAllCodexModels") private var showAllCodexModels = false
     @AppStorage("defaultPersonality") private var defaultPersonality = Personality.friendly
     @AppStorage("claudePath") private var claudePath = ""
@@ -186,29 +183,35 @@ struct SettingsView: View {
             } header: {
                 Text("Default models")
             } footer: {
-                Text("What new sessions start with. Change a session's own model from the bar under its message box.")
+                Text("What a new session starts with until you've picked a model in that kind of session (Chats, Studios, projects); after that, each starts on what you last used there.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
             Section {
-                ForEach(ModelPresets.shared.presets) { preset in presetRow(preset) }
-                HStack {
-                    Button("Add Preset") {
-                        let preset = ModelPreset(title: "", backend: .codex, model: codexDefaultModel.isEmpty ? nil : codexDefaultModel, effort: nil)
-                        var named = preset
-                        named.title = ModelPresets.automaticTitle(preset)
-                        ModelPresets.shared.add(named)
-                        editingPreset = named.id
+                let favorites = ModelFavorites.shared.favorites
+                if favorites.isEmpty {
+                    Text("Star models in a session's model list to keep them here.").foregroundStyle(.secondary)
+                }
+                ForEach(Array(favorites.enumerated()), id: \.element) { index, choice in
+                    HStack {
+                        Text("\(index + 1)").monospacedDigit().foregroundStyle(.tertiary).frame(width: 18)
+                        Text(ModelFavorites.name(choice))
+                        Text(choice.backend.label).font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        Button { ModelFavorites.shared.move(fromOffsets: [index], toOffset: index - 1) } label: { Image(systemName: "chevron.up") }
+                            .disabled(index == 0).help("Move up")
+                        Button { ModelFavorites.shared.move(fromOffsets: [index], toOffset: index + 2) } label: { Image(systemName: "chevron.down") }
+                            .disabled(index == favorites.count - 1).help("Move down")
+                        Button { ModelFavorites.shared.toggle(choice) } label: { Image(systemName: "minus.circle") }
+                            .help("Remove from Favorites")
                     }
-                    Spacer()
-                    Button("Restore Default Presets") { ModelPresets.shared.resetToDefaults() }
+                    .buttonStyle(.borderless)
                 }
             } header: {
-                Text("Quick-switch presets")
+                Text("Favorite models")
             } footer: {
-                Text("Shown under the message box, to switch a session's agent, model, and effort in one click. You can also save a session's current setup from its model menu with \u{201C}Save as Preset\u{201D}. Give one a nickname and agents know it: \u{201C}start working on that in Galley with Sol\u{201D}.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text("Numbered at the top of every session's model list: press the number to switch. Star a model there to add it.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
         .formStyle(WideFormStyle())
@@ -238,22 +241,6 @@ struct SettingsView: View {
                 Picker("Codex mode", selection: $codexDefaultMode) {
                     ForEach(PermissionModes.codex) { Text($0.title).tag($0.id) }
                 }
-            }
-            Section {
-                Picker("Start with", selection: $newStudioPreset) {
-                    let maestro = ModelPresets.shared.presets.first { $0.title.caseInsensitiveCompare(ModelPresets.newStudioDefaultNickname) == .orderedSame }
-                    Text(maestro.map { "\($0.displayName) (default)" } ?? "Maestro (default, no preset has that name)").tag("")
-                    Text("Same as new sessions").tag("none")
-                    Divider()
-                    ForEach(ModelPresets.shared.presets.filter { $0.id != maestro?.id }) { preset in
-                        Text(preset.displayName).tag(preset.id.uuidString)
-                    }
-                }
-            } header: {
-                Text("New Studios")
-            } footer: {
-                Text("The preset a new Studio's first chat uses. Chats you add to a Studio later use the new-chat settings above.")
-                    .font(.caption).foregroundStyle(.secondary)
             }
         }
         .formStyle(WideFormStyle())
@@ -347,16 +334,6 @@ struct SettingsView: View {
     }
 
 
-    /// "Codex · GPT-6.1-Sol · Low": what a preset switches to, in names rather than ids.
-    private func presetDetail(_ preset: ModelPreset) -> String {
-        if preset.followsDefault == true { return "Follows your \(preset.backend.label) default" }
-        let model: String
-        switch preset.backend {
-        case .claude: model = preset.model.map { ClaudeModels.shared.info($0).displayName } ?? "default model"
-        case .codex: model = preset.model.map { CodexModelCatalog.name($0, models: CodexAppServer.shared.models) } ?? "Codex's default"
-        }
-        return "\(preset.backend.label) \u{00B7} \(model) \u{00B7} \(preset.effort.map { ChatView.effortLabel($0) } ?? "default effort")"
-    }
 
     /// A model in the default-model picker: its id, name, and a line about it.
     private struct ModelChoice: Identifiable {
@@ -416,51 +393,6 @@ struct SettingsView: View {
         return choices
     }
 
-    /// A preset: its name and what it switches to, opening to the same pickers as the defaults.
-    private func presetRow(_ preset: ModelPreset) -> some View {
-        let isEditing = editingPreset == preset.id
-        let presets = ModelPresets.shared
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                TextField("Name", text: Binding(get: { preset.title }, set: { presets.rename(preset, to: $0) }))
-                    .textFieldStyle(.plain)
-                    .labelsHidden()
-                    .multilineTextAlignment(.leading)
-                    .frame(maxWidth: 220, alignment: .leading)
-                Spacer()
-                if !isEditing { Text(presetDetail(preset)).foregroundStyle(.secondary).font(.caption) }
-                Button(isEditing ? "Done" : "Edit") { editingPreset = isEditing ? nil : preset.id }
-                    .buttonStyle(.borderless)
-                Button { presets.remove(preset) } label: { Image(systemName: "minus.circle") }
-                    .buttonStyle(.borderless)
-                    .help("Remove preset")
-            }
-            if isEditing, preset.followsDefault == true {
-                Text("This one switches to your default \(preset.backend.label) model, set above. Changing it here makes it a fixed preset instead.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            if isEditing {
-                Picker("Agent", selection: Binding(get: { preset.backend }, set: { backend in
-                    let model = backend == .claude ? ClaudeModels.shared.models.first?.value : (codexDefaultModel.isEmpty ? nil : codexDefaultModel)
-                    presets.update(preset.id, backend: backend, model: model, effort: nil)
-                })) {
-                    ForEach(Backend.allCases) { Text($0.label).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                let isClaude = preset.backend == .claude
-                // A full id ("claude-opus-5-5") shows as its own model's row (Opus 5.5).
-                let modelID = isClaude ? ClaudeModels.shared.info(preset.model ?? "default").value : (preset.model ?? "")
-                defaultModelPicker(
-                    title: preset.backend.label, icon: isClaude ? "sparkle" : "terminal",
-                    options: isClaude ? claudeChoices(including: modelID) : codexChoices(including: preset.model ?? ""),
-                    model: Binding(get: { modelID }, set: { presets.update(preset.id, backend: preset.backend, model: $0.isEmpty ? nil : $0, effort: nil) }),
-                    effort: Binding(get: { preset.effort ?? "" }, set: { presets.update(preset.id, backend: preset.backend, model: preset.model, effort: $0.isEmpty ? nil : $0) }),
-                    efforts: isClaude ? ClaudeModels.shared.info(modelID).efforts
-                        : (CodexAppServer.shared.models.first { $0.model == preset.model }?.efforts
-                           ?? CodexAppServer.shared.models.first(where: \.isDefault)?.efforts ?? []))
-            }
-        }
-    }
 
     /// One agent's default: its models as a list to pick from, then effort as a row of buttons.
     private func defaultModelPicker(title: String, icon: String, options: [ModelChoice], model: Binding<String>,

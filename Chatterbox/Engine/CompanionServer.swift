@@ -962,9 +962,11 @@ enum CompanionMapper {
         let modes = PermissionModes.modes(for: session.record.backend).map {
             Companion.ModeOption(id: $0.id, title: $0.title, detail: $0.detail, systemImage: $0.systemImage, isUnrestricted: $0.isUnrestricted)
         }
-        let presets = ModelPresets.shared.presets.map {
-            Companion.PresetOption(id: $0.id, title: $0.title, backend: $0.backend.rawValue, isActive: ModelPresets.shared.matches($0, session: session),
-                                   summary: ModelPresets.summary($0), provider: $0.provider.rawValue)
+        let presets: [Companion.PresetOption] = []
+        let favorites = ModelFavorites.shared.favorites.map { choice in
+            Companion.FavoriteOption(backend: choice.backend.rawValue,
+                                     model: choice.backend == .claude ? claudeOptionID(choice.model ?? "default") : (choice.model ?? ""),
+                                     name: ModelFavorites.name(choice))
         }
         return .init(backend: session.record.backend.rawValue,
                      // The phone matches by id: name the chat's model as the list does
@@ -972,7 +974,7 @@ enum CompanionMapper {
                      model: isCodex ? (session.record.codex?.model ?? "") : claudeOptionID(session.record.model),
                      effort: isCodex ? (session.record.codex?.effort ?? "") : session.record.effort,
                      claudeModels: claude, codexModels: codex, modes: modes, mode: session.mode.id, presets: presets,
-                     fastMode: session.supportsFastMode ? session.fastMode : nil)
+                     fastMode: session.supportsFastMode ? session.fastMode : nil, favorites: favorites)
     }
 
     /// A chat that's never saved, set up as a new one would be, then with `picks` applied:
@@ -986,6 +988,8 @@ enum CompanionMapper {
         record.studioID = studio?.id
         record.studioFolder = studio?.folder
         let draft = ChatSession(record: record)
+        // What a new one of these last used, as a new session would start.
+        ModelFavorites.startLikeLast(draft, kind: studio == nil ? .chats : .studios)
         if let id = picks.preset, let preset = ModelPresets.shared.presets.first(where: { $0.id == id }) {
             ModelPresets.shared.apply(preset, to: draft)
         }

@@ -474,8 +474,15 @@ final class AppModel {
         return session
     }
 
+    /// A new session starts on the model and effort `kind` last used (see ModelFavorites).
     @discardableResult
-    func newChat(backend: Backend? = nil) -> ChatSession {
+    func newChat(backend: Backend? = nil, kind: SessionKind = .chats) -> ChatSession {
+        let session = makeNewChat(backend: backend)
+        ModelFavorites.startLikeLast(session, kind: kind, requested: backend)
+        return session
+    }
+
+    private func makeNewChat(backend: Backend?) -> ChatSession {
         let defaults = AppPreferences.defaults
         let backend = backend ?? Backend(rawValue: defaults.string(forKey: "defaultBackend") ?? "") ?? .claude
         if let empty = sessions.first(where: { !$0.hasMessages && !$0.isRunning && $0.record.projectFolder == nil && $0.record.studioID == nil && $0.record.archivedAt == nil && !$0.isDot && !carriesUserIntent($0.record) }) {
@@ -634,7 +641,7 @@ final class AppModel {
             selectedID = existing.id
             return
         }
-        let session = newChat(backend: backend)
+        let session = newChat(backend: backend, kind: .projects)
         session.bindProject(Self.normalize(folder))
     }
 

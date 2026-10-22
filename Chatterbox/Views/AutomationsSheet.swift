@@ -374,16 +374,16 @@ struct AutomationModelPicker: View {
                 ForEach(efforts, id: \.self) { Text(RuntimePaths.effortLabel($0)).tag($0) }
             }
         }
-        if !ModelPresets.shared.presets.isEmpty {
-            Menu("Fill from Preset") {
-                ForEach(ModelPresets.shared.presets) { preset in
-                    Button(preset.title) {
-                        change { $0.backend = preset.backend.rawValue; $0.model = preset.model; $0.effort = preset.effort; $0.preset = nil }
+        if !ModelFavorites.shared.favorites.isEmpty {
+            Menu("Use a Favorite") {
+                ForEach(ModelFavorites.shared.favorites, id: \.self) { choice in
+                    Button("\(ModelFavorites.name(choice)) (\(choice.backend.label))") {
+                        change { $0.backend = choice.backend.rawValue; $0.model = choice.model; $0.effort = nil; $0.preset = nil }
                     }
                 }
             }
             .fixedSize()
-            .help("Set the agent, model and effort from one of your presets")
+            .help("Set the agent and model from your favorites")
         }
     }
 }

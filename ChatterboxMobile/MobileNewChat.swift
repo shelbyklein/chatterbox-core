@@ -64,7 +64,8 @@ struct MobileNewChatSheet: View {
         if let preset = change.preset {
             picks = .init(preset: preset)
         } else if let backend = change.backend, backend != options?.backend {
-            picks = .init(backend: backend)
+            // Another agent's model: that agent, with the model picked.
+            picks = .init(backend: backend, model: change.model)
         } else {
             if let model = change.model { picks.model = model; picks.effort = nil }
             if let effort = change.effort { picks.effort = effort }

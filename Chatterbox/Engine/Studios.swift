@@ -61,8 +61,7 @@ extension AppModel {
         if let session {
             move(session, to: studio)
         } else {
-            let first = newChat(in: studio)
-            if let preset = ModelPresets.shared.newStudioPreset { ModelPresets.shared.apply(preset, to: first) }
+            newChat(in: studio)
         }
         return studio
     }
@@ -137,10 +136,11 @@ extension AppModel {
             PermissionModes.applyNewStudioDefaults(to: &empty.record, folder: empty.workingFolder)
             empty.onChange?(empty)
             if let backend { empty.setBackend(backend) }
+            ModelFavorites.startLikeLast(empty, kind: .studios, requested: backend)
             selectedID = empty.id
             return empty
         }
-        let session = newChat(backend: backend)
+        let session = newChat(backend: backend, kind: .studios)
         session.setStudio(studio)
         PermissionModes.applyNewStudioDefaults(to: &session.record, folder: session.workingFolder)
         session.onChange?(session)

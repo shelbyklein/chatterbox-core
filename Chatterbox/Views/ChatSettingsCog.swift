@@ -85,11 +85,11 @@ struct ChatSettingsCog: View {
                 }
             }
             Divider()
-            section("Quick Switch") {
-                ForEach(ModelPresets.shared.presets) { preset in
-                    row(selected: false) { ModelPresets.shared.apply(preset, to: session) } label: {
-                        Image(systemName: "bolt").frame(width: 18).foregroundStyle(.secondary)
-                        Text(preset.displayName)
+            section("Favorites") {
+                ForEach(ModelFavorites.shared.favorites, id: \.self) { choice in
+                    row(selected: ModelFavorites.current(session) == choice) { ModelFavorites.shared.choose(choice, for: session) } label: {
+                        Image(choice.backend.iconName).resizable().scaledToFit().frame(width: 14, height: 14).frame(width: 18)
+                        Text(ModelFavorites.name(choice))
                     }
                 }
             }
