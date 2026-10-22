@@ -1175,15 +1175,12 @@ struct ChatView: View {
         if session.isDot { EmptyView() } else if compact { compactModelStatus } else { fullModelStatus }
     }
 
-    private var selectedPreset: ModelPreset? {
-        ModelPresets.shared.presets.first { ModelPresets.shared.matches($0, session: session) }
-    }
-
     private var currentModelPicker: some View {
         ModelPicker(session: session, selectionPill: true,
-                    summary: session.record.openModel == nil && session.runMachine == nil ? selectedPreset?.displayName ?? modelSummary.full : modelSummary.full,
+                    summary: modelSummary.full,
                     color: appearance.style.color(for: session.record.provider),
-                    details: modelSummary.full + (session.record.provider != session.record.backend ? " · Claude model via Codex" : ""),
+                    details: session.record.openModel.map { "Open model \($0) on \(RemoteMachine.pc.name)'s graphics card, run by \(session.record.backend == .claude ? "Claude Code" : "Codex")" }
+                        ?? modelSummary.full + (session.record.provider != session.record.backend ? " · Claude model via Codex" : ""),
                     openRequest: commands.modelPopoverRequests,
                     handlesKeyboardRequest: { handlesKeyboard })
     }
@@ -1221,7 +1218,9 @@ struct ChatView: View {
     private var modelSummary: (full: String, short: String) {
         let place = session.runMachine.map { " \u{00B7} \($0.name)" } ?? ""
         if let open = session.record.openModel {
-            return ("\(session.record.backend.label) \u{00B7} \(open)" + place, open + place)
+            // Always on the PC's graphics card, wherever the agent itself runs.
+            let pc = " \u{00B7} \(RemoteMachine.pc.name)"
+            return (open + pc, open + pc)
         }
         let summary = agentModelSummary
         return (summary.full + place, summary.short + place)

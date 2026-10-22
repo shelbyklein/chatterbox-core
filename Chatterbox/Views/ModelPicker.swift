@@ -25,8 +25,13 @@ struct ModelPicker: View {
                     if !isOpen { ComposerEffortSlider(session: session, color: color).transition(.opacity) }
                     Button { isOpen.toggle() } label: {
                         HStack(spacing: 5) {
-                            Image(session.record.provider.iconName).resizable().scaledToFit().frame(width: 12, height: 12)
-                                .foregroundStyle(color)
+                            // An open model runs on the PC: say so before the name.
+                            if session.record.openModel != nil {
+                                Image(systemName: "desktopcomputer").font(.system(size: 11)).foregroundStyle(color)
+                            } else {
+                                Image(session.record.provider.iconName).resizable().scaledToFit().frame(width: 12, height: 12)
+                                    .foregroundStyle(color)
+                            }
                             Text(summary).lineLimit(2).fixedSize(horizontal: false, vertical: true)
                             Image(systemName: "chevron.up").font(.system(size: 8, weight: .semibold)).foregroundStyle(.secondary)
                         }
@@ -78,13 +83,17 @@ private struct AnyButtonStyle: PrimitiveButtonStyle {
 struct ModelPopover: View {
     let session: ChatSession
     let close: () -> Void
-    @AppStorage("modelPopoverShowsAll") private var showsAll = false
+    /// Which list shows: Claude's, Codex's, or the open models on the PC. Starts on the current one.
+    @State private var provider: ModelProvider
     @State private var showHidden = false
     @FocusState private var focused: Bool
+
+    enum ModelProvider: String, CaseIterable { case claude, codex, open }
 
     init(session: ChatSession, close: @escaping () -> Void) {
         self.session = session
         self.close = close
+        _provider = State(initialValue: session.record.openModel != nil ? .open : session.record.backend == .claude ? .claude : .codex)
     }
 
     /// One size whatever the lists: NSPopover resizing after it's on screen can leave the
@@ -114,22 +123,19 @@ struct ModelPopover: View {
                     ForEach(Array(favorites.favorites.enumerated()), id: \.element) { index, choice in
                         row(choice, detail: nil, number: index < 9 ? index + 1 : nil)
                     }
-                    Button { withAnimation(.easeOut(duration: 0.15)) { showsAll.toggle() } } label: {
-                        HStack {
-                            Text("All models")
-                            Image(systemName: "chevron.right").font(.caption2.weight(.bold)).rotationEffect(.degrees(showsAll ? 90 : 0))
-                            Spacer()
-                        }
-                        .padding(.horizontal, 8).padding(.vertical, 6).contentShape(Rectangle())
+                    // Pick the provider, then its models.
+                    Picker("Provider", selection: $provider) {
+                        Text("Claude").tag(ModelProvider.claude)
+                        Text("Codex").tag(ModelProvider.codex)
+                        if !session.isDot { Text("Open models").tag(ModelProvider.open) }
                     }
-                    .buttonStyle(.plain).foregroundStyle(.secondary)
-                    .padding(.top, 4)
-                    if showsAll {
-                        heading("Claude")
-                        claudeRows
-                        heading("Codex").padding(.top, 6)
-                        codexRows
-                        openModelRows
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .padding(.horizontal, 8).padding(.top, 10).padding(.bottom, 4)
+                    switch provider {
+                    case .claude: claudeRows
+                    case .codex: codexRows
+                    case .open: openModelRows
                     }
                 }
             }
@@ -274,12 +280,17 @@ struct ModelPopover: View {
 
     // MARK: - Shelby-PC
 
-    /// The PC's Ollama models, for whichever agent this chat uses. Shown once the PC answers.
+    /// The PC's Ollama models, run by this chat's agent (Claude Code or Codex).
     @ViewBuilder
     private var openModelRows: some View {
         let pc = PCModels.shared
-        if !session.isDot, !pc.models.isEmpty {
-            heading("Open models on \(RemoteMachine.pc.name)").padding(.top, 6)
+        Text("Run on \(RemoteMachine.pc.name)'s graphics card, by \(active == .claude ? "Claude Code" : "Codex").")
+            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 8).padding(.bottom, 2)
+        if pc.models.isEmpty {
+            Text(pc.reachable == false ? "\(RemoteMachine.pc.name) isn't reachable right now." : "Checking \(RemoteMachine.pc.name)\u{2026}")
+                .font(.callout).foregroundStyle(.secondary).padding(.horizontal, 8).padding(.vertical, 4)
+        } else {
             ForEach(pc.models, id: \.self) { model in
                 Button { session.setOpenModel(model) } label: {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -288,8 +299,9 @@ struct ModelPopover: View {
                         Image(systemName: "desktopcomputer").font(.caption).frame(width: 12, height: 12)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(model)
-                            Text(model == PCModels.recommended ? "Runs fully on the graphics card; fastest" : "With \(active.label)")
-                                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            if model == PCModels.recommended {
+                                Text("Fits the graphics card fully; fastest").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            }
                         }
                         Spacer(minLength: 0)
                     }
