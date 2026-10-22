@@ -450,7 +450,7 @@ final class AppModel {
         saveUnsaved()
         guard !Self.keepRepliesRunning else { return }
         for session in sessions { session.claudeProcess?.terminate() }
-        CodexAppServer.shared.terminate()
+        for codex in CodexAppServer.all { codex.terminate() }
     }
 
     /// A new session waiting for its name (ContentView asks): in a Studio or on its own.
@@ -767,7 +767,7 @@ final class AppModel {
         unsaved = []
         for session in sessions where ids.contains(session.id) { save(session) }
         // After the chats, so each chat's saved state is at least as far along as this.
-        if CodexAppServer.shared.isRunning { CodexAppServer.shared.saveResumeState() }
+        for codex in CodexAppServer.all where codex.isRunning { codex.saveResumeState() }
     }
 
     /// Reattaches chats to replies that kept running (or finished) while the app was closed.
@@ -779,12 +779,12 @@ final class AppModel {
             session.resumeFromHost(processes)
             scheduleSave(session, soon: true)
         }
-        CodexAppServer.shared.resume(processes)
+        for codex in CodexAppServer.all { codex.resume(processes) }
         applyRequestedDotDefault()
         // Logs of ended processes no chat points at anymore. Running ones are left alone: the
         // host lets an agent go once it's idle with no app attached.
         var known = Set(sessions.compactMap { $0.claudeProcess?.hostID })
-        if let codex = CodexAppServer.shared.hostID { known.insert(codex) }
+        for codex in CodexAppServer.all { if let id = codex.hostID { known.insert(id) } }
         for process in processes where !process.running && !known.contains(process.id) {
             HostClient.shared.forget(id: process.id)
         }

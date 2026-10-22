@@ -14,6 +14,18 @@ extension ChatSession {
         // Shown before the agent is started or woken, which can take a moment.
         onChange?(self)
 
+        // A PC chat's files are copied there first; images go inline as usual.
+        if runMachine != nil, message.attachments.contains(where: { $0.kind != .image }) {
+            Task {
+                let remote = await uploadAttachments(message, includingImages: false)
+                claudeDeliver(remote, steered: steered, earlierItems: earlierItems)
+            }
+            return
+        }
+        claudeDeliver(message, steered: steered, earlierItems: earlierItems)
+    }
+
+    private func claudeDeliver(_ message: UserMessage, steered: Bool, earlierItems: Int) {
         do {
             let process = try claudeEnsureProcess(earlierItems: earlierItems)
             var content: [JSON] = []
@@ -138,25 +150,33 @@ extension ChatSession {
         let tools = ToolScopes.effective(for: self)
         claudeToolsFingerprint = ToolScopes.fingerprint(for: self)
         claudeSecretsFingerprint = SecretVault.shared.fingerprint(for: self)
+        // On the PC, Mac paths (attachments, tool files, plugins) mean nothing. An open model
+        // gets no extra tool servers either: their schemas would fill its small context.
+        let machine = runMachine
+        let local = machine == nil && record.openModel == nil
+        let cwd = machine.map(pcWorkspace(on:)) ?? claudeWorkingFolder
+        if record.openModel != nil, machine == nil { PCModels.shared.startTunnel() }
         // A fresh id per process: a relaunch only ever reattaches to the one this chat recorded.
         try process.start(ClaudeCodeProcess.Config(
-            cwd: claudeWorkingFolder,
-            model: record.model,
-            effort: record.effort,
+            cwd: cwd,
+            model: record.openModel ?? record.model,
+            effort: record.openModel == nil ? record.effort : "",
             permissionMode: claudePermissionMode,
-            appendSystemPrompt: Prompts.fullInstructions(record.personality, backend: .claude, projectFolder: record.boundFolder,
-                                                         studio: studio, brief: record.brief) + (isDot ? "\n\n" + Prompts.dotInstructions(name: title) : ""),
+            appendSystemPrompt: Prompts.fullInstructions(record.personality, backend: .claude, projectFolder: machine == nil ? record.boundFolder : nil,
+                                                         studio: studio, brief: record.brief) + (isDot ? "\n\n" + Prompts.dotInstructions(name: title) : "")
+                + pcInstructions(workspace: cwd),
             resumeSessionID: record.claudeSessionID,
-            extraDirectories: [Attachments.directory.path],
+            extraDirectories: machine == nil ? [Attachments.directory.path] : [],
             forkSession: record.claudeForkPending == true,
             mcpConfig: claudeMCPConfig,
             allowedTools: claudeAllowedTools,
-            toolsMCPConfig: claudeToolsMCPConfigFile(tools),
+            toolsMCPConfig: local ? claudeToolsMCPConfigFile(tools) : nil,
             disallowedTools: Self.claudeDisallowedTools(tools),
-            pluginDirs: claudeToolsPluginDir(tools).map { [$0] } ?? [],
+            pluginDirs: local ? claudeToolsPluginDir(tools).map { [$0] } ?? [] : [],
+            strictMCPConfig: record.openModel != nil,
             environment: claudeLaunchEnvironment,
-            fastMode: record.claudeFastMode == true && supportsClaudeFastMode
-        ), id: "claude-\(id.uuidString)-\(UUID().uuidString.prefix(8))")
+            fastMode: record.openModel == nil && record.claudeFastMode == true && supportsClaudeFastMode
+        ), id: "claude-\(id.uuidString)-\(UUID().uuidString.prefix(8))", on: machine)
         // A fresh session gets the current tone and instructions in its system prompt.
         if !resuming {
             record.sentPersonality = record.personality
@@ -501,6 +521,7 @@ extension ChatSession {
     /// A page, picture, or animation an agent wrote, shown in the reply (or the preview from
     /// earlier this turn, refreshed). Used for Claude's writes and Codex's file changes.
     func showWrittenFile(_ path: String) {
+        if showRemoteWrittenFile(path) { return }
         let url = URL(fileURLWithPath: path)
         let ext = url.pathExtension.lowercased()
         guard FileManager.default.fileExists(atPath: path),
@@ -634,9 +655,12 @@ extension ChatSession {
 
     /// What this chat's Claude Code gets on top of the app's environment: the proxy, Secrets
     /// in scope, and the chat's id.
+    /// On the PC the proxy (on this Mac) is out of reach, so a PC chat uses the PC's own sign-in.
+    /// An open model replaces either.
     var claudeLaunchEnvironment: [String: String] {
-        claudeProxyEnvironment.merging(SecretVault.shared.environment(for: self)) { $1 }
+        (runMachine == nil ? claudeProxyEnvironment : [:]).merging(SecretVault.shared.environment(for: self)) { $1 }
             .merging(["CHATTERBOX_CHAT_ID": id.uuidString]) { $1 }
+            .merging(openModelClaudeEnvironment) { $1 }
     }
 
     /// Whether this chat's Claude Code loads MCP tools on demand (tool search), from the

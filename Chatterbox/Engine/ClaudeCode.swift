@@ -68,6 +68,8 @@ final class ClaudeCodeProcess {
         var toolsMCPConfig: String?
         var disallowedTools: [String] = []
         var pluginDirs: [String] = []
+        /// Only the servers named here: none of the user's own (an open model's small context).
+        var strictMCPConfig = false
         /// Added to the environment (EasyCLIProxyAPI's address and key).
         var environment: [String: String] = [:]
         var fastMode = false
@@ -112,11 +114,18 @@ final class ClaudeCodeProcess {
         if let file = config.toolsMCPConfig { args.append("--mcp-config=" + file) }
         for rule in config.disallowedTools { args.append("--disallowedTools=" + rule) }
         for dir in config.pluginDirs { args += ["--plugin-dir", dir] }
+        if config.strictMCPConfig { args.append("--strict-mcp-config") }
         return args
     }
 
-    /// Starts a new process in the host under `id`.
-    func start(_ config: Config, id: String) throws {
+    /// Starts a new process in the host under `id`, on this Mac or on `machine`.
+    func start(_ config: Config, id: String, on machine: RemoteMachine? = nil) throws {
+        if let machine {
+            try RemoteLaunch.spawn(id: id, executable: "claude", arguments: Self.arguments(config), cwd: config.cwd,
+                                   environment: config.environment, kind: "claude", on: machine)
+            try attach(id: id, from: 0)
+            return
+        }
         guard let binary = Self.locateBinary() else {
             throw ClaudeCodeError(message: "Couldn't find the `claude` command. Install Claude Code, or set its path in Settings.")
         }

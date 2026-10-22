@@ -14,7 +14,7 @@ extension ChatSession {
         } else {
             record.claudeHost = nil
         }
-        let server = CodexAppServer.shared
+        let server = codexServer
         if record.codex?.threadId == nil {
             record.codexHost = nil
         } else if server.isRunning, let id = server.hostID {
@@ -75,7 +75,7 @@ extension ChatSession {
         }
 
         if let link = record.codexHost, let thread = record.codex?.threadId {
-            if ids.contains(link.processID), link.processID == CodexAppServer.savedProcessID {
+            if ids.contains(link.processID), link.processID == codexServer.savedProcessID {
                 if let state = link.codex {
                     codexTurnID = state.turnID
                     codexItems = state.items

@@ -26,6 +26,15 @@ struct CodexModelInfo: Identifiable, Hashable {
 @Observable
 final class CodexAppServer {
     static let shared = CodexAppServer()
+    /// Chats set to run on Shelby-PC share one app-server there (see RemoteMachine).
+    static let pc = CodexAppServer(machine: "pc")
+    static var all: [CodexAppServer] { [shared, pc] }
+
+    static func server(for machine: String?) -> CodexAppServer { machine == "pc" ? pc : shared }
+
+    /// nil is this Mac.
+    let machine: String?
+    init(machine: String? = nil) { self.machine = machine }
     @ObservationIgnored var onThreadLifecycleChange: (() -> Void)?
 
     private(set) var models: [CodexModelInfo] = []
@@ -79,15 +88,20 @@ final class CodexAppServer {
     }
 
     private func launch() async throws {
-        guard let binary = Self.locateBinary() else {
-            throw CodexError(message: "Couldn't find the `codex` command. Install the Codex CLI, or set its path in Settings.")
-        }
-        let id = "codex-\(UUID().uuidString.prefix(8))"
+        let id = "codex-\(machine.map { $0 + "-" } ?? "")\(UUID().uuidString.prefix(8))"
         // Codex offers its question tool (request_user_input) only in Plan mode unless this is
         // on; chats run in its default mode, so without it Codex asks questions as plain text
         // instead of the question card. Scoped to this process, not ~/.codex/config.toml.
-        try HostClient.shared.spawn(id: id, executable: binary, arguments: ["app-server", "--enable", "default_mode_request_user_input"], cwd: nil,
-                                    environment: BinaryLocator.environment, kind: "codex")
+        let arguments = ["app-server", "--enable", "default_mode_request_user_input"]
+        if let remote = RemoteMachine.named(machine) {
+            try RemoteLaunch.spawn(id: id, executable: "codex", arguments: arguments, cwd: nil, environment: [:], kind: "codex", on: remote)
+        } else {
+            guard let binary = Self.locateBinary() else {
+                throw CodexError(message: "Couldn't find the `codex` command. Install the Codex CLI, or set its path in Settings.")
+            }
+            try HostClient.shared.spawn(id: id, executable: binary, arguments: arguments, cwd: nil,
+                                        environment: BinaryLocator.environment, kind: "codex")
+        }
         try follow(id, from: 0)
         loadedThreads = []
         unsubscribedThreads = []
@@ -151,19 +165,19 @@ final class CodexAppServer {
         var unsubscribedThreads: [String]?
     }
 
-    private static var resumeFile: URL { HostPaths.directory.appendingPathComponent("codex-resume.json") }
+    private var resumeFile: URL { HostPaths.directory.appendingPathComponent(machine.map { "codex-\($0)-resume.json" } ?? "codex-resume.json") }
 
     /// Remembers which process is ours and how far its output was handled. Saved after the
     /// chats themselves, so every chat's saved state is at least this far along.
     func saveResumeState() {
         let state = ResumeState(processID: hostID, offset: offset, loadedThreads: loadedThreads.sorted(), unsubscribedThreads: unsubscribedThreads.sorted())
         try? FileManager.default.createDirectory(at: HostPaths.directory, withIntermediateDirectories: true)
-        try? JSONEncoder().encode(state).write(to: Self.resumeFile, options: .atomic)
+        try? JSONEncoder().encode(state).write(to: resumeFile, options: .atomic)
         if let hostID, HostClient.shared.isConnected { HostClient.shared.ack(id: hostID, offset: offset) }
     }
 
     /// The process an earlier run of the app left in the host, if it's still there.
-    static var savedProcessID: String? {
+    var savedProcessID: String? {
         guard let data = try? Data(contentsOf: resumeFile) else { return nil }
         return (try? JSONDecoder().decode(ResumeState.self, from: data))?.processID
     }
@@ -186,7 +200,7 @@ final class CodexAppServer {
 
     func resume(_ processes: [HostProcess]) {
         defer { finishResumeCheck() }
-        guard !running, let data = try? Data(contentsOf: Self.resumeFile),
+        guard !running, let data = try? Data(contentsOf: resumeFile),
               let state = try? JSONDecoder().decode(ResumeState.self, from: data),
               let id = state.processID, processes.contains(where: { $0.id == id }) else { return }
         loadedThreads = Set(state.loadedThreads)
