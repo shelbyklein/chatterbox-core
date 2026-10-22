@@ -168,6 +168,7 @@ extension ChatSession {
             try await prepareOpenModel()
             // A PC chat's attachments are copied there first.
             let message = await uploadAttachments(message, includingImages: true)
+            try await preparePCWorkspace()
             let thread = try await codexEnsureThread()
             var input: [JSON] = []
             if record.sentPersonality != record.personality {

@@ -86,6 +86,18 @@ extension ChatSession {
         try await PCModels.ensureTunnel()
     }
 
+    /// Codex's app-server is shared, so unlike Claude's worker launch nothing creates a PC
+    /// chat's workspace before its first command runs there.
+    func preparePCWorkspace() async throws {
+        guard let machine = runMachine else { return }
+        let folder = pcWorkspace(on: machine)
+        guard !Self.preparedPCWorkspaces.contains(folder) else { return }
+        let quoted = "'" + folder.replacingOccurrences(of: "'", with: "''") + "'"
+        _ = try await RemoteLaunch.run("New-Item -ItemType Directory -Force -Path \(quoted) | Out-Null", on: machine)
+        Self.preparedPCWorkspaces.insert(folder)
+    }
+    private static var preparedPCWorkspaces: Set<String> = []
+
     // MARK: - Instructions
 
     /// Told to an agent running on the PC, so it works in Windows terms and knows where its
