@@ -51,12 +51,17 @@ final class HostClient {
         throw ClaudeCodeError(message: "Couldn't start Chatterbox's background host.")
     }
 
-    /// The host binary ships inside the app (Contents/MacOS). Tests point at theirs with
-    /// `CHATTERBOX_HOST_BINARY`.
+    /// The host ships inside the app as its own small app (Contents/Helpers), so macOS's
+    /// Privacy settings can list it; older bundles (and Golem) keep it in Contents/MacOS.
+    /// Tests point at theirs with `CHATTERBOX_HOST_BINARY`.
     static var hostBinary: URL? {
-        if let path = ProcessInfo.processInfo.environment["CHATTERBOX_HOST_BINARY"], !path.isEmpty {
+        // A service set up before the host moved may still name the old place; skip it then.
+        if let path = ProcessInfo.processInfo.environment["CHATTERBOX_HOST_BINARY"], !path.isEmpty,
+           FileManager.default.isExecutableFile(atPath: path) {
             return URL(fileURLWithPath: path)
         }
+        let helper = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/ChatterboxHost.app/Contents/MacOS/ChatterboxHost")
+        if FileManager.default.isExecutableFile(atPath: helper.path) { return helper }
         return Bundle.main.url(forAuxiliaryExecutable: "ChatterboxHost")
     }
 
@@ -69,12 +74,35 @@ final class HostClient {
         let log = try FileHandle(forWritingTo: logURL)
         _ = try? log.seekToEnd()
         // The host calls setsid() itself, so it doesn't share the app's fate when the app quits.
-        let process = Process()
-        process.executableURL = binary
-        process.standardInput = FileHandle.nullDevice
-        process.standardOutput = log
-        process.standardError = log
-        try process.run()
+        try Self.spawnOwnResponsibility(binary, output: log.fileDescriptor)
+        try? log.close()
+    }
+
+    /// Starts the host as the process macOS holds responsible for itself. Otherwise privacy
+    /// checks (Accessibility, Screen Recording) for the agents' tools fall on whoever launched
+    /// it, chatterboxd or the app, and approving "Chatterbox Host" in Settings wouldn't count.
+    private static func spawnOwnResponsibility(_ binary: URL, output: Int32) throws {
+        var attributes: posix_spawnattr_t?
+        posix_spawnattr_init(&attributes)
+        defer { posix_spawnattr_destroy(&attributes) }
+        typealias Disclaim = @convention(c) (UnsafeMutablePointer<posix_spawnattr_t?>, Bool) -> Int32
+        if let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "responsibility_spawnattrs_setdisclaim") {
+            _ = unsafeBitCast(symbol, to: Disclaim.self)(&attributes, true)
+        }
+        var actions: posix_spawn_file_actions_t?
+        posix_spawn_file_actions_init(&actions)
+        defer { posix_spawn_file_actions_destroy(&actions) }
+        posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0)
+        posix_spawn_file_actions_adddup2(&actions, output, 1)
+        posix_spawn_file_actions_adddup2(&actions, output, 2)
+        var pid: pid_t = 0
+        let path = binary.path
+        var argv: [UnsafeMutablePointer<CChar>?] = [strdup(path), nil]
+        defer { argv.forEach { free($0) } }
+        let status = posix_spawn(&pid, path, &actions, &attributes, &argv, environ)
+        guard status == 0 else { throw ClaudeCodeError(message: "Couldn't start Chatterbox's background host (\(String(cString: strerror(status)))).") }
+        // Reap it if it exits while this process lives; the host normally outlives us.
+        DispatchQueue.global(qos: .utility).async { var code: Int32 = 0; waitpid(pid, &code, 0) }
     }
 
     private func adopt(_ socket: Int32) {
