@@ -79,7 +79,14 @@ final class CodexAppServer {
             }
             await withCheckedContinuation { resumeWaiters.append($0) }
         }
-        if running, startTask == nil { return }
+        if running, startTask == nil {
+            // In a host from an older build: once no turn is running in it, start over in the
+            // current host. Chats' threads resume there.
+            guard HostClient.shared.isOnDrainingHost(hostID), canReleaseIdleProcess,
+                  let process = try? await HostClient.shared.list().first(where: { $0.id == hostID }), !process.busy,
+                  running, startTask == nil else { return }
+            terminate()
+        }
         if let startTask { return try await startTask.value }
         let task = Task { try await self.launch() }
         startTask = task

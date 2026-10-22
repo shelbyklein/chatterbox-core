@@ -140,11 +140,13 @@ extension ChatSession {
     /// Starts this chat's Claude Code process if it isn't running, resuming its session.
     private func claudeEnsureProcess(earlierItems: Int) throws -> ClaudeCodeProcess {
         if let process = claudeProcess, process.isRunning {
-            // Tools or saved keys changed since it started: start a fresh one, resuming
-            // the conversation. Checked here, as a message is sent, so changing a setting
-            // doesn't have to reach every chat at once.
+            // Tools or saved keys changed since it started, or it's in a host from an older
+            // build: start a fresh one (in the current host), resuming the conversation.
+            // Checked here, as a message is sent, so a change doesn't have to reach every
+            // chat at once.
             guard !isRunning,
                   ToolScopes.fingerprint(for: self) != claudeToolsFingerprint || SecretVault.shared.fingerprint(for: self) != claudeSecretsFingerprint
+                  || HostClient.shared.isOnDrainingHost(process.hostID)
             else { return process }
             process.terminate()
             claudeProcess = nil

@@ -24,14 +24,24 @@ final class HostClient {
         var onExit: (_ status: Int32, _ detail: String) -> Void
     }
 
+    /// The host new processes start in (on `HostPaths.socket`), and older ones still running
+    /// processes they started before a newer host build was installed. Each older one is
+    /// "draining": it keeps its processes going and exits once they're done.
     private var fd: Int32 = -1
+    private var draining: [Int32] = []
     /// Bumped per connection, so frames read from a closed socket are dropped.
     private var generation = 0
+    private var generations: [Int32: Int] = [:]
+    /// Which connection each known process is on (absent: the current host).
+    private var owners: [String: Int32] = [:]
     private var subscribers: [String: Subscriber] = [:]
-    private var listWaiters: [Int: CheckedContinuation<[HostProcess], Error>] = [:]
+    private var listWaiters: [Int: (fd: Int32, done: CheckedContinuation<[HostProcess], Error>)] = [:]
     private var nextRequest = 1
 
     var isConnected: Bool { fd >= 0 }
+
+    /// The process runs in a host from an older build, so the next start should be here.
+    func isOnDrainingHost(_ id: String?) -> Bool { id.flatMap { owners[$0] }.map(draining.contains) ?? false }
 
     // MARK: - Connection
 
@@ -39,7 +49,13 @@ final class HostClient {
     /// running host is used.
     func connect(launch: Bool = true) throws {
         if fd >= 0 { return }
-        if let socket = UnixSocket.connect(to: HostPaths.socket) { return adopt(socket) }
+        connectDraining()
+        if let socket = UnixSocket.connect(to: HostPaths.socket) {
+            if hostIsCurrent(socket) { return adopt(socket) }
+            // A host from an older build: it keeps what it's running, under another name,
+            // and a current host takes the usual one for everything new.
+            moveAside(socket)
+        }
         guard launch else { throw ClaudeCodeError(message: "Chatterbox's background host isn't running.") }
         try launchHost()
         // The host is listening within a few milliseconds; allow for a slow first launch.
@@ -49,6 +65,79 @@ final class HostClient {
             Thread.sleep(forTimeInterval: 0.02)
         }
         throw ClaudeCodeError(message: "Couldn't start Chatterbox's background host.")
+    }
+
+    // MARK: - Handing off to a newer host
+
+    /// Asks the host whether it's the build this app would start. A host from before this
+    /// check answers "Unknown request", which is a no too.
+    private func hostIsCurrent(_ socket: Int32) -> Bool {
+        guard let binary = Self.hostBinary?.path,
+              var data = try? JSON.object(["op": "hello", "binary": .string(binary)]).encoded() else { return true }
+        data.append(0x0A)
+        guard data.withUnsafeBytes({ Darwin.write(socket, $0.baseAddress!, $0.count) }) == data.count else { return true }
+        var reader = HostFrameReader()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        let deadline = Date().addingTimeInterval(1)
+        while Date() < deadline {
+            var poller = pollfd(fd: socket, events: Int16(POLLIN), revents: 0)
+            guard poll(&poller, 1, 100) > 0 else { continue }
+            let n = read(socket, &buffer, buffer.count)
+            guard n > 0 else { return true }
+            for frame in reader.feed(Data(buffer[0..<n])) {
+                switch frame.header["op"]?.string {
+                case "hello": return frame.header["current"]?.bool ?? true
+                case "error": return false
+                default: continue
+                }
+            }
+        }
+        return true
+    }
+
+    /// Renames the older host's socket so a new host can listen on the usual one, tells it
+    /// to finish (exit once its processes end), and keeps talking to it for those.
+    private func moveAside(_ socket: Int32) {
+        let aside = HostPaths.directory.appendingPathComponent("host-draining-\(UUID().uuidString.prefix(8)).sock")
+        if rename(HostPaths.socket.path, aside.path) != 0 {
+            close(socket)   // Another client got there first; the usual socket is the new host's.
+            return
+        }
+        if var data = try? JSON.object(["op": "drain"]).encoded() {
+            data.append(0x0A)
+            _ = data.withUnsafeBytes { Darwin.write(socket, $0.baseAddress!, $0.count) }
+        }
+        adoptDraining(socket)
+    }
+
+    /// Hosts already handing off (moved aside by this or another client, or before a relaunch).
+    private func connectDraining() {
+        guard draining.isEmpty,
+              let names = try? FileManager.default.contentsOfDirectory(atPath: HostPaths.directory.path) else { return }
+        for name in names where name.hasPrefix("host-draining-") && name.hasSuffix(".sock") {
+            let url = HostPaths.directory.appendingPathComponent(name)
+            if let socket = UnixSocket.connect(to: url) { adoptDraining(socket) } else { unlink(url.path) }
+        }
+    }
+
+    private func adoptDraining(_ socket: Int32) {
+        draining.append(socket)
+        startReading(socket)
+        // Learn which processes are there, so their requests go to it.
+        let req = nextRequest
+        nextRequest += 1
+        sendRaw(["op": "list", "req": .number(Double(req))], to: socket)
+    }
+
+    /// A draining host with nothing running is let go, so it can exit.
+    private func releaseIdleDraining(_ socket: Int32, processes: [HostProcess]) {
+        guard draining.contains(socket), !processes.contains(where: \.running),
+              !owners.contains(where: { $0.value == socket && subscribers[$0.key] != nil }) else { return }
+        // shutdown, not just close: the reader thread is blocked on this socket, and a close
+        // alone leaves the connection open until that read returns.
+        shutdown(socket, SHUT_RDWR)
+        close(socket)
+        drop(socket)
     }
 
     /// The host ships inside the app as its own small app (Contents/Helpers), so macOS's
@@ -107,8 +196,13 @@ final class HostClient {
 
     private func adopt(_ socket: Int32) {
         fd = socket
+        startReading(socket)
+    }
+
+    private func startReading(_ socket: Int32) {
         generation += 1
         let generation = generation
+        generations[socket] = generation
         let thread = Thread { [weak self] in
             var reader = HostFrameReader()
             var buffer = [UInt8](repeating: 0, count: 65536)
@@ -118,37 +212,49 @@ final class HostClient {
                 guard n > 0 else { break }
                 let frames = reader.feed(Data(buffer[0..<n]))
                 guard !frames.isEmpty else { continue }
-                DispatchQueue.main.async { MainActor.assumeIsolated { self?.handle(frames, generation: generation) } }
+                DispatchQueue.main.async { MainActor.assumeIsolated { self?.handle(frames, from: socket, generation: generation) } }
             }
-            DispatchQueue.main.async { MainActor.assumeIsolated { self?.connectionLost(generation: generation) } }
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.connectionLost(socket, generation: generation) } }
         }
         thread.name = "Chatterbox host reader"
         thread.start()
     }
 
-    private func connectionLost(generation: Int) {
-        guard generation == self.generation, fd >= 0 else { return }
-        close(fd)
-        fd = -1
-        let lost = subscribers
-        subscribers = [:]
-        for (_, subscriber) in lost { subscriber.onExit(-1, "Chatterbox's background host stopped.") }
-        let waiters = listWaiters
-        listWaiters = [:]
-        for (_, waiter) in waiters { waiter.resume(throwing: ClaudeCodeError(message: "Chatterbox's background host stopped.")) }
+    private func connectionLost(_ socket: Int32, generation: Int) {
+        guard generations[socket] == generation else { return }
+        close(socket)
+        let lost = socket == fd ? subscribers.filter { owners[$0.key] == nil } : subscribers.filter { owners[$0.key] == socket }
+        drop(socket)
+        for (id, subscriber) in lost {
+            subscribers.removeValue(forKey: id)
+            subscriber.onExit(-1, "Chatterbox's background host stopped.")
+        }
+        for (req, waiter) in listWaiters where waiter.fd == socket {
+            listWaiters.removeValue(forKey: req)
+            waiter.done.resume(throwing: ClaudeCodeError(message: "Chatterbox's background host stopped."))
+        }
     }
 
-    /// Drops the connection without stopping anything in the host, as quitting does.
+    /// Forgets a closed connection and what was on it.
+    private func drop(_ socket: Int32) {
+        generations.removeValue(forKey: socket)
+        if socket == fd { fd = -1 }
+        draining.removeAll { $0 == socket }
+        owners = owners.filter { $0.value != socket }
+    }
+
+    /// Drops the connections without stopping anything in the hosts, as quitting does.
     func disconnect() {
-        guard fd >= 0 else { return }
-        generation += 1
-        close(fd)
-        fd = -1
+        for socket in draining + (fd >= 0 ? [fd] : []) {
+            shutdown(socket, SHUT_RDWR)
+            close(socket)
+            drop(socket)
+        }
         subscribers = [:]
     }
 
-    private func handle(_ frames: [HostFrameReader.Frame], generation: Int) {
-        guard generation == self.generation else { return }
+    private func handle(_ frames: [HostFrameReader.Frame], from socket: Int32, generation: Int) {
+        guard generations[socket] == generation else { return }
         for frame in frames {
             let header = frame.header
             let id = header["id"]?.string ?? ""
@@ -157,16 +263,23 @@ final class HostClient {
                 guard let raw = frame.raw, let end = header["end"]?.int else { continue }
                 subscribers[id]?.onLine(raw, end)
             case "exit":
+                // A draining host may be done now: ask what it still has.
+                if draining.contains(socket) { sendRaw(["op": "list"], to: socket) }
                 guard let subscriber = subscribers.removeValue(forKey: id) else { continue }
                 subscriber.onExit(Int32(header["status"]?.int ?? -1), header["stderr"]?.string ?? "")
             case "list":
-                guard let req = header["req"]?.int, let waiter = listWaiters.removeValue(forKey: req) else { continue }
                 let processes = (header["processes"]?.array ?? []).compactMap { p -> HostProcess? in
                     guard let id = p["id"]?.string else { return nil }
                     return HostProcess(id: id, running: p["running"]?.bool ?? false, end: p["end"]?.int ?? 0,
                                        busy: p["busy"]?.bool ?? false, status: p["status"]?.int.map(Int32.init))
                 }
-                waiter.resume(returning: processes)
+                if draining.contains(socket) {
+                    for process in processes { owners[process.id] = socket }
+                }
+                if let req = header["req"]?.int, let waiter = listWaiters.removeValue(forKey: req) {
+                    waiter.done.resume(returning: processes)
+                }
+                releaseIdleDraining(socket, processes: processes)
             case "spawned":
                 if let error = header["error"]?.string { NSLog("Chatterbox host: \(error)") }
             case "error":
@@ -177,7 +290,13 @@ final class HostClient {
         }
     }
 
+    /// A request about process `id` goes to the host it's in.
     private func send(_ request: JSON) {
+        let target = request["id"]?.string.flatMap { owners[$0] } ?? fd
+        sendRaw(request, to: target)
+    }
+
+    private func sendRaw(_ request: JSON, to fd: Int32) {
         guard fd >= 0, var data = try? request.encoded() else { return }
         data.append(0x0A)
         let ok = data.withUnsafeBytes { raw -> Bool in
@@ -190,7 +309,7 @@ final class HostClient {
             }
             return true
         }
-        if !ok { connectionLost(generation: generation) }
+        if !ok, let generation = generations[fd] { connectionLost(fd, generation: generation) }
     }
 
     // MARK: - Requests
@@ -204,7 +323,8 @@ final class HostClient {
         ]
         if let cwd { request["cwd"] = .string(cwd) }
         if let kind { request["protocol"] = .string(kind) }
-        send(.object(request))
+        owners.removeValue(forKey: id)
+        sendRaw(.object(request), to: fd)
     }
 
     /// Streams the process's output from `offset` (every saved line first, then live ones),
@@ -243,16 +363,21 @@ final class HostClient {
     }
 
     /// The host's processes. With `launch` false and no host running, there are none.
+    /// Every host's: the current one's and any still draining.
     func list(launch: Bool = false) async throws -> [HostProcess] {
         do { try connect(launch: launch) } catch {
             if launch { throw error }
-            return []
+            if draining.isEmpty { connectDraining() }
         }
-        let req = nextRequest
-        nextRequest += 1
-        return try await withCheckedThrowingContinuation { continuation in
-            listWaiters[req] = continuation
-            send(["op": "list", "req": .number(Double(req))])
+        var all: [HostProcess] = []
+        for socket in draining + (fd >= 0 ? [fd] : []) {
+            let req = nextRequest
+            nextRequest += 1
+            if let processes = try? await withCheckedThrowingContinuation({ (continuation: CheckedContinuation<[HostProcess], Error>) in
+                listWaiters[req] = (socket, continuation)
+                sendRaw(["op": "list", "req": .number(Double(req))], to: socket)
+            }) { all += processes }
         }
+        return all
     }
 }
