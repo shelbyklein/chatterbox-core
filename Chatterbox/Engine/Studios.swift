@@ -136,7 +136,7 @@ extension AppModel {
             PermissionModes.applyNewStudioDefaults(to: &empty.record, folder: empty.workingFolder)
             empty.onChange?(empty)
             if let backend { empty.setBackend(backend) }
-            ModelFavorites.startLikeLast(empty, kind: .studios, requested: backend)
+            ModelSelection.startLikeLast(empty, kind: .studios, requested: backend)
             selectedID = empty.id
             return empty
         }

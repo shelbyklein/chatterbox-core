@@ -35,22 +35,6 @@ struct ChatSettingsForm<Leading: View>: View {
     var body: some View {
             Form {
                 leading()
-                if let favorites = options.favorites, !favorites.isEmpty {
-                    Section("Favorites") {
-                        ForEach(Array(favorites.enumerated()), id: \.element) { index, favorite in
-                            Button { apply(.init(backend: favorite.backend, model: favorite.model)) } label: {
-                                HStack {
-                                    Text("\(index + 1)").monospacedDigit().foregroundStyle(.tertiary).frame(width: 18)
-                                    row(favorite.name, detail: favorite.backend == options.backend ? "" : "switches to \(favorite.backend == "codex" ? "Codex" : "Claude")",
-                                        isOn: favorite.backend == options.backend && favorite.model == options.model)
-                                }
-                            }
-                            .buttonStyle(ChoiceRowStyle())
-                            .accessibilityIdentifier("favorite-\(index + 1)")
-                        }
-                    }
-                }
-
                 if let efforts = currentModel?.efforts, !efforts.isEmpty {
                     Section {
                         EffortSlider(efforts: efforts, effort: options.effort, defaultEffort: currentModel?.defaultEffort) {
@@ -77,7 +61,7 @@ struct ChatSettingsForm<Leading: View>: View {
                     }
                 }
 
-                Section("All models") {
+                Section("Models") {
                     // Browses either agent's list; picking from the other one switches to it.
                     Picker("Agent", selection: Binding(get: { shownAgent }, set: { browsing = $0 })) {
                         Text("Claude").tag("claude")

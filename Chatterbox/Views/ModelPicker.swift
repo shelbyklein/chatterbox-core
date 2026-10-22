@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// The model button (under the message box and in the toolbar) and its popover: your
-/// favorite models numbered (press 1–9), every model, and effort as a slider.
+/// Claude, Codex or the PC's open models, that provider's list, and effort as a slider.
 struct ModelPicker: View {
     let session: ChatSession
     /// Toolbar style: an icon and "Model". Otherwise the full summary with the agent's color.
@@ -78,7 +78,7 @@ private struct AnyButtonStyle: PrimitiveButtonStyle {
     func makeBody(configuration: Configuration) -> some View { make(configuration) }
 }
 
-/// Pick a model: click it or press its number among your favorites. Drag the effort below.
+/// Pick a provider, then a model. Drag the effort below.
 /// Nothing changes until the next message, so there's no confirm: click away, Esc or Return.
 struct ModelPopover: View {
     let session: ChatSession
@@ -101,10 +101,10 @@ struct ModelPopover: View {
     static let size = CGSize(width: 380, height: 600)
 
     private var catalog: ClaudeModels { .shared }
-    private var favorites: ModelFavorites { .shared }
+    private var selection: ModelSelection { .shared }
     private var codexModels: [CodexModelInfo] { CodexAppServer.shared.models }
     private var active: Backend { session.record.backend }
-    private var current: ModelChoice { ModelFavorites.current(session) }
+    private var current: ModelChoice { ModelSelection.current(session) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -115,14 +115,6 @@ struct ModelPopover: View {
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
-                    heading("Favorites")
-                    if favorites.favorites.isEmpty {
-                        Text("Star a model below to keep it here.").font(.callout).foregroundStyle(.secondary)
-                            .padding(.horizontal, 8).padding(.vertical, 4)
-                    }
-                    ForEach(Array(favorites.favorites.enumerated()), id: \.element) { index, choice in
-                        row(choice, detail: nil, number: index < 9 ? index + 1 : nil)
-                    }
                     // Pick the provider, then its models.
                     Picker("Provider", selection: $provider) {
                         Text("Claude").tag(ModelProvider.claude)
@@ -131,7 +123,7 @@ struct ModelPopover: View {
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
-                    .padding(.horizontal, 8).padding(.top, 10).padding(.bottom, 4)
+                    .padding(.horizontal, 8).padding(.bottom, 4)
                     switch provider {
                     case .claude: claudeRows
                     case .codex: codexRows
@@ -172,16 +164,11 @@ struct ModelPopover: View {
         }
         .padding(14)
         .frame(width: Self.size.width, height: Self.size.height, alignment: .top)
-        // 1–9 picks a favorite; Return closes, as Esc does.
+        // Return closes, as Esc does.
         .focusable()
         .focusEffectDisabled()
         .focused($focused)
         .onAppear { focused = true }
-        .onKeyPress(characters: .decimalDigits) { press in
-            guard let digit = Int(press.characters), digit >= 1, digit <= min(9, favorites.favorites.count) else { return .ignored }
-            pick(favorites.favorites[digit - 1])
-            return .handled
-        }
         .onKeyPress(.return) { close(); return .handled }
         .task { await PCModels.shared.refresh() }
     }
@@ -197,7 +184,7 @@ struct ModelPopover: View {
     private func pick(_ choice: ModelChoice) {
         guard !locked(choice) else { return }
         if session.record.openModel != nil { session.setOpenModel(nil) }
-        favorites.choose(choice, for: session)
+        selection.choose(choice, for: session)
     }
 
     // MARK: - Models
@@ -209,7 +196,7 @@ struct ModelPopover: View {
         let current = claudeCurrent
         let models = catalog.models.contains { $0.value == current.value } ? catalog.models : [current] + catalog.models
         ForEach(models) { m in
-            row(ModelChoice(backend: .claude, model: m.value), detail: m.detail, number: nil)
+            row(ModelChoice(backend: .claude, model: m.value), detail: m.detail)
         }
     }
 
@@ -217,31 +204,31 @@ struct ModelPopover: View {
     private var codexRows: some View {
         let chosen = active == .codex ? session.record.codex?.model : nil
         let fallback = codexModels.first(where: \.isDefault)?.displayName
-        row(ModelChoice(backend: .codex, model: nil), detail: fallback.map { "Currently \($0)" }, number: nil)
+        row(ModelChoice(backend: .codex, model: nil), detail: fallback.map { "Currently \($0)" })
         let entries = CodexModelCatalog.entries(codexModels, chosen: chosen)
         let shown = entries.filter { $0.isCurrent || $0.model.model == chosen }
         ForEach(shown.filter { !$0.isClaude }) { entry in
-            row(ModelChoice(backend: .codex, model: entry.model.model), detail: nil, number: nil)
+            row(ModelChoice(backend: .codex, model: entry.model.model), detail: nil)
         }
         let proxied = shown.filter(\.isClaude)
         if !proxied.isEmpty {
             heading("Claude via proxy").padding(.top, 4)
-            ForEach(proxied) { entry in row(ModelChoice(backend: .codex, model: entry.model.model), detail: nil, number: nil) }
+            ForEach(proxied) { entry in row(ModelChoice(backend: .codex, model: entry.model.model), detail: nil) }
         }
         let more = CodexModelCatalog.entries(codexModels.map { var m = $0; m.hidden = false; return m })
             .filter { entry in !shown.contains { $0.id == entry.id } && !entry.model.model.hasPrefix("gpt-image") }
         if !more.isEmpty {
             DisclosureGroup("More Codex models", isExpanded: $showHidden) {
                 ForEach(more) { entry in
-                    row(ModelChoice(backend: .codex, model: entry.model.model), detail: entry.isClaude ? "Claude, through the proxy" : nil, number: nil)
+                    row(ModelChoice(backend: .codex, model: entry.model.model), detail: entry.isClaude ? "Claude, through the proxy" : nil)
                 }
             }
             .font(.callout).padding(.horizontal, 8).padding(.top, 4)
         }
     }
 
-    /// A model: click to pick it; the star keeps it in Favorites; its number picks it too.
-    private func row(_ choice: ModelChoice, detail: String?, number: Int?) -> some View {
+    /// A model: click to pick it.
+    private func row(_ choice: ModelChoice, detail: String?) -> some View {
         let selected = choice == current && session.record.openModel == nil
         let other = choice.backend != active
         let note = other ? "switches to \(choice.backend.label)" : detail
@@ -253,29 +240,20 @@ struct ModelPopover: View {
                     Image(choice.backend == .claude || (choice.model ?? "").lowercased().hasPrefix("claude") ? Backend.claude.iconName : Backend.codex.iconName)
                         .resizable().scaledToFit().frame(width: 12, height: 12)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(ModelFavorites.name(choice))
+                        Text(ModelSelection.name(choice))
                         if let note, !note.isEmpty { Text(note).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
                     }
                     Spacer(minLength: 0)
-                    if let number { Text("\(number)").font(.callout.monospacedDigit()).foregroundStyle(.tertiary) }
                 }
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(locked(choice))
-            Button { favorites.toggle(choice) } label: {
-                Image(systemName: favorites.isFavorite(choice) ? "star.fill" : "star")
-                    .foregroundStyle(favorites.isFavorite(choice) ? Color.yellow : Color.secondary)
-                    .frame(width: 20, height: 20).contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help(favorites.isFavorite(choice) ? "Remove from Favorites" : "Add to Favorites")
-            .accessibilityLabel(favorites.isFavorite(choice) ? "Remove \(ModelFavorites.name(choice)) from Favorites" : "Add \(ModelFavorites.name(choice)) to Favorites")
         }
         .padding(.horizontal, 8).padding(.vertical, 4)
         .background(RoundedRectangle(cornerRadius: 6).fill(selected ? Color.highlight.opacity(0.12) : .clear))
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(ModelFavorites.name(choice) + (selected ? ", current" : ""))
+        .accessibilityLabel(ModelSelection.name(choice) + (selected ? ", current" : ""))
     }
 
     // MARK: - Shelby-PC
@@ -374,7 +352,7 @@ struct ModelPopover: View {
     // MARK: - Effort
 
     /// "" (the model's default) and then each level the current model supports, lowest first.
-    private var stops: [String] { [""] + ModelFavorites.efforts(current) }
+    private var stops: [String] { [""] + ModelSelection.efforts(current) }
 
     private var defaultEffortName: String {
         guard active == .codex else { return "Default" }
@@ -390,14 +368,14 @@ struct ModelPopover: View {
         if stops.count <= 1 {
             Text("This model has no effort setting.").font(.callout).foregroundStyle(.secondary)
         } else {
-            let index = Double(stops.firstIndex(of: ModelFavorites.effort(session)) ?? 0)
+            let index = Double(stops.firstIndex(of: ModelSelection.effort(session)) ?? 0)
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Text("Effort").font(.callout.weight(.medium))
                     Spacer()
                     Text(name(stops[Int(index)])).font(.callout).foregroundStyle(.secondary)
                 }
-                Slider(value: Binding(get: { index }, set: { favorites.setEffort(stops[Int($0.rounded())], for: session) }),
+                Slider(value: Binding(get: { index }, set: { selection.setEffort(stops[Int($0.rounded())], for: session) }),
                        in: 0...Double(stops.count - 1), step: 1)
                     .accessibilityLabel("Effort")
                 // Labels under each stop, spread to match the slider's ticks.
@@ -435,7 +413,7 @@ struct ComposerEffortSlider: View {
     private var effort: String {
         session.record.backend == .claude ? session.record.effort : session.record.codex?.effort ?? ""
     }
-    private func set(_ value: String) { ModelFavorites.shared.setEffort(value, for: session) }
+    private func set(_ value: String) { ModelSelection.shared.setEffort(value, for: session) }
     private func name(_ stop: String) -> String { stop.isEmpty ? "Default" : ChatView.effortLabel(stop) }
 
     var body: some View {

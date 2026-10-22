@@ -374,16 +374,5 @@ struct AutomationModelPicker: View {
                 ForEach(efforts, id: \.self) { Text(RuntimePaths.effortLabel($0)).tag($0) }
             }
         }
-        if !ModelFavorites.shared.favorites.isEmpty {
-            Menu("Use a Favorite") {
-                ForEach(ModelFavorites.shared.favorites, id: \.self) { choice in
-                    Button("\(ModelFavorites.name(choice)) (\(choice.backend.label))") {
-                        change { $0.backend = choice.backend.rawValue; $0.model = choice.model; $0.effort = nil; $0.preset = nil }
-                    }
-                }
-            }
-            .fixedSize()
-            .help("Set the agent and model from your favorites")
-        }
     }
 }

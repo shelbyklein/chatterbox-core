@@ -85,15 +85,6 @@ struct ChatSettingsCog: View {
                 }
             }
             Divider()
-            section("Favorites") {
-                ForEach(ModelFavorites.shared.favorites, id: \.self) { choice in
-                    row(selected: ModelFavorites.current(session) == choice) { ModelFavorites.shared.choose(choice, for: session) } label: {
-                        Image(choice.backend.iconName).resizable().scaledToFit().frame(width: 14, height: 14).frame(width: 18)
-                        Text(ModelFavorites.name(choice))
-                    }
-                }
-            }
-            Divider()
             row(selected: false) { page = .model } label: {
                 Image(systemName: "cpu").frame(width: 18).foregroundStyle(.secondary)
                 Text("Model and Effort\u{2026}")

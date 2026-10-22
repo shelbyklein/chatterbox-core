@@ -474,11 +474,11 @@ final class AppModel {
         return session
     }
 
-    /// A new session starts on the model and effort `kind` last used (see ModelFavorites).
+    /// A new session starts on the model and effort `kind` last used (see ModelSelection).
     @discardableResult
     func newChat(backend: Backend? = nil, kind: SessionKind = .chats) -> ChatSession {
         let session = makeNewChat(backend: backend)
-        ModelFavorites.startLikeLast(session, kind: kind, requested: backend)
+        ModelSelection.startLikeLast(session, kind: kind, requested: backend)
         return session
     }
 

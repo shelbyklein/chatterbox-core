@@ -1,5 +1,4 @@
 import Foundation
-import Observation
 
 /// A model to switch to: the agent and its model ("opus", "gpt-6.1-sol"). A Codex model of
 /// nil is Codex's own default.
@@ -25,83 +24,15 @@ enum SessionKind: String, CaseIterable {
     }
 }
 
-/// The models you pick most, numbered in the model popover (press 1–9), and the effort a
-/// switch keeps. Favorites replaced presets: they're models only; effort is the slider.
-/// Saved as JSON text so the background service (which answers the phone) gets them too.
+/// Switching a session's model (keeping the closest effort) and remembering what each kind
+/// of session last used, so the next one starts there. Saved as JSON text, so the background
+/// service, which starts sessions for the phone too, gets it.
 @MainActor
-@Observable
-final class ModelFavorites {
-    static let shared = ModelFavorites()
-    static let key = "modelFavorites"
+final class ModelSelection {
+    static let shared = ModelSelection()
     static func lastKey(_ kind: SessionKind) -> String { "lastModel." + kind.rawValue }
     /// Effort levels from least to most, for keeping the closest one across a switch.
     static let effortOrder = ["minimal", "low", "medium", "high", "xhigh", "max"]
-
-    private(set) var favorites: [ModelChoice]
-    @ObservationIgnored private var observer: Any?
-
-    init() {
-        if let saved = Self.load() {
-            favorites = saved
-        } else {
-            // First run: the presets you had become your favorites, in order.
-            favorites = Self.fromPresets()
-            #if !CHATTERBOX_HEADLESS
-            save()
-            #endif
-        }
-        #if CHATTERBOX_HEADLESS
-        // The service: take favorites edited in the app as they arrive.
-        observer = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                if let fresh = Self.load(), fresh != self?.favorites { self?.favorites = fresh }
-            }
-        }
-        #endif
-    }
-
-    private static func load() -> [ModelChoice]? {
-        guard let text = AppPreferences.defaults.string(forKey: key) else { return nil }
-        return try? JSONDecoder().decode([ModelChoice].self, from: Data(text.utf8))
-    }
-
-    static func fromPresets() -> [ModelChoice] {
-        var choices: [ModelChoice] = []
-        for preset in ModelPresets.shared.presets {
-            let choice = ModelChoice(backend: preset.backend, model: preset.backend == .claude ? (preset.model ?? "default") : preset.model)
-            if !choices.contains(choice) { choices.append(choice) }
-        }
-        return choices
-    }
-
-    private func save() {
-        guard let data = try? JSONEncoder().encode(favorites), let text = String(data: data, encoding: .utf8) else { return }
-        AppPreferences.defaults.set(text, forKey: Self.key)
-    }
-
-    // MARK: - Favorites
-
-    func isFavorite(_ choice: ModelChoice) -> Bool { favorites.contains(choice) }
-
-    func toggle(_ choice: ModelChoice) {
-        if let index = favorites.firstIndex(of: choice) { favorites.remove(at: index) } else { favorites.append(choice) }
-        save()
-    }
-
-    func move(fromOffsets source: IndexSet, toOffset destination: Int) {
-        var moved = favorites
-        let items = source.sorted().map { moved[$0] }
-        for index in source.sorted(by: >) { moved.remove(at: index) }
-        let target = destination - source.filter { $0 < destination }.count
-        moved.insert(contentsOf: items, at: max(0, min(target, moved.count)))
-        favorites = moved
-        save()
-    }
-
-    func set(_ list: [ModelChoice]) {
-        favorites = list
-        save()
-    }
 
     // MARK: - Names and efforts
 

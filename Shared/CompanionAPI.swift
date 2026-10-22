@@ -212,18 +212,9 @@ enum Companion {
         /// Modes for the current agent.
         var modes: [ModeOption]
         var mode: String
-        /// No longer filled (favorites replaced presets); older phones read an empty list.
+        /// No longer filled (presets are gone); older phones read an empty list.
         var presets: [PresetOption]
         var fastMode: Bool? = nil
-        /// Your favorite models, in order (older Macs send none).
-        var favorites: [FavoriteOption]? = nil
-    }
-
-    /// A favorite model: its agent, its id as the model lists name it ("" for Codex's default).
-    struct FavoriteOption: Codable, Hashable {
-        var backend: String
-        var model: String
-        var name: String
     }
 
     struct ModelOption: Codable, Hashable, Identifiable {

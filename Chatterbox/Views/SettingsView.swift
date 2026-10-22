@@ -187,32 +187,6 @@ struct SettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
 
-            Section {
-                let favorites = ModelFavorites.shared.favorites
-                if favorites.isEmpty {
-                    Text("Star models in a session's model list to keep them here.").foregroundStyle(.secondary)
-                }
-                ForEach(Array(favorites.enumerated()), id: \.element) { index, choice in
-                    HStack {
-                        Text("\(index + 1)").monospacedDigit().foregroundStyle(.tertiary).frame(width: 18)
-                        Text(ModelFavorites.name(choice))
-                        Text(choice.backend.label).font(.caption).foregroundStyle(.secondary)
-                        Spacer()
-                        Button { ModelFavorites.shared.move(fromOffsets: [index], toOffset: index - 1) } label: { Image(systemName: "chevron.up") }
-                            .disabled(index == 0).help("Move up")
-                        Button { ModelFavorites.shared.move(fromOffsets: [index], toOffset: index + 2) } label: { Image(systemName: "chevron.down") }
-                            .disabled(index == favorites.count - 1).help("Move down")
-                        Button { ModelFavorites.shared.toggle(choice) } label: { Image(systemName: "minus.circle") }
-                            .help("Remove from Favorites")
-                    }
-                    .buttonStyle(.borderless)
-                }
-            } header: {
-                Text("Favorite models")
-            } footer: {
-                Text("Numbered at the top of every session's model list: press the number to switch. Star a model there to add it.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
         }
         .formStyle(WideFormStyle())
         .frame(maxWidth: .infinity)
