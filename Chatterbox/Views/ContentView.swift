@@ -29,6 +29,10 @@ struct ContentView: View {
     @State private var toolsFor: ChatSession?
     @State private var sidequestFrom: ChatSession?
     @State private var sidequestTask = ""
+    @State private var errandFrom: ChatSession?
+    @State private var errandTask = ""
+    @State private var errandFiles: [URL] = []
+    @State private var errandAgent: Backend = .claude
     @State private var worktreeParent: ChatSession?
     @State private var worktreeName = ""
     @State private var removingWorktree: ChatSession?
@@ -254,6 +258,12 @@ struct ContentView: View {
             SidequestForm(agent: parent.record.backend == .claude ? "Codex" : "Claude", from: parent.record.backend.label, task: $sidequestTask) {
                 model.newSidequest(of: parent, task: sidequestTask)
                 sidequestFrom = nil
+            }
+        }
+        .sheet(item: $errandFrom) { parent in
+            PCErrandForm(task: $errandTask, files: $errandFiles, agent: $errandAgent) {
+                model.newPCErrand(of: parent, task: errandTask, files: errandFiles.map(\.path), backend: errandAgent)
+                errandFrom = nil
             }
         }
         .sheet(item: $toolsFor) { project in
@@ -750,6 +760,9 @@ extension ContentView {
             if !session.isSidequest, !session.isDot {
                 Button("Sidequest to \(session.record.backend == .claude ? "Codex" : "Claude")\u{2026}", systemImage: "point.topleft.down.to.point.bottomright.curvepath") {
                     sidequestTask = ""; sidequestFrom = session
+                }
+                Button("Do on \(RemoteMachine.pc.name)\u{2026}", systemImage: "desktopcomputer") {
+                    errandTask = ""; errandFiles = []; errandAgent = session.record.backend; errandFrom = session
                 }
             }
             Button(session.record.automationID != nil ? "End Automation Thread" : session.record.sidechatOf != nil ? "End Sidechat" : "Archive Session") { model.archive(session) }

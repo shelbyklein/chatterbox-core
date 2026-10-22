@@ -57,6 +57,95 @@ struct SidequestForm: View {
     }
 }
 
+/// Beside Sidequest: send a task to Shelby-PC ("do that on the PC"), on this session's agent.
+/// Its answer and files come back here.
+struct PCErrandButton: View {
+    let session: ChatSession
+    @Environment(AppModel.self) private var model
+    @Environment(\.colorScheme) private var scheme
+    @State private var open = false
+    @State private var task = ""
+    @State private var files: [URL] = []
+    @State private var agent: Backend = .claude
+
+    var body: some View {
+        Button { agent = session.record.backend; open.toggle() } label: {
+            Image(systemName: "desktopcomputer")
+                .frame(width: 36, height: 32).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(scheme == .dark ? Color(white: 0.10) : Color(white: 0.97), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12)))
+        .help("Do on \(RemoteMachine.pc.name): send a task to the PC, and its answer and files come back here")
+        .accessibilityLabel("Do on \(RemoteMachine.pc.name)")
+        .popover(isPresented: $open, arrowEdge: .bottom) {
+            PCErrandForm(task: $task, files: $files, agent: $agent) {
+                model.newPCErrand(of: session, task: task, files: files.map(\.path), backend: agent)
+                task = ""; files = []; open = false
+            }
+        }
+    }
+}
+
+/// The task for the PC, files to send along, and which agent goes.
+struct PCErrandForm: View {
+    @Binding var task: String
+    @Binding var files: [URL]
+    @Binding var agent: Backend
+    let start: () -> Void
+    private var ready: Bool { !task.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && PCModels.shared.reachable != false }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Do on \(RemoteMachine.pc.name)").font(.headline)
+            Text("Runs in a Sidechat on the PC, caught up on this session. It can use the PC's apps (Photoshop, through Slippy), its GPU and disk. The files it makes are copied here, and its answer comes back for this session to carry on from.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            TextField("What should happen on the PC?", text: $task, axis: .vertical)
+                .textFieldStyle(.roundedBorder).lineLimit(3...8)
+                .accessibilityLabel("Task for the PC")
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(files, id: \.self) { file in
+                    HStack(spacing: 6) {
+                        Image(systemName: "doc").foregroundStyle(.secondary)
+                        Text(file.lastPathComponent).lineLimit(1).truncationMode(.middle)
+                        Spacer()
+                        Button { files.removeAll { $0 == file } } label: { Image(systemName: "xmark.circle.fill") }
+                            .buttonStyle(.borderless).foregroundStyle(.secondary).accessibilityLabel("Don't send \(file.lastPathComponent)")
+                    }.font(.caption)
+                }
+                Button("Send Files\u{2026}", systemImage: "paperclip") {
+                    let panel = NSOpenPanel()
+                    panel.allowsMultipleSelection = true
+                    panel.canChooseDirectories = false
+                    if panel.runModal() == .OK { files += panel.urls.filter { !files.contains($0) } }
+                }
+                .buttonStyle(.link).font(.caption)
+            }
+            .dropDestination(for: URL.self) { urls, _ in
+                files += urls.filter { $0.isFileURL && !files.contains($0) }
+                return true
+            }
+            HStack {
+                Picker("Agent", selection: $agent) {
+                    Text("Claude").tag(Backend.claude)
+                    Text("Codex").tag(Backend.codex)
+                }
+                .pickerStyle(.segmented).labelsHidden().fixedSize()
+                Spacer()
+                Button("Send to PC", action: start)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!ready)
+            }
+            if PCModels.shared.reachable == false {
+                Text("\(RemoteMachine.pc.name) isn't reachable right now.").font(.caption).foregroundStyle(.orange)
+            }
+        }
+        .padding(16)
+        .frame(width: 360)
+        .task { await PCModels.shared.refresh() }
+    }
+}
+
 /// Context stays inspectable after the one-shot provider handoff has been consumed.
 struct ParentContextBanner: View {
     let context: ParentContext

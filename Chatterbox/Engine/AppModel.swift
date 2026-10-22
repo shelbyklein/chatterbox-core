@@ -294,6 +294,20 @@ final class AppModel {
         quest.beginSidequest(from: parent)
     }
 
+    /// "Do that on the PC" from the session menu: the service sends `files` to Shelby-PC and
+    /// starts the errand there (see DaemonContext.newPCErrand). Needs the background service.
+    func newPCErrand(of parent: ChatSession, task: String, files: [String], backend: Backend?) {
+        let task = task.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !task.isEmpty else { return }
+        guard RuntimeClient.usesDaemon else { parent.notice("Sending work to \(RemoteMachine.pc.name) needs Chatterbox's background service."); return }
+        Task {
+            var body: [String: JSON] = ["chatID": .string(parent.id.uuidString), "task": .string(task), "files": .array(files.map(JSON.string))]
+            if let backend { body["agent"] = .string(backend.rawValue) }
+            do { _ = try await RuntimeClient.shared.request("pcErrand", body: .object(body), timeout: .seconds(600)) }
+            catch { parent.notice("Couldn't send it to \(RemoteMachine.pc.name): \(error.localizedDescription)") }
+        }
+    }
+
     /// Send Back: the sidequest's newest reply goes to the chat it came from.
     func returnSidequest(_ quest: ChatSession) {
         if RuntimeClient.usesDaemon {

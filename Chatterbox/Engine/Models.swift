@@ -196,6 +196,9 @@ struct ConversationRecord: Codable {
     var sidequestOf: UUID?
     var sidequestTask: String?
     var sidequestReturned: UUID?
+    /// A sidequest sent to Shelby-PC ("do that on the PC"): it runs there on the session's own
+    /// agent, and its files come back to the Mac before its answer does.
+    var pcErrand: Bool?
     /// Set on a project's Automation thread: the automation it runs (see ProjectAutomations).
     var automationID: UUID?
     var sidechatFolder: String?

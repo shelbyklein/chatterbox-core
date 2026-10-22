@@ -31,6 +31,38 @@ extension ChatSession {
         return record
     }
 
+    var isPCErrand: Bool { record.pcErrand == true }
+
+    /// A PC errand ("do that on the PC"): a sidequest that runs on Shelby-PC, on `backend`
+    /// (the session's own agent unless asked). `files` are already on the PC, at these paths.
+    static func pcErrandRecord(of parent: ChatSession, anchor: ChatSession, number: Int, backend: Backend, task: String,
+                               files: [String]) -> ConversationRecord {
+        let machine = RemoteMachine.pc
+        let message = files.isEmpty ? task
+            : task + "\n\nFiles sent from the Mac, now on \(machine.name):\n" + files.map { "- " + $0 }.joined(separator: "\n")
+        var record = sidequestRecord(of: parent, anchor: anchor, number: number, backend: backend, task: message)
+        record.title = "On \(machine.name) \u{00B7} " + (task.count > 40 ? String(task.prefix(39)) + "\u{2026}" : task)
+        record.runOn = machine.id
+        record.pcErrand = true
+        record.pendingHandoff = Prompts.pcErrandStart(from: parent.record.backend.label, chat: parent.title, machine: machine.name,
+                                                      transcript: record.parentContext?.text ?? "")
+        return record
+    }
+
+    /// Copies Mac files to the PC for an errand; returns their paths there.
+    static func uploadForPCErrand(_ paths: [String]) async throws -> [String] {
+        let machine = RemoteMachine.pc
+        var uploaded: [String] = []
+        for path in paths {
+            let local = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+            guard FileManager.default.fileExists(atPath: local.path) else { throw RuntimeFailure("No such file: \(path)") }
+            let remote = machine.attachmentsRoot + #"\"# + UUID().uuidString.prefix(8).lowercased() + "-" + local.lastPathComponent
+            try await RemoteLaunch.upload(local, to: remote, on: machine)
+            uploaded.append(remote)
+        }
+        return uploaded
+    }
+
     /// The agent an automation runs on: its own, else its preset's (older ones), else the
     /// project chat's.
     static func automationBackend(_ automation: ProjectAutomation, project: ChatSession) -> Backend {
@@ -72,9 +104,11 @@ extension ChatSession {
     func beginSidequest(from parent: ChatSession, label: String? = nil) {
         guard let task = record.sidequestTask else { return }
         send(task)
-        parent.record.items.append(DisplayItem(kind: .notice, text: label.map { "\($0) is running as a sidequest with \(record.backend.label). Its report comes back here when it's done." }
-                                                    ?? "Sent \(record.backend.label) on a sidequest: \u{201C}\(task)\u{201D}. Its answer comes back here when it's done.",
-                                               sidequest: id))
+        let text = isPCErrand
+            ? "Sent to \(RemoteMachine.pc.name): \u{201C}\(title.components(separatedBy: " \u{00B7} ").dropFirst().joined(separator: " \u{00B7} "))\u{201D}. Its answer and files come back here when it's done."
+            : label.map { "\($0) is running as a sidequest with \(record.backend.label). Its report comes back here when it's done." }
+                ?? "Sent \(record.backend.label) on a sidequest: \u{201C}\(task)\u{201D}. Its answer comes back here when it's done."
+        parent.record.items.append(DisplayItem(kind: .notice, text: text, sidequest: id))
         parent.onChange?(parent)
     }
 
@@ -90,6 +124,16 @@ extension ChatSession {
     /// refining doesn't restart the other chat each time.
     func sidequestTurnEnded(parent: ChatSession?) {
         guard let parent, record.sidequestReturned == nil, !isWaitingOnYou, unreturnedSidequestReply != nil else { return }
+        // A PC errand's files are copied to the Mac first, so its answer can name them.
+        if isPCErrand {
+            let since = record.turnStartedAt
+            Task { @MainActor in
+                await mirrorPCWorkspaceNow(changedSince: since)
+                guard record.sidequestReturned == nil else { return }
+                returnSidequest(to: parent)
+            }
+            return
+        }
         returnSidequest(to: parent)
     }
 
@@ -98,11 +142,15 @@ extension ChatSession {
         guard let reply = unreturnedSidequestReply else { return }
         record.sidequestReturned = reply.id
         let automation = record.automationID != nil
+        let task = record.sidequestTask ?? title
         parent.send(automation ? Prompts.automationResult(title: title, reply: reply.text)
-                               : Prompts.sidequestResult(from: record.backend, task: record.sidequestTask ?? title, reply: reply.text))
+                    : isPCErrand ? Prompts.pcErrandResult(machine: RemoteMachine.pc.name, task: task.components(separatedBy: "\n\nFiles sent").first ?? task,
+                                                          reply: macPaths(reply.text))
+                    : Prompts.sidequestResult(from: record.backend, task: task, reply: reply.text))
         if let index = parent.record.items.lastIndex(where: { $0.kind == .user }) {
             parent.record.items[index].automatic = true
-            parent.record.items[index].detail = automation ? "\(title) reported back" : "\(record.backend.label) is back from its sidequest"
+            parent.record.items[index].detail = automation ? "\(title) reported back"
+                : isPCErrand ? "Back from \(RemoteMachine.pc.name)" : "\(record.backend.label) is back from its sidequest"
             parent.record.items[index].sidequest = id
         }
         parent.onChange?(parent)

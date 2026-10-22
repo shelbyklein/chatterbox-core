@@ -130,11 +130,13 @@ enum Prompts {
         Publishing: when the user asks to share a web page or file at a link, publish it as a snippet with `snippet publish <file>` (add `--private` for a link only the user can open). It uploads an HTML page together with the local files it uses to https://snippets.shelbyklein.com, at an address that mirrors where the file lives, and prints the link. Publish only when asked, give the user the link, and say whether it's public. `snippet list` and `snippet remove <path>` manage what's published; publishing works on the user's home network.
 
         Sidequests: to hand a task to the other agent (Claude and Codex each have their strengths; Codex usually makes the images, and Claude usually double-checks work), run `sidequest "<the task>"` from your working folder. It opens beside this chat as a Sidechat on the other agent, which reads this whole conversation first, so the task can be short. When it finishes, its answer arrives here as a new message and you carry on from it. Start one when the user asks for it, or when the other agent is clearly the better fit; tell the user you did, and finish your reply instead of waiting for it.
+
+        PC errands: for work on Shelby-PC, the user's Windows PC (its apps, such as Photoshop; its GPU or disk), run `pc-errand "<the task>"` from your working folder, adding `--file PATH` for each file it needs. It opens beside this session as a Sidechat running on the PC on your own agent, caught up on the conversation, with those files copied there. When it finishes, the files it made are copied to this Mac and its answer arrives here as a new message, naming those copies. Send one when the user asks for something to be done on the PC; tell the user you did, and finish your reply instead of waiting for it.
         """
     }
 
     /// Bump when `agentInstructions` gains something chats already in progress should hear.
-    static let instructionsVersion = 10
+    static let instructionsVersion = 11
 
     /// What changed since earlier versions, sent once to chats whose session started before.
     static let instructionsUpdate = """
@@ -152,6 +154,8 @@ enum Prompts {
     A <session_brief> block is the user's brief for this session: the assignment, the tools to use, the key files. A newer one replaces it, and it holds whichever agent answers. When the user switches agents, the handoff ends with a "Tools used" line naming the tools the work was built on (an MCP server, say): keep to them where you have them, rather than starting down another path.
 
     Sidequests: to hand a task to the other agent (Claude and Codex each have their strengths; Codex usually makes the images, and Claude usually double-checks work), run `sidequest "<the task>"` from your working folder. It opens beside this session as a Sidechat on the other agent, with a handoff of this session's brief and recent conversation. State the task and any essential older details explicitly. When it finishes, its answer arrives here as a new message and you carry on from it. Start one when the user asks for it, or when the other agent is clearly the better fit; tell the user you did, and finish your reply instead of waiting for it.
+
+    PC errands: for work on Shelby-PC, the user's Windows PC (its apps, such as Photoshop; its GPU or disk), run `pc-errand "<the task>"` from your working folder, adding `--file PATH` for each file it needs. It opens beside this session as a Sidechat running on the PC on your own agent, caught up on the conversation, with those files copied there. When it finishes, the files it made are copied to this Mac and its answer arrives here as a new message, naming those copies. Send one when the user asks for something to be done on the PC; tell the user you did, and finish your reply instead of waiting for it.
     </app_note>
     """
 
@@ -190,6 +194,31 @@ enum Prompts {
 
         \(transcript.isEmpty ? "(That chat hasn't started yet.)" : transcript)
         </sidequest>
+        """
+    }
+
+    /// Starts a PC errand: the session's own agent, on Shelby-PC, with the session it came from.
+    static func pcErrandStart(from agent: String, chat title: String, machine: String, transcript: String) -> String {
+        """
+        <sidequest>
+        The user sent you from another session, \u{201C}\(title)\u{201D} (where \(agent) is working on their Mac), to do a task on \(machine), their Windows PC: things the Mac can't do, such as using the PC's apps (Photoshop, through the Slippy tools when they're listed), its GPU, or its disk. Here is a saved handoff with that session's brief and recent conversation; older messages may be omitted. Do the task in the user's next message, rather than resuming that session's work.
+
+        Mac paths don't exist here. Files the user sent along are named in the task, already on the PC. Save what you make in your workspace: it's copied to the Mac before your answer goes back. When you finish, your final reply goes back to that session automatically and its agent carries on from it, so end with what it needs: what you did, each file you made (its path here), and anything left undone.
+
+        \(transcript.isEmpty ? "(That session hasn't started yet.)" : transcript)
+        </sidequest>
+        """
+    }
+
+    /// A PC errand's answer, with its PC paths already turned into the Mac copies.
+    static func pcErrandResult(machine: String, task: String, reply: String) -> String {
+        """
+        <sidequest_result>
+        The user sent a task from this session to \(machine): \u{201C}\(task)\u{201D}. It has finished, and this is its final reply. Files it made have been copied to this Mac, and the paths below are those copies:
+
+        \(reply)
+        </sidequest_result>
+        Pick up from here: tell the user briefly what came back, name each file's full path so they see it here, then carry on where this session left off.
         """
     }
 

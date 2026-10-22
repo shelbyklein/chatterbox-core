@@ -112,6 +112,14 @@ extension ChatSession {
         You're running on \(machine.name), the user's Windows 10 PC (PowerShell; Ryzen 7, 32 GB RAM, RTX 3080 Ti), \
         not on their Mac. Your workspace is `\(workspace)`: keep your files there. After each reply, files you changed \
         in it are copied to the user's Mac at `\(mirror)`, which is how they see them. Mac paths don't exist here.
+        You run in a background session with no desktop. For apps on the PC's screen, use, in this order:
+        1. Photoshop and Illustrator through the Slippy tools (slippy-photoshop, slippy-illustrator), when they're \
+        listed; they're there while the app is open on the PC.
+        2. `chatterbox-desktop` for anything else on the screen (run it with no arguments for its commands): \
+        `screenshot` to look (then view the PNG), `windows`, `open FILE`, `focus TITLE`, `click X Y --in TITLE`, \
+        `type TEXT --in TITLE`, `key ctrl+s --in TITLE`. Always aim input with `--in`, which refuses when that window \
+        can't come to the front; take a screenshot before and after anything that matters. The user is logged in \
+        but may be using the PC, so keep it short, and never close windows you didn't open.
         """
     }
 
@@ -157,6 +165,11 @@ extension ChatSession {
     /// After a turn: copies the files changed in the PC workspace since `since` (newest
     /// first, up to 200 MB) into the Mac mirror. Skips dependency and git folders.
     func mirrorPCWorkspace(changedSince since: Date?) {
+        Task { await mirrorPCWorkspaceNow(changedSince: since) }
+    }
+
+    /// The same, finishing before it returns (a PC errand's answer waits for its files).
+    func mirrorPCWorkspaceNow(changedSince since: Date?) async {
         guard let machine = runMachine, let folder = record.remoteFolder else { return }
         let workspace = machine.workspace(folder)
         let after = Int((since ?? Date()).timeIntervalSince1970) - 5
@@ -179,7 +192,7 @@ extension ChatSession {
         'ok'
         """
         let local = machine.mirrorRoot.appendingPathComponent(folder, isDirectory: true)
-        Task.detached {
+        await Task.detached {
             do {
                 let out = try await RemoteLaunch.run(script, on: machine, connectTimeout: 10)
                 guard String(decoding: out, as: UTF8.self).contains("ok") else { return }
@@ -192,6 +205,21 @@ extension ChatSession {
             } catch {
                 await MainActor.run { RuntimeHooks.note("Couldn't copy files back from \(machine.name): \(error.localizedDescription)") }
             }
+        }.value
+    }
+
+    /// Text naming files in this chat's PC workspace, with those paths turned into the Mac
+    /// copies (`D:\Chatterbox\workspaces\x\out.png` → `~/Chatterbox/PC/x/out.png`).
+    func macPaths(_ text: String) -> String {
+        guard let machine = runMachine, let folder = record.remoteFolder else { return text }
+        let workspace = NSRegularExpression.escapedPattern(for: machine.workspace(folder))
+        guard let regex = try? NSRegularExpression(pattern: workspace + #"((?:\\[^\\\s`'"<>|*?]+)*)"#, options: [.caseInsensitive]) else { return text }
+        let local = machine.mirrorRoot.appendingPathComponent(folder).path
+        var result = text
+        for match in regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).reversed() {
+            guard let whole = Range(match.range, in: text), let rest = Range(match.range(at: 1), in: text) else { continue }
+            result.replaceSubrange(whole, with: local + text[rest].replacingOccurrences(of: "\\", with: "/"))
         }
+        return result
     }
 }

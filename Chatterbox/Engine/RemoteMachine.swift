@@ -59,6 +59,7 @@ struct RemoteMachine: Hashable, Sendable {
 enum RemoteLaunch {
     /// Tests put a stand-in here that runs the worker locally.
     static var ssh: String { ProcessInfo.processInfo.environment["CHATTERBOX_SSH_BINARY"] ?? "/usr/bin/ssh" }
+    static var scp: String { ProcessInfo.processInfo.environment["CHATTERBOX_SCP_BINARY"] ?? "/usr/bin/scp" }
 
     /// Options for every connection: never prompt, give up quickly when the PC is off, and
     /// notice a dropped connection within a minute.
@@ -110,12 +111,12 @@ enum RemoteLaunch {
     /// Copies a file from the machine to the Mac.
     static func fetch(_ remotePath: String, to local: URL, from machine: RemoteMachine) async throws {
         try FileManager.default.createDirectory(at: local.deletingLastPathComponent(), withIntermediateDirectories: true)
-        _ = try await process("/usr/bin/scp", ["-q", "-B", "-o", "ConnectTimeout=10", "\(machine.sshHost):\(scpPath(remotePath))", local.path])
+        _ = try await process(scp, ["-q", "-B", "-o", "ConnectTimeout=10", "\(machine.sshHost):\(scpPath(remotePath))", local.path])
     }
 
     /// Copies a file from the Mac to the machine.
     static func upload(_ local: URL, to remotePath: String, on machine: RemoteMachine) async throws {
-        _ = try await process("/usr/bin/scp", ["-q", "-B", "-o", "ConnectTimeout=10", local.path, "\(machine.sshHost):\(scpPath(remotePath))"])
+        _ = try await process(scp, ["-q", "-B", "-o", "ConnectTimeout=10", local.path, "\(machine.sshHost):\(scpPath(remotePath))"])
     }
 
     /// Windows OpenSSH takes forward slashes, and a drive path needs a leading one.

@@ -105,6 +105,7 @@ struct ChatView: View {
                                     if !session.isSidequest {
                                         NewSidechatControl(parent: session, iconOnly: true)
                                         SidequestButton(session: session)
+                                        if !session.isDot { PCErrandButton(session: session) }
                                     }
                                 }
                                 ChatPins(chat: session.record.id, agentName: session.record.backend == .codex ? "Codex" : "Claude",
