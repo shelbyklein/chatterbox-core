@@ -979,7 +979,9 @@ struct PinnedSidebarRow: View {
 
     var body: some View {
         HStack(spacing: 7) {
-            Group {
+            // Always takes its slot, so titles line up with or without a status.
+            ZStack {
+                Color.clear
                 if session.isRunning {
                     ActivitySpinner(color: appearance.style.color(for: session))
                         .help("\(session.record.provider.label) is working")
@@ -991,14 +993,22 @@ struct PinnedSidebarRow: View {
             }.frame(width: 11, height: 11)
             Text(session.record.projectFolder != nil ? session.projectName : session.title)
                 .font(.caption.weight(session.isWaitingOnYou ? .semibold : .regular)).lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            Spacer(minLength: 6)
+            // Where it's from, on the same line: "USA Archery", "Project", "Chat". A long
+            // title gives way to it.
+            Text(origin).font(.caption2).foregroundStyle(.secondary).lineLimit(1).fixedSize()
         }
         .padding(.vertical, 4).padding(.horizontal, 2)
         .help(pinnedHelp)
         .accessibilityElement(children: .combine)
     }
 
-    /// Where it lives ("Studio · USA Archery"), since the row no longer says.
+    /// A Studio session names its Studio; others say Project or Chat.
+    private var origin: String {
+        model.studio(for: session)?.name ?? SessionOriginLabel.text(for: session, in: model)
+    }
+
+    /// Where it lives ("Studio · USA Archery").
     private var pinnedHelp: String {
         let title = session.record.projectFolder != nil ? session.projectName : session.title
         return "\(title) · \(SessionOriginLabel.text(for: session, in: model))"
