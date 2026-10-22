@@ -4,7 +4,20 @@ import Foundation
 /// side only starts turns, steers and interrupts them, answers approval requests,
 /// and maps Codex's item events onto the same transcript rows Claude uses.
 extension ChatSession {
-    private var server: CodexAppServer { .shared }
+    private var server: CodexAppServer { codexServer }
+    /// The app-server on the machine this chat runs on.
+    var codexServer: CodexAppServer { .server(for: record.runOn) }
+
+    /// Where Codex works: the chat's folder, or its workspace on the PC.
+    private func codexFolder(_ settings: CodexSettings) -> String {
+        runMachine.map(pcWorkspace(on:)) ?? settings.folder
+    }
+
+    /// An open model replaces Codex's own; its effort is limited to what Ollama accepts.
+    private func codexTurnModel(_ settings: CodexSettings) -> (model: String?, effort: String?) {
+        if let open = record.openModel { return (open, Self.openModelEffort(settings.effort)) }
+        return (settings.model, settings.effort)
+    }
 
     // MARK: - Settings
 
@@ -101,7 +114,7 @@ extension ChatSession {
             try await Task.sleep(for: .milliseconds(50))
         }
         if isRunning, let thread = record.codex?.threadId, let turn = codexTurnID {
-            _ = try await CodexAppServer.shared.request("turn/interrupt", ["threadId": .string(thread), "turnId": .string(turn)], timeout: .seconds(10))
+            _ = try await server.request("turn/interrupt", ["threadId": .string(thread), "turnId": .string(turn)], timeout: .seconds(10))
             let stopDeadline = Date().addingTimeInterval(10)
             while isRunning {
                 guard Date() < stopDeadline else { throw CodexError(message: "The current reply hasn't stopped. Reconnection was cancelled to avoid overlapping replies.") }
@@ -113,9 +126,9 @@ extension ChatSession {
         var params = codexThreadParams(settings)
         params["threadId"] = .string(thread)
         params["excludeTurns"] = true
-        let result = try await CodexAppServer.shared.request("thread/resume", .object(params), timeout: .seconds(10))
+        let result = try await server.request("thread/resume", .object(params), timeout: .seconds(10))
         guard result["thread"]?["id"]?.string == thread else { throw CodexError(message: "Codex didn't reconnect to the original thread.") }
-        CodexAppServer.shared.markLoaded(thread)
+        server.markLoaded(thread)
         codexDotConfiguration = codexConfigurationKey
     }
 
@@ -152,6 +165,9 @@ extension ChatSession {
         defer { codexStartInFlight = false }
         guard let settings = record.codex else { return }
         do {
+            try await prepareOpenModel()
+            // A PC chat's attachments are copied there first.
+            let message = await uploadAttachments(message, includingImages: true)
             let thread = try await codexEnsureThread()
             var input: [JSON] = []
             if record.sentPersonality != record.personality {
@@ -182,13 +198,14 @@ extension ChatSession {
             var params: [String: JSON] = [
                 "threadId": .string(thread),
                 "input": .array(input),
-                "cwd": .string(settings.folder),
+                "cwd": .string(codexFolder(settings)),
                 "approvalPolicy": approvalPolicy(settings),
                 "approvalsReviewer": settings.modeID == "autoReview" ? "auto_review" : "user",
                 "sandboxPolicy": sandboxPolicy(settings),
             ]
-            if let model = settings.model { params["model"] = .string(model) }
-            if let effort = settings.effort { params["effort"] = .string(effort) }
+            let turnModel = codexTurnModel(settings)
+            if let model = turnModel.model { params["model"] = .string(model) }
+            if let effort = turnModel.effort { params["effort"] = .string(effort) }
             // Explicit standard resets any tier inherited by a resumed/forked thread.
             params["serviceTier"] = .string(settings.fastMode == true ? "fast" : "default")
 
@@ -238,7 +255,7 @@ extension ChatSession {
             if server.isThreadSubscribed(existing), codexDotConfiguration == codexConfigurationKey { return existing }
             do {
                 var params: [String: JSON] = [
-                    "threadId": .string(existing), "cwd": .string(settings.folder), "excludeTurns": true,
+                    "threadId": .string(existing), "cwd": .string(codexFolder(settings)), "excludeTurns": true,
                 ]
                 let threadParams = codexThreadParams(settings)
                 params["config"] = threadParams["config"]
@@ -271,13 +288,13 @@ extension ChatSession {
     /// Settings for a new (or forked) thread.
     private func codexThreadParams(_ settings: CodexSettings) -> [String: JSON] {
         var params: [String: JSON] = [
-            "cwd": .string(settings.folder),
+            "cwd": .string(codexFolder(settings)),
             "approvalPolicy": approvalPolicy(settings),
             "sandbox": .string(["readOnly": "read-only", "fullAccess": "danger-full-access"][settings.modeID] ?? "workspace-write"),
-            "developerInstructions": .string(Prompts.fullInstructions(record.personality, backend: .codex, projectFolder: record.boundFolder,
-                                                                         studio: studio, brief: record.brief)),
+            "developerInstructions": .string(Prompts.fullInstructions(record.personality, backend: .codex, projectFolder: runMachine == nil ? record.boundFolder : nil,
+                                                                         studio: studio, brief: record.brief) + pcInstructions(workspace: codexFolder(settings))),
         ]
-        if let model = settings.model { params["model"] = .string(model) }
+        if let model = codexTurnModel(settings).model { params["model"] = .string(model) }
         if isDot {
             guard let instructions = params["developerInstructions"]?.string else { return params }
             params["developerInstructions"] = .string(instructions + "\n\n" + dotCodexInstructions)
@@ -294,7 +311,9 @@ extension ChatSession {
             params["config"] = .object(config)
         }
         // The Tools settings for this chat's levels: servers to add, what to turn off.
-        let tools = codexToolsConfig(ToolScopes.effective(for: self), codexServers: ToolDiscovery.codexServerNames(projectFolder: settings.folder))
+        // The Tools settings name Mac commands and folders, so a PC chat or open model goes without.
+        let tools = runMachine != nil || record.openModel != nil ? [:]
+            : codexToolsConfig(ToolScopes.effective(for: self), codexServers: ToolDiscovery.codexServerNames(projectFolder: settings.folder))
         if !tools.isEmpty {
             var config = params["config"]?.object ?? [:]
             for (key, value) in tools { config[key] = value }
@@ -701,7 +720,7 @@ extension ChatSession {
         default:
             return [
                 "type": "workspaceWrite",
-                "writableRoots": [.string(settings.folder)],
+                "writableRoots": [.string(codexFolder(settings))],
                 "networkAccess": false,
                 "excludeTmpdirEnvVar": false,
                 "excludeSlashTmp": false,
@@ -754,7 +773,7 @@ extension ChatSession {
         if !backgroundTasks.contains(where: { $0.id == thread }) {
             addBackgroundTask(BackgroundTask(id: thread, kind: .agent, title: name ?? "Helper agent", detached: true))
         }
-        CodexAppServer.shared.register(thread: thread) { [weak self] method, params, requestID in
+        server.register(thread: thread) { [weak self] method, params, requestID in
             self?.codexHelperEvent(thread, method: method, params: params, requestID: requestID)
         }
     }

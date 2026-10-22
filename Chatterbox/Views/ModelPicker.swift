@@ -129,21 +129,28 @@ struct ModelPopover: View {
                         claudeRows
                         heading("Codex").padding(.top, 6)
                         codexRows
+                        openModelRows
                     }
                 }
             }
             .frame(minHeight: 160, maxHeight: .infinity)
 
             Divider()
-            effortSection
-            if session.supportsFastMode {
+            runOnSection
+            if session.record.openModel != nil {
+                Text("Open models run on \(RemoteMachine.pc.name)'s graphics card at medium effort.")
+                    .font(.callout).foregroundStyle(.secondary)
+            } else {
+                effortSection
+            }
+            if session.supportsFastMode, session.record.openModel == nil {
                 Toggle("Fast mode", isOn: Binding(get: { session.fastMode }, set: { session.setFastMode($0) }))
                     .toggleStyle(.switch)
                 Text(session.fastModeNote)
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if active == .codex { connectionSection }
+            if active == .codex, session.record.openModel == nil, session.runMachine == nil { connectionSection }
             Divider()
             HStack {
                 Text("Applies from your next message.").font(.caption).foregroundStyle(.secondary)
@@ -170,6 +177,7 @@ struct ModelPopover: View {
             return .handled
         }
         .onKeyPress(.return) { close(); return .handled }
+        .task { await PCModels.shared.refresh() }
     }
 
     private func heading(_ title: String) -> some View {
@@ -182,6 +190,7 @@ struct ModelPopover: View {
 
     private func pick(_ choice: ModelChoice) {
         guard !locked(choice) else { return }
+        if session.record.openModel != nil { session.setOpenModel(nil) }
         favorites.choose(choice, for: session)
     }
 
@@ -227,7 +236,7 @@ struct ModelPopover: View {
 
     /// A model: click to pick it; the star keeps it in Favorites; its number picks it too.
     private func row(_ choice: ModelChoice, detail: String?, number: Int?) -> some View {
-        let selected = choice == current
+        let selected = choice == current && session.record.openModel == nil
         let other = choice.backend != active
         let note = other ? "switches to \(choice.backend.label)" : detail
         return HStack(spacing: 6) {
@@ -261,6 +270,64 @@ struct ModelPopover: View {
         .background(RoundedRectangle(cornerRadius: 6).fill(selected ? Color.highlight.opacity(0.12) : .clear))
         .accessibilityElement(children: .contain)
         .accessibilityLabel(ModelFavorites.name(choice) + (selected ? ", current" : ""))
+    }
+
+    // MARK: - Shelby-PC
+
+    /// The PC's Ollama models, for whichever agent this chat uses. Shown once the PC answers.
+    @ViewBuilder
+    private var openModelRows: some View {
+        let pc = PCModels.shared
+        if !session.isDot, !pc.models.isEmpty {
+            heading("Open models on \(RemoteMachine.pc.name)").padding(.top, 6)
+            ForEach(pc.models, id: \.self) { model in
+                Button { session.setOpenModel(model) } label: {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Image(systemName: "checkmark").font(.caption.weight(.bold))
+                            .foregroundStyle(Color.highlight).opacity(session.record.openModel == model ? 1 : 0)
+                        Image(systemName: "desktopcomputer").font(.caption).frame(width: 12, height: 12)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(model)
+                            Text(model == PCModels.recommended ? "Runs fully on the graphics card; fastest" : "With \(active.label)")
+                                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 8).padding(.vertical, 4)
+                .background(RoundedRectangle(cornerRadius: 6).fill(session.record.openModel == model ? Color.highlight.opacity(0.12) : .clear))
+                .accessibilityLabel(model + (session.record.openModel == model ? ", current" : ""))
+            }
+        }
+    }
+
+    /// Where this chat's agent runs. Switching starts a new session there, caught up on the chat.
+    @ViewBuilder
+    private var runOnSection: some View {
+        if !session.isDot {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Run on").font(.callout.weight(.medium))
+                    Spacer()
+                    Picker("Run on", selection: Binding(get: { session.record.runOn ?? "" }, set: { session.setRunOn($0.isEmpty ? nil : $0) })) {
+                        Text("This Mac").tag("")
+                        Text(RemoteMachine.pc.name).tag("pc")
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
+                    .disabled(session.isRunning || (session.record.runOn == nil && PCModels.shared.reachable == false))
+                }
+                if PCModels.shared.reachable == false {
+                    Text("\(RemoteMachine.pc.name) isn't reachable right now.").font(.caption).foregroundStyle(.secondary)
+                } else if session.record.runOn != nil {
+                    Text("Works in its own folder on the PC; new files are copied to ~/Chatterbox/PC.")
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
     }
 
     // MARK: - Connection

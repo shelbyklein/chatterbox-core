@@ -35,6 +35,8 @@ final class ChatSession: Identifiable {
                     let event = Companion.TurnCompletion(id: UUID(), chatID: id, title: title,
                                                          backend: record.backend.rawValue, endedAt: Date())
                     record.turnCompletions = Array(((record.turnCompletions ?? []) + [event]).suffix(500))
+                    // A PC chat's new files come back to the Mac.
+                    mirrorPCWorkspace(changedSince: record.turnStartedAt)
                 }
                 noteTurnDuration()
             }
@@ -558,6 +560,12 @@ final class ChatSession: Identifiable {
 
     /// The agent, model, and effort in words, e.g. "Claude · Opus 5.5 · Medium effort".
     var settingsDescription: String {
+        let place = runMachine.map { " \u{00B7} on \($0.name)" } ?? ""
+        if let open = record.openModel { return "\(record.backend.label) \u{00B7} \(open) (open model)" + place }
+        return agentSettingsDescription + place
+    }
+
+    private var agentSettingsDescription: String {
         switch record.backend {
         case .claude:
             let model = ClaudeModels.shared.info(record.model)

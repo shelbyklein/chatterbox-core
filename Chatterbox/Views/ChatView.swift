@@ -1181,7 +1181,7 @@ struct ChatView: View {
 
     private var currentModelPicker: some View {
         ModelPicker(session: session, selectionPill: true,
-                    summary: selectedPreset?.displayName ?? modelSummary.full,
+                    summary: session.record.openModel == nil && session.runMachine == nil ? selectedPreset?.displayName ?? modelSummary.full : modelSummary.full,
                     color: appearance.style.color(for: session.record.provider),
                     details: modelSummary.full + (session.record.provider != session.record.backend ? " · Claude model via Codex" : ""),
                     openRequest: commands.modelPopoverRequests,
@@ -1217,7 +1217,17 @@ struct ChatView: View {
         )
     }
     /// The current agent, model, and effort: a full form, and a short one for narrow windows.
+    /// A chat on the PC says so, and an open model replaces the agent's own.
     private var modelSummary: (full: String, short: String) {
+        let place = session.runMachine.map { " \u{00B7} \($0.name)" } ?? ""
+        if let open = session.record.openModel {
+            return ("\(session.record.backend.label) \u{00B7} \(open)" + place, open + place)
+        }
+        let summary = agentModelSummary
+        return (summary.full + place, summary.short + place)
+    }
+
+    private var agentModelSummary: (full: String, short: String) {
         if session.record.backend == .codex, let codex = session.record.codex {
             let models = CodexAppServer.shared.models
             let current = models.first { $0.model == codex.model }

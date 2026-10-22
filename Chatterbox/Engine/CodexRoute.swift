@@ -27,6 +27,14 @@ extension ChatSession {
     /// The thread config for this chat's connection, a key that changes when it does (which
     /// reopens the thread with the new connection), and what it is in words.
     var codexConnection: (config: [String: JSON], key: String, isDirect: Bool, summary: String) {
+        if let model = record.openModel {
+            return (openModelCodexConfig, "open:\(record.runOn ?? "mac"):\(model)", false,
+                    "Open-weight model \(model) on \(RemoteMachine.pc.name). Hosted tools such as image generation aren't available.")
+        }
+        // On the PC, Codex uses the PC's own ChatGPT sign-in; the proxy is on this Mac.
+        if let machine = runMachine {
+            return (["model_provider": "openai"], "pc:direct", true, "Direct through \(machine.name)'s ChatGPT sign-in.")
+        }
         let globalProvider = EasyCLIProxy.directCodexProvider
         let signedIn = EasyCLIProxy.codexHasChatGPTSignIn
         let appProxy = EasyCLIProxy.shared.active(for: .codex)

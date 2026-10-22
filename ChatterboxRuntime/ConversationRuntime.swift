@@ -70,7 +70,8 @@ struct CommandReceipt: Codable {
     private var agentIdleSince: [UUID: Date] = [:]
     private var codexThreadIdleSince: [String: Date] = [:]
     private var codexThreadCleanup: Set<String> = []
-    private var codexIdleSince: Date?
+    /// Per machine ("" is this Mac).
+    private var codexIdleSince: [String: Date] = [:]
     /// Keep warm briefly for follow-up messages, then release tool servers even for attached chats.
     private let agentIdleTimeout: TimeInterval = 120
     private var idleSweepStarted = false
@@ -113,8 +114,10 @@ struct CommandReceipt: Codable {
         try encoder.encode(["schema":1,"owner":"chatterboxd"] as JSON).write(to: root.appendingPathComponent("runtime-owner.json"), options: .atomic)
         try persistState()
         // Save chat records before acknowledging the shared stream's replay offset.
-        CodexAppServer.shared.onThreadLifecycleChange = { [weak self] in
-            do { try self?.flush() } catch { RuntimeHooks.note("Runtime save failed: \(error.localizedDescription)") }
+        for codex in CodexAppServer.all {
+            codex.onThreadLifecycleChange = { [weak self] in
+                do { try self?.flush() } catch { RuntimeHooks.note("Runtime save failed: \(error.localizedDescription)") }
+            }
         }
     }
     func resume() async {
@@ -123,7 +126,7 @@ struct CommandReceipt: Codable {
             if session.awaitingHostResume { session.resumeFromHost(processes) }
             else { session.settleInterruptedWork() }
         }
-        CodexAppServer.shared.resume(processes)
+        for codex in CodexAppServer.all { codex.resume(processes) }
         try? flush()
         if !idleSweepStarted {
             idleSweepStarted = true
@@ -155,8 +158,14 @@ struct CommandReceipt: Codable {
             dirty.insert(session.id)
             RuntimeHooks.note("Released idle Claude tool process")
         }
-        let codex = CodexAppServer.shared
-        let codexChats = sessions.filter { $0.record.codex?.threadId != nil || $0.record.backend == .codex }
+        for codex in CodexAppServer.all { releaseIdleCodex(codex, now: now) }
+        if !dirty.isEmpty { flushNow() }
+    }
+
+    /// One machine's app-server: unsubscribes idle threads, then stops it once every chat
+    /// using it is idle.
+    private func releaseIdleCodex(_ codex: CodexAppServer, now: Date) {
+        let codexChats = sessions.filter { ($0.record.codex?.threadId != nil || $0.record.backend == .codex) && $0.codexServer === codex }
         let threads = Dictionary(grouping: codexChats.compactMap { chat in
             chat.record.codex?.threadId.map { ($0, chat) }
         }, by: { $0.0 })
@@ -178,21 +187,20 @@ struct CommandReceipt: Codable {
             }
         }
         if codex.isRunning, codex.canReleaseIdleProcess, codexChats.allSatisfy({ $0.canReleaseIdleAgent }) {
-            let since = codexIdleSince ?? now
-            codexIdleSince = since
+            let since = codexIdleSince[codex.machine ?? ""] ?? now
+            codexIdleSince[codex.machine ?? ""] = since
             if now.timeIntervalSince(since) >= agentIdleTimeout {
                 codex.terminate()
                 for session in codexChats {
                     session.record.codexHost = nil
                     dirty.insert(session.id)
                 }
-                codexIdleSince = nil
+                codexIdleSince[codex.machine ?? ""] = nil
                 RuntimeHooks.note("Released idle Codex tool process")
             }
         } else {
-            codexIdleSince = nil
+            codexIdleSince[codex.machine ?? ""] = nil
         }
-        if !dirty.isEmpty { flushNow() }
     }
     func session(_ id: UUID) -> ChatSession? { sessions.first { $0.id == id } }
     var assistant: ChatSession? { sessions.first { $0.isDot } }
@@ -357,7 +365,7 @@ struct CommandReceipt: Codable {
     }
 
     private func finishFlush() {
-        if CodexAppServer.shared.isRunning { CodexAppServer.shared.saveResumeState() }
+        for codex in CodexAppServer.all where codex.isRunning { codex.saveResumeState() }
     }
     func execute(id: String, operation: String, fingerprint: String, body: () throws -> JSON) throws -> JSON {
         guard !id.isEmpty, id.count <= 128 else { throw RuntimeFailure("A bounded request ID is required") }
@@ -444,7 +452,7 @@ struct CommandReceipt: Codable {
     private func changed(_ s: ChatSession, streamed: Bool) {
         agentIdleSince[s.id] = nil
         if let thread = s.record.codex?.threadId { codexThreadIdleSince[thread] = nil }
-        if s.record.codex?.threadId != nil || s.record.backend == .codex { codexIdleSince = nil }
+        if s.record.codex?.threadId != nil || s.record.backend == .codex { codexIdleSince[s.record.runOn ?? ""] = nil }
         dirty.insert(s.id)
         let before=wasRunning[s.id] ?? false
         if before != s.isRunning { publish(s,kind:s.isRunning ? "turn.started":"turn.finished") }

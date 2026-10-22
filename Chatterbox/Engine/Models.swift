@@ -145,6 +145,12 @@ struct ConversationRecord: Codable {
     /// "Use agent computer" (see ChatComputer), and whether the agent was told it's on.
     var useComputer: Bool?
     var sentComputerNote: Bool?
+    /// Where this chat's agent runs: nil is this Mac, "pc" is Shelby-PC (see RemoteMachine).
+    var runOn: String?
+    /// The chat's workspace folder on that machine, named once so a renamed chat keeps it.
+    var remoteFolder: String?
+    /// An open-weight model from the PC's Ollama, used instead of the agent's own models.
+    var openModel: String?
     /// The Studio's instructions as last given to this chat's agent.
     var sentStudioInstructions: String?
     /// The session's Brief: its assignment, the tools to use, the key files. Both agents get
