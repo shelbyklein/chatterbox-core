@@ -6,6 +6,8 @@ import Foundation
 extension ChatSession {
     /// The machine this chat's agent runs on; nil is this Mac. Golem always stays here.
     var runMachine: RemoteMachine? { isDot ? nil : RemoteMachine.named(record.runOn) }
+    /// On Shelby-PC in either way: an open model there, or the agent running there.
+    var usesPC: Bool { !isDot && (record.openModel != nil || runMachine != nil) }
 
     /// Where the agent works on the PC, named the first time it's needed.
     func pcWorkspace(on machine: RemoteMachine) -> String {

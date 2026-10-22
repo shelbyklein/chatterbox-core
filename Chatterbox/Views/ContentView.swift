@@ -981,7 +981,7 @@ struct PinnedSidebarRow: View {
         HStack(spacing: 7) {
             Group {
                 if session.isRunning {
-                    ActivitySpinner(color: appearance.style.color(for: session.record.provider))
+                    ActivitySpinner(color: appearance.style.color(for: session))
                         .help("\(session.record.provider.label) is working")
                 } else if session.hasBackgroundWork {
                     ActivitySpinner(color: .secondary).help("Running in the background")
@@ -1116,7 +1116,7 @@ struct SidebarRow: View {
                         }
                     }
                 }
-                ActivitySpinner(color: appearance.style.color(for: session.record.provider))
+                ActivitySpinner(color: appearance.style.color(for: session))
                     .frame(width: 10, height: 10)
                     .alignmentGuide(.firstTextBaseline, computeValue: Self.centerOnTextLine)
                     .help("\(session.record.provider.label) is working")

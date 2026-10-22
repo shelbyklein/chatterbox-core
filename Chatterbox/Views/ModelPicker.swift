@@ -21,8 +21,9 @@ struct ModelPicker: View {
         Group {
             if selectionPill {
                 HStack(spacing: 6) {
-                    // Drag for effort here, or click the model for the list.
-                    if !isOpen { ComposerEffortSlider(session: session, color: color).transition(.opacity) }
+                    // Drag for effort here, or click the model for the list. Open models
+                    // have no effort setting (they run at medium).
+                    if !isOpen, session.record.openModel == nil { ComposerEffortSlider(session: session, color: color).transition(.opacity) }
                     Button { isOpen.toggle() } label: {
                         HStack(spacing: 5) {
                             // An open model runs on the PC: say so before the name.

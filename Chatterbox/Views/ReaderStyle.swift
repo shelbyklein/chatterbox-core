@@ -26,6 +26,9 @@ struct ReaderStyle: Equatable {
     static let codexDefault = "#10A37F"
 
     func color(for backend: Backend) -> Color { backend == .claude ? claudeColor : codexColor }
+    /// A session on Shelby-PC (an open model there, or its agent running there) is grey,
+    /// so it never looks like a Claude or Codex session on the Mac.
+    static let pcColor = Color.gray
 
     var body: Font { .system(size: textSize, design: design) }
     /// Status rows, commentary, and table cells: a step below the body.
@@ -80,10 +83,20 @@ private struct ReaderStyleKey: EnvironmentKey {
     static let defaultValue = ReaderStyle.defaults
 }
 
+private struct BubbleTintKey: EnvironmentKey {
+    static let defaultValue: Color? = nil
+}
+
 extension EnvironmentValues {
     var readerStyle: ReaderStyle {
         get { self[ReaderStyleKey.self] }
         set { self[ReaderStyleKey.self] = newValue }
+    }
+
+    /// Overrides your bubbles' agent color: grey for a session on Shelby-PC.
+    var bubbleTint: Color? {
+        get { self[BubbleTintKey.self] }
+        set { self[BubbleTintKey.self] = newValue }
     }
 }
 
@@ -224,3 +237,17 @@ extension Color {
         #endif
     }
 }
+
+#if os(macOS)
+extension ReaderStyle {
+    /// A session's color: its model maker's (Claude via Codex is Claude's), grey on the PC.
+    @MainActor func color(for session: ChatSession) -> Color {
+        session.usesPC ? Self.pcColor : color(for: session.record.provider)
+    }
+
+    /// The color of the agent running the session (the message box, usage), grey on the PC.
+    @MainActor func agentColor(for session: ChatSession) -> Color {
+        session.usesPC ? Self.pcColor : color(for: session.record.backend)
+    }
+}
+#endif

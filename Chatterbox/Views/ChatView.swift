@@ -560,6 +560,7 @@ struct ChatView: View {
                     .padding(.top, compact ? 12 : 20)
                     .frame(maxWidth: appearance.style.contentWidth)
                     .environment(\.readerStyle, appearance.style)
+                    .environment(\.bubbleTint, session.usesPC ? ReaderStyle.pcColor : nil)
                     .environment(\.reviewImage, ImageReviewAction { reviewing = $0 })
                     .environment(\.pinMessage, PinMessageAction(chat: showsPins ? session.record.id : nil))
                     .environment(\.openChat, OpenChatAction { model.selectedID = $0 })
@@ -809,7 +810,7 @@ struct ChatView: View {
     private var composerContent: some View {
         VStack(alignment: .leading, spacing: 8) {
             if session.hasBackgroundWork {
-                BackgroundWorkBar(session: session, color: appearance.style.color(for: session.record.backend))
+                BackgroundWorkBar(session: session, color: appearance.style.agentColor(for: session))
                     .padding(.leading, 34)
             }
             if waitingCard != nil { waitingTray }
@@ -959,7 +960,7 @@ struct ChatView: View {
                 .background(RoundedRectangle(cornerRadius: session.isDot ? 17 : 12, style: session.isDot ? .circular : .continuous).fill(.background))
                 .overlay(RoundedRectangle(cornerRadius: session.isDot ? 17 : 12, style: session.isDot ? .circular : .continuous)
                     .strokeBorder(session.isDot ? Color.primary.opacity(composerFocused ? 0.3 : 0.18)
-                                  : appearance.style.color(for: session.record.backend).opacity(composerFocused ? 0.8 : 0.45),
+                                  : appearance.style.agentColor(for: session).opacity(composerFocused ? 0.8 : 0.45),
                                   lineWidth: session.isDot ? 1 : (composerFocused ? 1.5 : 1)))
                 .animation(.easeOut(duration: 0.15), value: session.record.backend)
 
@@ -974,7 +975,7 @@ struct ChatView: View {
 
             if session.isDot {
                 // Only what a conversation needs: how full the context is, and the cog.
-                UsageMeter(compact: true, session: session, color: appearance.style.color(for: session.record.backend))
+                UsageMeter(compact: true, session: session, color: appearance.style.agentColor(for: session))
                     .fixedSize()
                     .frame(height: 36)
                 ChatSettingsCog(session: session, modelRequest: commands.modelPopoverRequests,
@@ -1178,7 +1179,7 @@ struct ChatView: View {
     private var currentModelPicker: some View {
         ModelPicker(session: session, selectionPill: true,
                     summary: modelSummary.full,
-                    color: appearance.style.color(for: session.record.provider),
+                    color: appearance.style.color(for: session),
                     details: session.record.openModel.map { "Open model \($0) on \(RemoteMachine.pc.name)'s graphics card, run by \(session.record.backend == .claude ? "Claude Code" : "Codex")" }
                         ?? modelSummary.full + (session.record.provider != session.record.backend ? " · Claude model via Codex" : ""),
                     openRequest: commands.modelPopoverRequests,
@@ -1193,7 +1194,7 @@ struct ChatView: View {
             HStack(spacing: 14) {
                 modeMenu.fixedSize()
                 UsageMeter(compact: compact, session: session,
-                           color: appearance.style.color(for: session.record.backend)).fixedSize()
+                           color: appearance.style.agentColor(for: session)).fixedSize()
             }
             currentModelPicker
         }

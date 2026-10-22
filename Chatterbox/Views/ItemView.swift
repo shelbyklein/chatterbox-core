@@ -12,6 +12,7 @@ struct ItemView: View {
     var onAnswer: (UUID, [String: [String]]?) -> Void = { _, _ in }
     var onSendNow: (UUID) -> Void = { _ in }
     @Environment(\.readerStyle) private var style
+    @Environment(\.bubbleTint) private var bubbleTint
     @Environment(\.chatFolder) private var chatFolder
     @Environment(\.openChat) private var openChat
 
@@ -90,7 +91,7 @@ struct ItemView: View {
                     .textSelection(.enabled)
                     .padding(.horizontal, 13)
                     .padding(.vertical, 9)
-                    .background(RoundedRectangle(cornerRadius: 14).fill(style.color(for: agent).opacity(style.bubbleStrength)))
+                    .background(RoundedRectangle(cornerRadius: 14).fill((bubbleTint ?? style.color(for: agent)).opacity(style.bubbleStrength)))
                     .contextMenu { Button("Copy Message") { MessageClipboard.copy(item.text) }; PinMenuItem(item: item) }
             }
         }
@@ -613,6 +614,7 @@ private struct QuestionCard: View {
     let submit: ([String: [String]]?) -> Void
     @Environment(\.cardFillsWidth) private var fillsWidth
     @Environment(\.readerStyle) private var style
+    @Environment(\.bubbleTint) private var bubbleTint
 
     @State private var index = 0
     @State private var picks: [String: Set<String>]
@@ -800,7 +802,7 @@ private struct QuestionCard: View {
             .textSelection(.enabled)
             .padding(.horizontal, 13)
             .padding(.vertical, 9)
-            .background(RoundedRectangle(cornerRadius: 14).fill(style.color(for: agent).opacity(style.bubbleStrength)))
+            .background(RoundedRectangle(cornerRadius: 14).fill((bubbleTint ?? style.color(for: agent)).opacity(style.bubbleStrength)))
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
         .padding(.leading, 80)

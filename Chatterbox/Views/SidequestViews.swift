@@ -206,7 +206,7 @@ struct ChildChatCardRow: View {
                 Image(systemName: chat.isSidequest ? "point.topleft.down.to.point.bottomright.curvepath" : "bubble.left.and.bubble.right")
                     .font(.system(size: 9 * scale)).foregroundStyle(.secondary)
                 Image(chat.record.provider.iconName).resizable().scaledToFit()
-                    .foregroundStyle(appearance.style.color(for: chat.record.provider))
+                    .foregroundStyle(appearance.style.color(for: chat))
                     .frame(width: 10 * scale, height: 10 * scale)
                 Text(title).font(.system(size: 10 * scale)).lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -214,7 +214,7 @@ struct ChildChatCardRow: View {
                     if chat.isWaitingOnYou {
                         Circle().fill(.yellow).frame(width: 6 * scale, height: 6 * scale)
                     } else if chat.isRunning {
-                        ActivitySpinner(color: appearance.style.color(for: chat.record.provider))
+                        ActivitySpinner(color: appearance.style.color(for: chat))
                     } else if chat.record.sidequestReturned != nil {
                         Image(systemName: "checkmark").font(.system(size: 8 * scale, weight: .bold)).foregroundStyle(.secondary)
                     }

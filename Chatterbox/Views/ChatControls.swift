@@ -344,7 +344,7 @@ struct FinishedChatsList: View {
             HStack(spacing: 10) {
                 Image(session.record.provider.iconName).resizable().scaledToFit()
                     .frame(width: 14, height: 14)
-                    .foregroundStyle(appearance.style.color(for: session.record.provider))
+                    .foregroundStyle(appearance.style.color(for: session))
                 Text(session.record.projectFolder != nil ? session.projectName : session.title)
                     .lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
                 Text(ShortAge.string(since: session.lastActivity))
@@ -363,12 +363,12 @@ struct FinishedChatsList: View {
         } label: {
             HStack(alignment: .top, spacing: 10) {
                 if running {
-                    ActivitySpinner(color: appearance.style.color(for: session.record.provider))
+                    ActivitySpinner(color: appearance.style.color(for: session))
                         .frame(width: 16, height: 16)
                 } else {
                     Image(session.record.provider.iconName).resizable().scaledToFit()
                         .frame(width: 16, height: 16)
-                        .foregroundStyle(appearance.style.color(for: session.record.provider))
+                        .foregroundStyle(appearance.style.color(for: session))
                 }
                 VStack(alignment: .leading, spacing: 5) {
                     Text(session.record.projectFolder != nil ? session.projectName : session.title)
@@ -463,7 +463,7 @@ struct SidebarActivityStrip: View {
         } label: {
             HStack(spacing: 7) {
                 if running {
-                    ActivitySpinner(color: appearance.style.color(for: session.record.provider))
+                    ActivitySpinner(color: appearance.style.color(for: session))
                         .frame(width: 11, height: 11)
                 } else {
                     Circle().fill(.blue).frame(width: 6, height: 6).frame(width: 11, height: 11)
@@ -538,7 +538,7 @@ struct UnseenRepliesStrip: View {
                 Circle().fill(.blue).frame(width: 6, height: 6)
                 Image(session.record.provider.iconName).resizable().scaledToFit()
                     .frame(width: 12, height: 12)
-                    .foregroundStyle(appearance.style.color(for: session.record.provider))
+                    .foregroundStyle(appearance.style.color(for: session))
                 Text(session.record.projectFolder != nil ? session.projectName : session.title)
                     .lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
                 Text(ShortAge.string(since: session.record.updatedAt))

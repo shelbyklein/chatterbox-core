@@ -36,7 +36,7 @@ struct ThreadCard: View {
         return "Ready"
     }
     private var messageCount: Int { session.listSummary?.messageCount ?? session.items.filter { $0.kind == .user || $0.kind == .assistant }.count }
-    private var tint: Color { appearance.style.color(for: session.record.provider) }
+    private var tint: Color { appearance.style.color(for: session) }
     private var activityIndicator: some View { SessionActivityIndicator(session: session) }
     // Cards are also used outside List, where listRowBackground cannot highlight them.
     // Waiting on the user takes priority over the selected-card appearance.
@@ -425,7 +425,7 @@ struct SessionProviderIcon: View {
     var body: some View {
         Image(session.record.provider.iconName).resizable().scaledToFit()
             .frame(width: size, height: size)
-            .foregroundStyle(appearance.style.color(for: session.record.provider))
+            .foregroundStyle(appearance.style.color(for: session))
             .accessibilityLabel(session.record.provider.label)
             .help(session.record.provider == session.record.backend ? session.record.provider.label : "Claude model via Codex")
     }
@@ -439,7 +439,7 @@ struct SessionActivityIndicator: View {
     var body: some View {
         Group {
             if session.isRunning || session.hasBackgroundWork {
-                ActivitySpinner(color: session.isRunning ? appearance.style.color(for: session.record.provider) : .secondary)
+                ActivitySpinner(color: session.isRunning ? appearance.style.color(for: session) : .secondary)
                     .frame(width: 10, height: 10)
             } else {
                 Circle().fill(session.isWaitingOnYou ? .orange : Attention.shared.unread.contains(session.id) ? .blue : .secondary.opacity(0.4))

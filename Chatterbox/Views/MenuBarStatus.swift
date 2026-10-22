@@ -42,7 +42,7 @@ struct MenuBarPanel: View {
             section("Waiting on you", waiting) { Circle().fill(.yellow).frame(width: 7, height: 7) }
             section("New replies", replies) { Circle().fill(.blue).frame(width: 7, height: 7) }
             section("Working", working) { session in
-                ActivitySpinner(color: appearance.style.color(for: session.record.backend)).frame(width: 11, height: 11)
+                ActivitySpinner(color: appearance.style.agentColor(for: session)).frame(width: 11, height: 11)
             }
             section("Recent", recent) { Image(systemName: "clock").font(.caption2).foregroundStyle(.tertiary) }
             Divider()

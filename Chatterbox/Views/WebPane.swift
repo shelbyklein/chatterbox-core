@@ -306,7 +306,7 @@ struct FloatingChat: View {
                     VStack(alignment: .leading, spacing: 1) {
                         if let label {
                             Label(label, systemImage: icon).font(.caption2.weight(.semibold))
-                                .foregroundStyle(appearance.style.color(for: session.record.backend))
+                                .foregroundStyle(appearance.style.agentColor(for: session))
                         }
                         Text(title ?? session.title).font(.callout.weight(.semibold)).lineLimit(1)
                     }
@@ -382,7 +382,7 @@ struct FloatingChat: View {
 
     #endif
     private var roundBubble: some View {
-        let color = appearance.style.color(for: session.record.backend)
+        let color = appearance.style.agentColor(for: session)
         return Button { collapsed = false } label: {
             ZStack {
                 Circle().fill(.regularMaterial)
