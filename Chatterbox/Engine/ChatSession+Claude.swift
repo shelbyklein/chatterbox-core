@@ -22,6 +22,20 @@ extension ChatSession {
             }
             return
         }
+        // A Mac chat on a PC model needs the tunnel; without it Claude retries for minutes.
+        if record.openModel != nil, runMachine == nil {
+            Task {
+                do {
+                    try await prepareOpenModel()
+                } catch {
+                    notice(error.localizedDescription)
+                    onChange?(self)
+                    return
+                }
+                claudeDeliver(message, steered: steered, earlierItems: earlierItems)
+            }
+            return
+        }
         claudeDeliver(message, steered: steered, earlierItems: earlierItems)
     }
 

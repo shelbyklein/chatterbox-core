@@ -161,8 +161,8 @@ final class PCModels {
     static let shared = PCModels()
     /// Ollama's own port on the PC, which listens there only.
     nonisolated static let ollamaPort = 11434
-    /// The Mac end of the SSH tunnel to it.
-    nonisolated static let tunnelPort = 47340
+    /// The Mac end of the SSH tunnel to it. Tests set their own, away from the live tunnel.
+    nonisolated static let tunnelPort = Int(ProcessInfo.processInfo.environment["CHATTERBOX_PC_TUNNEL_PORT"] ?? "") ?? 47340
     /// Fits the PC's GPU entirely, and the fastest that handles agent tools (see plans/pc-worker.md).
     nonisolated static let recommended = "qwen3.5:9b"
 
