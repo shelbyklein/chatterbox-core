@@ -971,6 +971,40 @@ struct SessionOriginLabel: View {
     }
 }
 
+/// A pinned session in the sidebar, as compact as an Activity row: its status, then its title.
+struct PinnedSidebarRow: View {
+    @Environment(AppModel.self) private var model
+    let session: ChatSession
+    private let appearance = ReaderStyleSettings()
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Group {
+                if session.isRunning {
+                    ActivitySpinner(color: appearance.style.color(for: session.record.provider))
+                        .help("\(session.record.provider.label) is working")
+                } else if session.hasBackgroundWork {
+                    ActivitySpinner(color: .secondary).help("Running in the background")
+                } else if Attention.shared.unread.contains(session.id) || session.isWaitingOnYou {
+                    Circle().fill(Color.highlight).frame(width: 6, height: 6).help("Needs your attention")
+                }
+            }.frame(width: 11, height: 11)
+            Text(session.record.projectFolder != nil ? session.projectName : session.title)
+                .font(.caption.weight(session.isWaitingOnYou ? .semibold : .regular)).lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.vertical, 4).padding(.horizontal, 2)
+        .help(pinnedHelp)
+        .accessibilityElement(children: .combine)
+    }
+
+    /// Where it lives ("Studio · USA Archery"), since the row no longer says.
+    private var pinnedHelp: String {
+        let title = session.record.projectFolder != nil ? session.projectName : session.title
+        return "\(title) · \(SessionOriginLabel.text(for: session, in: model))"
+    }
+}
+
 struct SidebarRow: View {
     @Environment(AppModel.self) private var model
     /// Centers a shape (spinner, dot) on the first line of text, which it's baseline-aligned
@@ -1527,9 +1561,15 @@ extension ContentView {
     private func pinnedRow(_ session: ChatSession) -> some View {
         let background: Color = session.isWaitingOnYou ? .yellow.opacity(0.22)
             : model.selectedID == session.id ? .white : .clear
-        return row(session, number: nil, forceList: true)
-            .padding(.horizontal, 6).padding(.vertical, 4)
-            .background(RoundedRectangle(cornerRadius: 8).fill(background))
+        // Compact, like Activity: status, then the title.
+        return PinnedSidebarRow(session: session)
+            .padding(.horizontal, 6)
+            .background(RoundedRectangle(cornerRadius: 6).fill(background))
+            .contentShape(Rectangle())
+            .environment(\.colorScheme, model.selectedID == session.id && !session.isWaitingOnYou ? .light : colorScheme)
+            .onTapGesture { model.selectedID = session.id }
+            .modifier(ChatDrag(id: session.record.projectFolder == nil ? session.id : nil))
+            .contextMenu { threadMenu(session) }
             #if DEBUG
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { SidebarDebug.pinnedRows[session.id] = $0 }
             .onDisappear { SidebarDebug.pinnedRows.removeValue(forKey: session.id) }
