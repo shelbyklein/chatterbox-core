@@ -10,20 +10,16 @@ struct PushCredentials: Codable, Sendable {
     // The app creates this entry, so its stable signing identity owns the ACL.
     // The original entry may have been created by a one-off setup helper.
     static let service = "com.shelbyklein.Chatterbox.apns.app"
-    private static let accessLock = NSLock()
     static func read(allowInteraction: Bool = false) throws -> PushCredentials {
-        accessLock.lock()
-        defer { accessLock.unlock() }
-        // This item lives in the login keychain. Its legacy ACL dialogs also need
-        // the classic Keychain switch; authentication UI options alone aren't enough.
-        var previousInteraction: DarwinBoolean = true
-        if !allowInteraction {
-            guard SecKeychainGetUserInteractionAllowed(&previousInteraction) == errSecSuccess,
-                  SecKeychainSetUserInteractionAllowed(false) == errSecSuccess else {
-                throw PushFailure.message("Couldn't safely access Keychain without prompting.")
-            }
+        // This item lives in the login keychain, so a quiet read needs the classic Keychain
+        // switch too (KeychainQuietly); authentication UI options alone aren't enough.
+        if allowInteraction { return try lookUp(allowInteraction: true) }
+        guard let credentials = try KeychainQuietly.run({ try lookUp(allowInteraction: false) }) else {
+            throw PushFailure.message("Couldn't safely access Keychain without prompting.")
         }
-        defer { if !allowInteraction { SecKeychainSetUserInteractionAllowed(previousInteraction.boolValue) } }
+        return credentials
+    }
+    private static func lookUp(allowInteraction: Bool) throws -> PushCredentials {
         var value: CFTypeRef?
         var query: [CFString: Any] = [kSecClass: kSecClassGenericPassword, kSecAttrService: service,
             kSecAttrAccount: "provider", kSecReturnData: true, kSecMatchLimit: kSecMatchLimitOne,

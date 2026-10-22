@@ -196,9 +196,12 @@ final class SecretVault {
     private nonisolated static func read(_ id: UUID, fixtureDirectory: URL?, allowInteraction: Bool = false) -> String? {
         if let fixtureDirectory { return try? String(contentsOf: testFile(id, directory: fixtureDirectory), encoding: .utf8) }
         var value: CFTypeRef?
-        let status = SecItemCopyMatching([kSecClass: kSecClassGenericPassword, kSecAttrService: service, kSecAttrAccount: id.uuidString,
-                                          kSecReturnData: true, kSecMatchLimit: kSecMatchLimitOne,
-                                          kSecUseAuthenticationUI: allowInteraction ? kSecUseAuthenticationUIAllow : kSecUseAuthenticationUIFail] as CFDictionary, &value)
+        let query = [kSecClass: kSecClassGenericPassword, kSecAttrService: service, kSecAttrAccount: id.uuidString,
+                     kSecReturnData: true, kSecMatchLimit: kSecMatchLimitOne,
+                     kSecUseAuthenticationUI: allowInteraction ? kSecUseAuthenticationUIAllow : kSecUseAuthenticationUIFail] as CFDictionary
+        // Opening Settings → Secrets refreshes the service's copy; that must never prompt.
+        let status = allowInteraction ? SecItemCopyMatching(query, &value)
+            : (KeychainQuietly.run { SecItemCopyMatching(query, &value) } ?? errSecInteractionNotAllowed)
         guard status == errSecSuccess, let data = value as? Data else { return nil }
         return String(data: data, encoding: .utf8)
     }
@@ -221,6 +224,22 @@ final class SecretVault {
     private static func delete(_ id: UUID, fixtureDirectory: URL?) {
         if let fixtureDirectory { try? FileManager.default.removeItem(at: testFile(id, directory: fixtureDirectory)); return }
         SecItemDelete([kSecClass: kSecClassGenericPassword, kSecAttrService: service, kSecAttrAccount: id.uuidString] as CFDictionary)
+    }
+}
+
+/// Runs a Keychain read with prompts switched off. Login-keychain items show their access
+/// dialog even with kSecUseAuthenticationUIFail; only the classic switch stops it. The switch
+/// is process-wide, so every quiet read goes through this one lock. Nil if it can't be set.
+enum KeychainQuietly {
+    private static let lock = NSLock()
+    static func run<T>(_ body: () throws -> T) rethrows -> T? {
+        lock.lock()
+        defer { lock.unlock() }
+        var previous: DarwinBoolean = true
+        guard SecKeychainGetUserInteractionAllowed(&previous) == errSecSuccess,
+              SecKeychainSetUserInteractionAllowed(false) == errSecSuccess else { return nil }
+        defer { SecKeychainSetUserInteractionAllowed(previous.boolValue) }
+        return try body()
     }
 }
 
