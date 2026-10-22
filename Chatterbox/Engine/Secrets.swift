@@ -19,11 +19,15 @@ struct SecretEntry: Codable, Identifiable, Hashable {
     var note: String = ""
     /// For an account: the user name (not secret; agents get it as <VARIABLE>_USER).
     var username: String = ""
-    /// Empty: every chat. Otherwise, only chats in these project folders.
+    /// Both empty: every session. Otherwise, only sessions in these project folders or
+    /// Studios (every session in the Studio). Sidechats, sidequests and automation runs
+    /// carry their parent's project and Studio, so they get what it gets.
     var projects: [String] = []
+    var studios: [UUID] = []
     var created = Date()
 
     var isAccount: Bool { !username.isEmpty }
+    var isEverywhere: Bool { projects.isEmpty && studios.isEmpty }
 
     /// Letters, digits, and underscores, starting with a letter.
     static func variableName(from text: String) -> String {
@@ -35,6 +39,21 @@ struct SecretEntry: Codable, Identifiable, Hashable {
 
     static func isValidVariable(_ text: String) -> Bool {
         text.range(of: "^[A-Z][A-Z0-9_]*$", options: .regularExpression) != nil
+    }
+}
+
+extension SecretEntry {
+    /// Entries saved before Studios could be chosen have no `studios`.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        variable = try c.decode(String.self, forKey: .variable)
+        note = try c.decodeIfPresent(String.self, forKey: .note) ?? ""
+        username = try c.decodeIfPresent(String.self, forKey: .username) ?? ""
+        projects = try c.decodeIfPresent([String].self, forKey: .projects) ?? []
+        studios = try c.decodeIfPresent([UUID].self, forKey: .studios) ?? []
+        created = try c.decodeIfPresent(Date.self, forKey: .created) ?? Date()
     }
 }
 
@@ -136,8 +155,11 @@ final class SecretVault {
 
     func entries(for session: ChatSession) -> [SecretEntry] {
         let folder = (session.record.sidechatProjectFolder ?? session.convertedProjectScope ?? session.record.worktreeOf ?? session.record.projectFolder).map(RuntimePaths.normalize)
+        let studio = session.record.studioID
         return entries.filter { entry in
-            hasValue(entry) && (entry.projects.isEmpty || folder.map { f in entry.projects.contains { RuntimePaths.normalize($0) == f } } == true)
+            hasValue(entry) && (entry.isEverywhere
+                || folder.map { f in entry.projects.contains { RuntimePaths.normalize($0) == f } } == true
+                || studio.map(entry.studios.contains) == true)
         }
     }
 

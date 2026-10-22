@@ -1138,7 +1138,8 @@ struct SecretsSection: View {
             SecretEditor(entry: entry, isNew: !vault.entries.contains { $0.id == entry.id },
                          projects: model.sidebarProjects.compactMap { session in
                              session.record.projectFolder.map { (name: session.projectName, folder: $0) }
-                         }) { saved, value in
+                         },
+                         studios: model.studios.map { (name: $0.name, id: $0.id) }) { saved, value in
                 try vault.save(saved, value: value)
                 restartClaudeChats()
             }
@@ -1154,9 +1155,10 @@ struct SecretsSection: View {
     }
 
     private func scope(_ entry: SecretEntry) -> String {
-        if entry.projects.isEmpty { return "all sessions" }
-        let names = entry.projects.compactMap { folder in model.session(boundTo: folder)?.projectName }
-        return names.isEmpty ? "\(entry.projects.count) project\(entry.projects.count == 1 ? "" : "s")" : names.joined(separator: ", ")
+        if entry.isEverywhere { return "all sessions" }
+        let projects = entry.projects.map { folder in model.session(boundTo: folder)?.projectName ?? URL(fileURLWithPath: folder).lastPathComponent }
+        let studios = entry.studios.map { id in model.studios.first { $0.id == id }.map { "\($0.name) Studio" } ?? "a removed Studio" }
+        return (projects + studios).joined(separator: ", ")
     }
 
     /// Claude Code reads its environment at launch: idle chats restart into the new one.
@@ -1204,6 +1206,7 @@ struct SecretEditor: View {
     @State var entry: SecretEntry
     let isNew: Bool
     let projects: [(name: String, folder: String)]
+    let studios: [(name: String, id: UUID)]
     let onSave: (SecretEntry, String?) throws -> Void
     @State private var value = ""
     @State private var isAccount = false
@@ -1241,6 +1244,8 @@ struct SecretEditor: View {
                 Section("Available to") {
                     Toggle("All sessions", isOn: $everywhere)
                     if !everywhere {
+                        // Pick any mix; a Studio covers every session in it, new ones too.
+                        Text("Projects").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                         ForEach(projects, id: \.folder) { project in
                             Toggle(project.name, isOn: Binding(
                                 get: { entry.projects.contains(project.folder) },
@@ -1249,6 +1254,15 @@ struct SecretEditor: View {
                                 }))
                         }
                         if projects.isEmpty { Text("No projects yet.").foregroundStyle(.secondary) }
+                        Text("Studios").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        ForEach(studios, id: \.id) { studio in
+                            Toggle(studio.name, isOn: Binding(
+                                get: { entry.studios.contains(studio.id) },
+                                set: { on in
+                                    if on { entry.studios.append(studio.id) } else { entry.studios.removeAll { $0 == studio.id } }
+                                }))
+                        }
+                        if studios.isEmpty { Text("No Studios yet.").foregroundStyle(.secondary) }
                     }
                 }
                 if let error {
@@ -1262,14 +1276,14 @@ struct SecretEditor: View {
                 Button(isNew ? "Add" : "Save") { save() }
                     .keyboardShortcut(.defaultAction)
                     .disabled(entry.name.trimmingCharacters(in: .whitespaces).isEmpty || !SecretEntry.isValidVariable(entry.variable)
-                              || (isNew && value.isEmpty) || (!everywhere && entry.projects.isEmpty))
+                              || (isNew && value.isEmpty) || (!everywhere && entry.isEverywhere))
             }
             .padding(16)
         }
         .frame(width: 480, height: 560)
         .onAppear {
             isAccount = entry.isAccount
-            everywhere = entry.projects.isEmpty
+            everywhere = entry.isEverywhere
             variableEdited = !isNew
         }
     }
@@ -1278,7 +1292,7 @@ struct SecretEditor: View {
         var saved = entry
         saved.name = saved.name.trimmingCharacters(in: .whitespaces)
         if !isAccount { saved.username = "" }
-        if everywhere { saved.projects = [] }
+        if everywhere { saved.projects = []; saved.studios = [] }
         do {
             try onSave(saved, value.isEmpty ? nil : value)
             value = ""
