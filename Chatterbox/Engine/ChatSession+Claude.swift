@@ -190,7 +190,7 @@ extension ChatSession {
             strictMCPConfig: record.openModel != nil,
             environment: claudeLaunchEnvironment,
             fastMode: record.openModel == nil && record.claudeFastMode == true && supportsClaudeFastMode
-        ), id: "claude-\(id.uuidString)-\(UUID().uuidString.prefix(8))", on: machine)
+        ), id: "claude-\(id.uuidString)-\(UUID().uuidString.prefix(8))", on: machine, forwards: claudeProxyForwards)
         // A fresh session gets the current tone and instructions in its system prompt.
         if !resuming {
             record.sentPersonality = record.personality
@@ -661,18 +661,25 @@ extension ChatSession {
     /// Claude Code turns tool search off for a non-Anthropic base URL, which loads every MCP
     /// tool schema up front (Studio chats started at ~160k tokens instead of ~33k), so it's
     /// switched back on; the proxy passes deferred tool loading through.
+    /// On the PC it's reached through a tunnel on the agent's own SSH connection.
     var claudeProxyEnvironment: [String: String] {
-        guard !isDot, let proxy = EasyCLIProxy.shared.active(for: .claude) else { return [:] }
+        guard !isDot, let mac = EasyCLIProxy.shared.active(for: .claude) else { return [:] }
+        let proxy = runMachine == nil ? mac : mac.onPC(port: EasyCLIProxy.pcClaudePort(for: id))
         return ["ANTHROPIC_BASE_URL": proxy.base, "ANTHROPIC_AUTH_TOKEN": proxy.key, "ANTHROPIC_API_KEY": "",
                 "ENABLE_TOOL_SEARCH": "true"]
     }
 
-    /// What this chat's Claude Code gets on top of the app's environment: the proxy, Secrets
-    /// in scope, and the chat's id.
-    /// On the PC the proxy (on this Mac) is out of reach, so a PC chat uses the PC's own sign-in.
-    /// An open model replaces either.
+    /// The tunnel a PC launch needs for `claudeProxyEnvironment`.
+    var claudeProxyForwards: [RemoteLaunch.Forward] {
+        guard runMachine != nil, record.openModel == nil, !isDot, let mac = EasyCLIProxy.shared.active(for: .claude) else { return [] }
+        return [mac.forward(fromPC: EasyCLIProxy.pcClaudePort(for: id))]
+    }
+
+    /// What this chat's Claude Code gets on top of the app's environment: the proxy (on the
+    /// PC too, through a tunnel), Secrets in scope, and the chat's id. An open model replaces
+    /// the proxy.
     var claudeLaunchEnvironment: [String: String] {
-        (runMachine == nil ? claudeProxyEnvironment : [:]).merging(SecretVault.shared.environment(for: self)) { $1 }
+        claudeProxyEnvironment.merging(SecretVault.shared.environment(for: self)) { $1 }
             .merging(["CHATTERBOX_CHAT_ID": id.uuidString]) { $1 }
             .merging(openModelClaudeEnvironment) { $1 }
     }

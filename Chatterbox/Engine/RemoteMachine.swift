@@ -67,9 +67,20 @@ enum RemoteLaunch {
          "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4"]
     }
 
-    /// What runs on the Mac to start `executable` on the machine: SSH to the worker.
-    static func command(on machine: RemoteMachine) -> [String] {
-        sshOptions() + [machine.sshHost, "node \"\(machine.workerPath)\""]
+    /// A port on the machine that leads back to one on this Mac (`ssh -R`), for as long as
+    /// the connection it rides on: how a PC agent reaches EasyCLIProxy here.
+    struct Forward: Equatable, Sendable {
+        var remotePort: Int
+        var host: String
+        var port: Int
+    }
+
+    /// What runs on the Mac to start `executable` on the machine: SSH to the worker. A port
+    /// another PC agent already holds is fine (same proxy behind it), so a failed forward
+    /// doesn't stop the agent.
+    static func command(on machine: RemoteMachine, forwards: [Forward] = []) -> [String] {
+        sshOptions() + forwards.flatMap { ["-o", "ExitOnForwardFailure=no", "-R", "127.0.0.1:\($0.remotePort):\($0.host):\($0.port)"] }
+            + [machine.sshHost, "node \"\(machine.workerPath)\""]
     }
 
     /// The worker's first line: what to run, where, and with which variables. Sent on stdin,
@@ -84,8 +95,8 @@ enum RemoteLaunch {
     /// Starts `executable` on the machine as a process in the host. Only `environment` is
     /// passed: the Mac's own variables (PATH, HOME) mean nothing on the PC.
     @MainActor static func spawn(id: String, executable: String, arguments: [String], cwd: String?, environment: [String: String],
-                      kind: String?, on machine: RemoteMachine) throws {
-        try HostClient.shared.spawn(id: id, executable: ssh, arguments: command(on: machine), cwd: nil,
+                      kind: String?, on machine: RemoteMachine, forwards: [Forward] = []) throws {
+        try HostClient.shared.spawn(id: id, executable: ssh, arguments: command(on: machine, forwards: forwards), cwd: nil,
                                     environment: BinaryLocator.environment, kind: kind)
         HostClient.shared.write(id: id, header(executable: executable, arguments: arguments, cwd: cwd, environment: environment))
     }

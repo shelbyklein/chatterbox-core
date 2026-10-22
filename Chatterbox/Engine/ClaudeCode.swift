@@ -119,10 +119,10 @@ final class ClaudeCodeProcess {
     }
 
     /// Starts a new process in the host under `id`, on this Mac or on `machine`.
-    func start(_ config: Config, id: String, on machine: RemoteMachine? = nil) throws {
+    func start(_ config: Config, id: String, on machine: RemoteMachine? = nil, forwards: [RemoteLaunch.Forward] = []) throws {
         if let machine {
             try RemoteLaunch.spawn(id: id, executable: "claude", arguments: Self.arguments(config), cwd: config.cwd,
-                                   environment: config.environment, kind: "claude", on: machine)
+                                   environment: config.environment, kind: "claude", on: machine, forwards: forwards)
             try attach(id: id, from: 0)
             return
         }

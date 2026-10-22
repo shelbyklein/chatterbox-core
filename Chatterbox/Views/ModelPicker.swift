@@ -149,7 +149,7 @@ struct ModelPopover: View {
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if active == .codex, session.record.openModel == nil, session.runMachine == nil { connectionSection }
+            if active == .codex, session.record.openModel == nil { connectionSection }
             Divider()
             HStack {
                 Text("Applies from your next message.").font(.caption).foregroundStyle(.secondary)
@@ -336,7 +336,7 @@ struct ModelPopover: View {
                                                             set: { session.setCodexRoute(CodexRoute(rawValue: $0)) })) {
                         Text("Default").tag("")
                         Text(CodexRoute.direct.title).tag(CodexRoute.direct.rawValue)
-                            .disabled(!EasyCLIProxy.codexHasChatGPTSignIn)
+                            .disabled(session.runMachine == nil && !EasyCLIProxy.codexHasChatGPTSignIn)
                         Text(CodexRoute.proxy.title).tag(CodexRoute.proxy.rawValue)
                     }
                     .labelsHidden()

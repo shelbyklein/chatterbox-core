@@ -21,6 +21,23 @@ final class EasyCLIProxy {
         var port: Int
         var key: String
         var base: String { "http://\(host):\(port)" }
+
+        /// The same proxy, as an agent on the PC reaches it: a tunneled port there.
+        func onPC(port: Int) -> Endpoint { Endpoint(host: "127.0.0.1", port: port, key: key) }
+        /// The tunnel that makes `onPC(port:)` lead here.
+        func forward(fromPC port: Int) -> RemoteLaunch.Forward { .init(remotePort: port, host: host, port: self.port) }
+    }
+
+    /// PC ports for the tunnel back to the proxy: one for the PC's shared Codex server, and a
+    /// range for Claude agents, one each (by chat id), so one ending doesn't cut off another.
+    static let pcCodexPort = 47390
+    static func pcClaudePort(for id: UUID) -> Int { 47400 + (Int(id.uuid.0) << 8 | Int(id.uuid.1)) % 500 }
+
+    /// The proxy if it's answering, whether or not it's on for this agent in Settings (a
+    /// session that picked EasyCLIProxy as its connection).
+    func available() -> Endpoint? {
+        refreshIfStale()
+        return isRunning ? endpoint : nil
     }
 
     private(set) var endpoint: Endpoint?

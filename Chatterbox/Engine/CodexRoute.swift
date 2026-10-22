@@ -31,9 +31,17 @@ extension ChatSession {
             return (openModelCodexConfig, "open:\(record.runOn ?? "mac"):\(model)", false,
                     "Open-weight model \(model) on \(RemoteMachine.pc.name). Hosted tools such as image generation aren't available.")
         }
-        // On the PC, Codex uses the PC's own ChatGPT sign-in; the proxy is on this Mac.
+        // On the PC: EasyCLIProxy here through the Codex server's tunnel, as on the Mac (on
+        // in Settings, or picked), else the PC's own ChatGPT sign-in.
         if let machine = runMachine {
-            return (["model_provider": "openai"], "pc:direct", true, "Direct through \(machine.name)'s ChatGPT sign-in.")
+            let proxy = codexRoute == .direct ? nil : codexRoute == .proxy ? EasyCLIProxy.shared.available() : EasyCLIProxy.shared.active(for: .codex)
+            if let proxy {
+                let pc = proxy.onPC(port: EasyCLIProxy.pcCodexPort)
+                return (EasyCLIProxy.shared.codexConfig(pc), "pc:proxy:" + pc.base, false,
+                        "Through EasyCLIProxy on this Mac. Hosted tools such as image generation may be missing.")
+            }
+            return (["model_provider": "openai"], "pc:direct", true, "Direct through \(machine.name)'s ChatGPT sign-in."
+                    + (codexRoute == .proxy ? " EasyCLIProxy isn't available." : ""))
         }
         let globalProvider = EasyCLIProxy.directCodexProvider
         let signedIn = EasyCLIProxy.codexHasChatGPTSignIn

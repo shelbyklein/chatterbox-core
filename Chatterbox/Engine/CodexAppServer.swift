@@ -94,7 +94,11 @@ final class CodexAppServer {
         // instead of the question card. Scoped to this process, not ~/.codex/config.toml.
         let arguments = ["app-server", "--enable", "default_mode_request_user_input"]
         if let remote = RemoteMachine.named(machine) {
-            try RemoteLaunch.spawn(id: id, executable: "codex", arguments: arguments, cwd: nil, environment: [:], kind: "codex", on: remote)
+            // The PC's Codex reaches EasyCLIProxy here through this connection, for sessions
+            // that use it (see codexConnection).
+            let forwards = EasyCLIProxy.readEndpoint().map { [$0.forward(fromPC: EasyCLIProxy.pcCodexPort)] } ?? []
+            try RemoteLaunch.spawn(id: id, executable: "codex", arguments: arguments, cwd: nil, environment: [:], kind: "codex",
+                                   on: remote, forwards: forwards)
         } else {
             guard let binary = Self.locateBinary() else {
                 throw CodexError(message: "Couldn't find the `codex` command. Install the Codex CLI, or set its path in Settings.")
