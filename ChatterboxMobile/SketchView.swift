@@ -116,3 +116,13 @@ private struct CanvasHost: UIViewRepresentable {
 
     func updateUIView(_ view: UIView, context: Context) {}
 }
+
+/// Top bar: screenshot the app, mark it up, then finish the note in the Chatterbox session.
+struct FeedbackButton: View {
+    @Environment(MobileStore.self) private var store
+    var body: some View {
+        Button { store.startFeedback() } label: { Image(systemName: "exclamationmark.bubble") }
+            .accessibilityLabel("Feedback")
+    }
+}
+

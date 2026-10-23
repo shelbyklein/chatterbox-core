@@ -39,6 +39,36 @@ final class MobileStore {
     @ObservationIgnored var pendingImages: [UUID: [PendingImage]] = [:]
 
     @ObservationIgnored private var composers: [UUID: MobileComposerDraft<PendingImage>] = [:]
+    /// Feedback (top bar): the app's screenshot open in Mark Up.
+    var feedbackSketch: SketchRequest?
+    var feedbackProblem: String?
+
+    /// The Chatterbox project's session (one per project): where feedback goes.
+    var feedbackChat: Companion.ChatSummary? {
+        (chatList?.groups ?? []).filter { $0.kind == .projects }.flatMap(\.chats)
+            .first { ($0.project ?? $0.title) == "Chatterbox" && $0.worktreeBranch == nil && $0.sidechatOf == nil }
+    }
+
+    /// Feedback, step 1: a picture of the app as it looks now, opened in Mark Up.
+    func startFeedback() {
+        guard let window = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
+            .flatMap(\.windows).first(where: \.isKeyWindow) else { return }
+        let shot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: false)
+        }
+        feedbackSketch = SketchRequest(background: shot)
+    }
+
+    /// Feedback, step 2: the marked-up screenshot waits in the Chatterbox session's message
+    /// box, which opens, for you to type what's wrong and send.
+    func placeFeedback(_ image: UIImage) {
+        guard let chat = feedbackChat, let data = image.pngData() else {
+            feedbackProblem = "Feedback goes to the Chatterbox project's session. Open Chatterbox's folder as a project on the Mac."
+            return
+        }
+        composer(for: chat.id).images.append(PendingImage(preview: image, upload: .init(name: "Feedback", data: data)))
+        MobilePushNotifications.shared.pendingChat = chat.id
+    }
 
     func composer(for chat: UUID) -> MobileComposerDraft<PendingImage> {
         if let existing = composers[chat] { return existing }

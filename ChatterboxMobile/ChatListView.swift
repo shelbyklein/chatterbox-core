@@ -128,6 +128,7 @@ struct ChatListView: View {
                         .accessibilityLabel(showsCards ? "Show as List" : "Show as Cards")
                     }
                     }
+                    ToolbarItem(placement: .topBarTrailing) { FeedbackButton() }
                     ToolbarItem(placement: .topBarTrailing) { newChatMenu }
                 }
                 .navigationSplitViewColumnWidth(min: 320, ideal: 380, max: 460)

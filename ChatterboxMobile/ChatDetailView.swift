@@ -698,6 +698,9 @@ struct ChatDetailView: View {
                     Text(summary.title).font(.headline).lineLimit(1)
                 }
                 #endif
+                #if !GOLEM_APP
+                ToolbarItem(placement: .topBarTrailing) { FeedbackButton() }
+                #endif
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showingSettings = true } label: { Image(systemName: "gearshape") }
                         .accessibilityLabel("Session Settings")
@@ -720,6 +723,9 @@ struct ChatDetailView: View {
                     .disabled(detail?.options == nil)
                 }
             }
+            #if !GOLEM_APP
+            ToolbarItem(placement: .topBarTrailing) { FeedbackButton() }
+            #endif
             ToolbarItem(placement: .topBarTrailing) { chatMenu }
     }
 
@@ -1158,6 +1164,7 @@ struct ChatDetailView: View {
                                 Image(systemName: "xmark.circle.fill").symbolRenderingMode(.palette)
                                     .foregroundStyle(.white, .black.opacity(0.6))
                             }
+                            .accessibilityLabel("Remove \(pending.upload.name) image")
                             .padding(3)
                         }
                 }
