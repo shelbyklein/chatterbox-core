@@ -36,12 +36,13 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         static let terminal = NSToolbarItem.Identifier("chatterbox.terminal")
         static let finished = NSToolbarItem.Identifier("chatterbox.finished")
         static let automations = NSToolbarItem.Identifier("chatterbox.automations")
+        static let feedback = NSToolbarItem.Identifier("chatterbox.feedback")
         /// The views on the left (chat, Studios, Command Center); the open chat's details in the
         /// middle, its image library included (in the place item, so it shares their pill); usage and the terminal; Settings last.
         /// New chats start from the sidebar, the Studios page and Cmd-N, not the toolbar.
         static let all: [NSToolbarItem.Identifier] = [title, views, .flexibleSpace,
                                                        tone, place, repo, golem, .flexibleSpace,
-                                                       automations, usage, terminal, finished, .space, settings, newChat]
+                                                       automations, usage, terminal, finished, feedback, .space, settings, newChat]
         static let chat: [NSToolbarItem.Identifier] = [tone, place, repo, golem, usage, images, terminal]
     }
 
@@ -247,6 +248,8 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
             item = button(id, "paintpalette", "Studios", "Your Studios, as thumbnails", #selector(showStudios))
         case ID.commandCenter:
             item = button(id, "rectangle.split.2x2", "Command Center", "Several live sessions in one window", #selector(toggleCommandCenter))
+        case ID.feedback:
+            item = button(id, "exclamationmark.bubble", "Feedback", "Feedback: annotate a screenshot of this window, then finish your note in the Chatterbox session", #selector(sendFeedback))
         case ID.settings:
             item = button(id, "gearshape", "Settings", "Settings (\u{2318},)", #selector(toggleSettings))
         case ID.title:
@@ -381,6 +384,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
     }
     @objc private func toggleCommandCenter() { model.showingCommandCenter.toggle() }
     @objc private func toggleSettings() { model.showingSettings.toggle() }
+    @objc private func sendFeedback() { model.startFeedback(from: toolbar.items.first?.view?.window ?? NSApp.keyWindow ?? NSApp.mainWindow) }
     @objc private func toggleAutomations() { model.showingAutomations.toggle(); apply() }
     @objc private func showImages() { bridge.showImages() }
     @objc private func toggleTerminal() { bridge.toggleTerminal() }

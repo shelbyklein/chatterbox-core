@@ -53,8 +53,13 @@ struct ImageReviewView: View {
     let gallery: [URL]
     let onSend: (_ text: String, _ attachments: [Attachment]) -> Void
 
-    init(attachment: Attachment, gallery: [URL] = [], initialTool: ImageReviewTool = .pen,
+    /// Feedback on Chatterbox itself: the result goes into the Chatterbox session's message
+    /// box (to finish there) rather than straight to a session, so nothing is required here.
+    var feedback = false
+
+    init(attachment: Attachment, gallery: [URL] = [], initialTool: ImageReviewTool = .pen, feedback: Bool = false,
          onSend: @escaping (_ text: String, _ attachments: [Attachment]) -> Void) {
+        self.feedback = feedback
         _attachment = State(initialValue: attachment)
         _tool = State(initialValue: initialTool)
         self.gallery = gallery
@@ -323,8 +328,8 @@ struct ImageReviewView: View {
                 }
             }
 
-            Text("Overall note").font(.caption).foregroundStyle(.secondary)
-            TextField("Optional", text: $overall, axis: .vertical)
+            Text(feedback ? "What's wrong, or what should change?" : "Overall note").font(.caption).foregroundStyle(.secondary)
+            TextField(feedback ? "Optional: you can keep typing in the session" : "Optional", text: $overall, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
                 .lineLimit(2...5)
 
@@ -333,9 +338,9 @@ struct ImageReviewView: View {
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Send to Session") { send() }
+                Button(feedback ? "Add to Chatterbox Session" : "Send to Session") { send() }
                     .keyboardShortcut(.return, modifiers: .command)
-                    .disabled(image == nil || (marks.isEmpty && strokes.isEmpty && overall.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
+                    .disabled(image == nil || (!feedback && marks.isEmpty && strokes.isEmpty && overall.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
             }
         }
         .padding(16)

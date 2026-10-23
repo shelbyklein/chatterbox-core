@@ -260,6 +260,11 @@ struct ContentView: View {
                 sidequestFrom = nil
             }
         }
+        .sheet(item: $model.feedbackShot) { shot in
+            let window = (NSApp.mainWindow ?? NSApp.keyWindow)?.contentLayoutRect.size ?? NSSize(width: 1200, height: 800)
+            ImageReviewView(attachment: shot, feedback: true) { text, files in model.placeFeedback(text: text, attachments: files) }
+                .frame(width: max(900, window.width - 40), height: max(600, window.height - 40))
+        }
         .sheet(item: $errandFrom) { parent in
             PCErrandForm(task: $errandTask, files: $errandFiles, agent: $errandAgent) {
                 model.newPCErrand(of: parent, task: errandTask, files: errandFiles.map(\.path), backend: errandAgent)

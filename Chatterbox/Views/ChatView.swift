@@ -27,6 +27,16 @@ struct ChatView: View {
     /// The main window's chat, with its sidebar here or beside it.
     private var isMainChat: Bool { sidebar != nil || mainWindow }
 
+    /// Text and files waiting for this session's message box (see ComposerInsertion).
+    private func takeInsertion() {
+        guard let insertion = model.composerInsertion, insertion.session == session.id, !session.isDot else { return }
+        model.composerInsertion = nil
+        attachments += insertion.attachments.filter { !attachments.contains($0) }
+        let text = insertion.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !text.isEmpty { draft = draft.isEmpty ? text + "\n\n" : draft + "\n\n" + text + "\n\n" }
+        composerFocused = true
+    }
+
     init(session: ChatSession, sidebar: AnyView? = nil, standaloneWindow: Bool = false, mainWindow: Bool = false) {
         self.standaloneWindow = standaloneWindow
         self.sidebar = sidebar
@@ -310,6 +320,9 @@ struct ChatView: View {
         .modifier(GolemVoiceDraftSync(session: session, draft: $draft, attachments: $attachments))
         #endif
         .onChange(of: attachments) { _, files in session.draftAttachments = files }
+        // Feedback (and anything else) can drop text and files into this message box.
+        .onChange(of: model.composerInsertion) { _, _ in takeInsertion() }
+        .onAppear { takeInsertion() }
         .onDisappear {
             if tileContext != nil { session.draft = draft; session.draftAttachments = attachments }
             if let pasteMonitor { NSEvent.removeMonitor(pasteMonitor) }

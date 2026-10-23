@@ -94,6 +94,10 @@ final class AppModel {
     var showingHome = false { didSet { if showingHome { showingCommandCenter = false; showingAutomations = false } } }
     var showingCommandCenter = false { didSet { if showingCommandCenter { showingHome = false; showingSettings = false; showingAutomations = false } } }
     var showingAutomations = false { didSet { if showingAutomations { showingHome = false; showingCommandCenter = false; showingSettings = false } } }
+    /// Feedback (toolbar): the window's screenshot being annotated, then what goes into the
+    /// Chatterbox session's message box.
+    var feedbackShot: Attachment?
+    var composerInsertion: ComposerInsertion?
     var showingSettings = false { didSet { if showingSettings { showingHome = false; showingCommandCenter = false; showingAutomations = false } } }
     /// The independent, always-on-top Golem mini window (⌘J).
     var showingDot = false {
@@ -1211,3 +1215,50 @@ final class AppModel {
     }
 
 }
+
+/// Text and attachments to add to a session's message box, for the open chat view to take in
+/// (or the next one to open for that session).
+struct ComposerInsertion: Equatable {
+    var id = UUID()
+    var session: UUID
+    var text: String
+    var attachments: [Attachment]
+}
+
+extension AppModel {
+    /// The project session feedback goes to: Settings' choice, else the project in a folder
+    /// named Chatterbox (one session per project, so it's that one).
+    var feedbackProject: ChatSession? {
+        let chosen = AppPreferences.defaults.string(forKey: "feedbackProjectFolder").map(RuntimePaths.normalize)
+        let projects = sidebarProjects.filter { $0.record.projectFolder != nil && $0.record.worktreeOf == nil }
+        if let chosen, let match = projects.first(where: { $0.record.projectFolder.map(RuntimePaths.normalize) == chosen }) { return match }
+        return projects.first { URL(fileURLWithPath: $0.record.projectFolder ?? "").lastPathComponent == "Chatterbox" }
+    }
+
+    /// Feedback, step 1: a picture of `window` (toolbar and all), opened for annotating.
+    func startFeedback(from window: NSWindow?) {
+        guard let window, let frame = window.contentView?.superview ?? window.contentView,
+              let bitmap = frame.bitmapImageRepForCachingDisplay(in: frame.bounds) else { return }
+        frame.cacheDisplay(in: frame.bounds, to: bitmap)
+        guard let png = bitmap.representation(using: .png, properties: [:]) else { return }
+        let stamp = DateFormatter()
+        stamp.dateFormat = "yyyy-MM-dd HH.mm"
+        feedbackShot = try? Attachments.importImageData(png, name: "Chatterbox feedback " + stamp.string(from: Date()))
+    }
+
+    /// Feedback, step 2: the annotated screenshot and notes wait in the Chatterbox session's
+    /// message box, which opens, for you to finish typing and send.
+    func placeFeedback(text: String, attachments: [Attachment]) {
+        guard let project = feedbackProject else {
+            let alert = NSAlert()
+            alert.messageText = "No Chatterbox project"
+            alert.informativeText = "Feedback goes to the project session for Chatterbox's folder. Open that folder as a project, or choose one in Settings."
+            alert.runModal()
+            return
+        }
+        showingHome = false; showingSettings = false; showingCommandCenter = false; showingAutomations = false
+        selectedID = project.id
+        composerInsertion = ComposerInsertion(session: project.id, text: text, attachments: attachments)
+    }
+}
+
