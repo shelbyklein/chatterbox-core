@@ -161,6 +161,8 @@ enum Companion {
         var canPromote: Bool? = nil
         /// The session's Brief, which both agents get (older Macs send none).
         var brief: String? = nil
+        /// Pinned on the Mac (Pin to Top): its place among the pins, first is 0.
+        var pinnedRank: Int? = nil
     }
 
     /// The assistant's animations and head image, to play on the phone too.

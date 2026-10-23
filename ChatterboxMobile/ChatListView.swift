@@ -4,13 +4,15 @@ import SwiftUI
 /// On iPad the open chat sits beside them; on iPhone it opens over them.
 struct ChatListView: View {
     enum Page: String, CaseIterable, Identifiable {
-        /// In this order in the tab bar. All: every session at once, newest first.
-        case projects, studios, chats, all
+        /// In this order in the tab bar. Pinned: what's pinned on the Mac, in its order. All:
+        /// every session at once, newest first.
+        case pinned, projects, studios, chats, all
         var id: String { rawValue }
         var title: String { rawValue.capitalized }
         var icon: String {
             switch self {
             case .all: "tray.full"
+            case .pinned: "pin"
             case .projects: "folder"
             case .studios: "paintpalette"
             case .chats: "bubble.left.and.bubble.right"
@@ -18,7 +20,7 @@ struct ChatListView: View {
         }
         /// The one kind of group the page lists (All lists every kind but Golem's).
         var kind: Companion.ChatGroup.Kind { self == .projects ? .projects : self == .studios ? .studio : .chats }
-        func includes(_ kind: Companion.ChatGroup.Kind) -> Bool { self == .all ? kind != .dot : kind == self.kind }
+        func includes(_ kind: Companion.ChatGroup.Kind) -> Bool { self == .all || self == .pinned ? kind != .dot : kind == self.kind }
     }
     /// On iPhone Golem has his own tab, so the list leaves him out.
     var hidesAssistant = true
@@ -236,7 +238,14 @@ struct ChatListView: View {
             return group
         }
         let shown = filtered(search.isEmpty || fixedPage != nil ? lists.filter { page.includes($0.kind) } : lists.filter { $0.kind != .dot })
+        if page == .pinned { return Self.pinned(shown) }
         return sorted(page == .all ? Self.mixed(shown) : shown)
+    }
+
+    /// Pinned's one list: the Mac's pinned sessions, in the Mac's order.
+    static func pinned(_ groups: [Companion.ChatGroup]) -> [Companion.ChatGroup] {
+        let chats = groups.flatMap(\.chats).filter { $0.pinnedRank != nil }.sorted { ($0.pinnedRank ?? 0) < ($1.pinnedRank ?? 0) }
+        return chats.isEmpty ? [] : [Companion.ChatGroup(id: "pinned", kind: .chats, title: "Pinned", chats: chats)]
     }
 
     /// All's one list: every page's sessions together, newest first, each project's or chat's
@@ -338,8 +347,9 @@ struct ChatListView: View {
     private var emptyPage: some View {
         if store.chatList != nil, groups.isEmpty {
             if search.isEmpty {
-                ContentUnavailableView(page == .all ? "No Sessions" : "No \(page.title)", systemImage: page.icon,
+                ContentUnavailableView(page == .all ? "No Sessions" : page == .pinned ? "Nothing Pinned" : "No \(page.title)", systemImage: page.icon,
                                        description: Text(page == .all ? "Projects, Studios and sessions from the Mac show up here." : page == .studios ? "Studios you make on the Mac show up here." :
+                                                         page == .pinned ? "Sessions you pin on the Mac (right-click, Pin to Top) show up here, in the same order." :
                                                          page == .projects ? "Projects you open on the Mac show up here." :
                                                          "Chats outside a project or Studio show up here."))
             } else {

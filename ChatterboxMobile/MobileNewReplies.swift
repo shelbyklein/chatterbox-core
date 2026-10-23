@@ -239,9 +239,9 @@ private struct MobileActivityRows: UIViewRepresentable {
         table.delegate = context.coordinator
         table.isScrollEnabled = false
         table.backgroundColor = .secondarySystemGroupedBackground
-        table.separatorInset = UIEdgeInsets(top: 0, left: 40, bottom: 0, right: 0)
+        table.separatorInset = UIEdgeInsets(top: 0, left: 32, bottom: 0, right: 0)
         table.rowHeight = UITableView.automaticDimension
-        table.estimatedRowHeight = 64
+        table.estimatedRowHeight = 36
         table.register(MobileActivityCell.self, forCellReuseIdentifier: "activity")
         return table
     }
@@ -371,7 +371,8 @@ private final class MobileActivityCell: UITableViewCell {
         NSLayoutConstraint.activate([dot.widthAnchor.constraint(equalToConstant: 8), dot.heightAnchor.constraint(equalToConstant: 8)])
         spinner.transform = CGAffineTransform(scaleX: 0.6, y: 0.6)
         provider.contentMode = .scaleAspectFit
-        name.font = UIFontMetrics(forTextStyle: .body).scaledFont(for: .systemFont(ofSize: 17, weight: .semibold))
+        // Compact, like the Mac's Activity: the status, then the title.
+        name.font = UIFontMetrics(forTextStyle: .subheadline).scaledFont(for: .systemFont(ofSize: 15, weight: .medium))
         subtitle.font = .preferredFont(forTextStyle: .caption1); subtitle.textColor = .secondaryLabel
         time.font = .preferredFont(forTextStyle: .caption2); time.textColor = .secondaryLabel
         time.numberOfLines = 2; time.textAlignment = .right
@@ -379,7 +380,8 @@ private final class MobileActivityCell: UITableViewCell {
         sidequest.contentMode = .scaleAspectFit; sidequest.tintColor = .secondaryLabel
         let title = UIStackView(arrangedSubviews: [name, sidequest]); title.spacing = 4; title.alignment = .center
         let text = UIStackView(arrangedSubviews: [title, subtitle]); text.axis = .vertical; text.spacing = 2
-        let row = UIStackView(arrangedSubviews: [status, provider, text, time]); row.spacing = 10; row.alignment = .center
+        subtitle.isHidden = true; time.isHidden = true; provider.isHidden = true
+        let row = UIStackView(arrangedSubviews: [status, text]); row.spacing = 10; row.alignment = .center
         row.translatesAutoresizingMaskIntoConstraints = false; contentView.addSubview(row)
         text.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         time.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -392,9 +394,9 @@ private final class MobileActivityCell: UITableViewCell {
             time.widthAnchor.constraint(lessThanOrEqualToConstant: 80),
             row.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
             row.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
-            row.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 10),
-            row.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -10),
-            contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 54)
+            row.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 7),
+            row.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -7),
+            contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 36)
         ])
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -403,7 +405,7 @@ private final class MobileActivityCell: UITableViewCell {
         let chat = entry.chat
         name.text = entry.title
         sidequest.isHidden = !chat.isSidequest
-        subtitle.text = entry.subtitle; subtitle.isHidden = entry.subtitle?.isEmpty != false
+        subtitle.text = entry.subtitle
         let accent = UIColor(MobileConversationStyle.accent(for: entry.backend))
         provider.image = UIImage(named: (Backend(rawValue: entry.backend) ?? .claude).iconName)?.withRenderingMode(.alwaysTemplate)
         provider.tintColor = accent; spinner.color = accent

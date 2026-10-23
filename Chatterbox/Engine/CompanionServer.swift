@@ -878,7 +878,8 @@ enum CompanionMapper {
                      tags: session.tags.isEmpty ? nil : session.tags,
                      turnsToday: activity.day, turnsThisWeek: activity.week, turnsPerDay: activity.perDay,
                      thumbnail: thumbnail(session), turnStartedAt: session.isRunning ? session.record.turnStartedAt : nil,
-                     canPromote: ChatPromotion.eligible(session), brief: session.record.brief)
+                     canPromote: ChatPromotion.eligible(session), brief: session.record.brief,
+                     pinnedRank: (AppPreferences.defaults.stringArray(forKey: "macPinnedThreads") ?? []).firstIndex(of: session.id.uuidString))
     }
 
     private static func thumbnail(_ session: ChatSession) -> Companion.File? {
