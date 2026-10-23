@@ -166,6 +166,17 @@ final class AppModel {
     func canPinThread(_ session: ChatSession) -> Bool {
         session.record.worktreeOf == nil && session.record.sidechatOf == nil && !session.isDot
     }
+    /// The pins the service has (the phone may have changed them while the app was closed).
+    func reloadPinnedThreads() {
+        let saved = (AppPreferences.defaults.stringArray(forKey: "macPinnedThreads") ?? []).compactMap(UUID.init)
+        if saved != pinnedThreadIDs { pinnedThreadIDs = saved }
+    }
+
+    /// Pin or unpin from the phone (CompanionServer), where the app runs it itself.
+    func setPinned(_ session: ChatSession, _ pinned: Bool) {
+        if pinned != isPinnedThread(session) { togglePinnedThread(session) }
+    }
+
     func togglePinnedThread(_ session: ChatSession) {
         if isPinnedThread(session) { pinnedThreadIDs.removeAll { $0 == session.id } }
         else if canPinThread(session) { pinnedThreadIDs.append(session.id) }
@@ -1182,6 +1193,7 @@ final class AppModel {
             saveNavigationSoon()
             for session in sessions { session.resendDraftIfUnsynced() }
             await RuntimePreferenceProjection.shared.start()
+            reloadPinnedThreads()
             PinStore.shared.applyRuntimePins(try await RuntimeClient.shared.request("getPins").decode([Pin].self))
             let elapsed=Date().timeIntervalSince(started)
             if elapsed > 2 { Diagnostics.note("Session list took \(String(format:"%.1f",elapsed)) s to load from the background service (\(states.count) sessions)") }
@@ -1205,6 +1217,8 @@ final class AppModel {
         #endif
         #if !GOLEM_APP
         if event.kind=="pin.open",let raw=event.payload,let pin=try? raw.decode(Pin.self){PinStore.shared.open(pin);return}
+        // Pinned or unpinned on the phone: the service sends the new list.
+        if event.kind=="pins.changed",let ids=event.payload?.array {pinnedThreadIDs=ids.compactMap{$0.string.flatMap(UUID.init(uuidString:))};return}
         #endif
         if event.kind == "runtime.resync" { projectionRevisions.removeAll() }
         if event.kind=="runtime.resync" || event.kind=="runtime.configuration" || event.kind=="chat.created" || event.kind=="chat.deleted" {

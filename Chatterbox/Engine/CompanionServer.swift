@@ -519,6 +519,11 @@ final class CompanionServer {
             return .json(CompanionMapper.detail(session, model: model))
         case ("GET", 2) where parts[1] == "usage":
             return usageResponse(refresh: request.query["refresh"] == "1")
+        case ("POST", 4) where parts[1] == "chats" && parts[3] == "pin":
+            guard let session = session(parts[2]), !session.isDot else { return .error(404, "That session is gone.") }
+            guard let body = try? Companion.decoder.decode(Companion.PinRequest.self, from: request.body) else { return .error(400, "Bad pin.") }
+            model.setPinned(session, body.pinned)
+            return .json(CompanionMapper.detail(session, model: model))
         case ("POST", 4) where parts[1] == "chats" && parts[3] == "brief":
             guard let session = session(parts[2]), !session.isDot else { return .error(404, "That session is gone.") }
             guard let body = try? Companion.decoder.decode(Companion.BriefRequest.self, from: request.body) else { return .error(400, "Bad brief.") }

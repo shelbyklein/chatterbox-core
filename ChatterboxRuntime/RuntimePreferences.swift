@@ -25,6 +25,8 @@ enum RuntimePreferences {
             case .string(let x):existing[key]=x
             case .bool(let x):existing[key]=x
             case .number(let x):existing[key]=x
+            // Lists of text (the Mac's pinned sessions).
+            case .array(let items):existing[key]=items.compactMap(\.string)
             case .null:existing.removeValue(forKey:key)
             default:throw RuntimeFailure("invalid_preference_value")
             }

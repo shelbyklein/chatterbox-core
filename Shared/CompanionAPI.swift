@@ -290,6 +290,11 @@ enum Companion {
         var title: String
     }
 
+    /// Pin to Top on the Mac, or not.
+    struct PinRequest: Codable {
+        var pinned: Bool
+    }
+
     /// The accounts' usage, as the Mac sees it: each agent's limit windows (from its latest
     /// report) and, with EasyCLIProxy, each proxy account's remaining quota.
     struct Usage: Codable {

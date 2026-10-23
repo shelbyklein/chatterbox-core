@@ -742,6 +742,14 @@ struct ChatDetailView: View {
             if let sessionControlStatus { Text(sessionControlStatus) }
             Button { showingSettings = true } label: { Label("Session Settings", systemImage: "slider.horizontal.3") }
                 .disabled(detail?.options == nil)
+            if !isConversation, summary.worktreeBranch == nil, summary.sidechatOf == nil {
+                Button {
+                    let pin = summary.pinnedRank == nil
+                    Task { try? await store.setPinned(chat.id, pin); history.refresh(in: store, force: true) }
+                } label: {
+                    Label(summary.pinnedRank == nil ? "Pin to Top" : "Unpin", systemImage: summary.pinnedRank == nil ? "pin" : "pin.slash")
+                }
+            }
             Button { newTitle = summary.title; renaming = true } label: { Label("Rename", systemImage: "pencil") }
             if !isConversation {
                 Button { briefText = summary.brief ?? ""; editingBrief = true } label: {

@@ -635,7 +635,19 @@ struct ChatListView: View {
         }
     }
 
+    private func pin(_ chat: Companion.ChatSummary, _ pinned: Bool) {
+        Task {
+            do { try await store.setPinned(chat.id, pinned) } catch { managementError = error.localizedDescription }
+        }
+    }
+
     @ViewBuilder private func chatActions(_ chat: Companion.ChatSummary) -> some View {
+        // Pins are the Mac's: worktrees and sidechats stay with their session there.
+        if chat.worktreeBranch == nil, chat.sidechatOf == nil {
+            Button { pin(chat, chat.pinnedRank == nil) } label: {
+                Label(chat.pinnedRank == nil ? "Pin to Top" : "Unpin", systemImage: chat.pinnedRank == nil ? "pin" : "pin.slash")
+            }
+        }
         Button { beginRename(chat) } label: { Label("Rename", systemImage: "pencil") }
         if chat.canPromote == true {
             Button { promoting = .init(chat: chat, kind: .studio) } label: { Label("Move to Studio…", systemImage: "paintpalette") }
