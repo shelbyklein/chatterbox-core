@@ -46,8 +46,23 @@ final class MacScreenSession: NSObject {
     }
 
     private(set) var state = State.idle
+    /// What's shown: one of the Mac's displays (or all of them, when there's just one).
     private(set) var image: UIImage?
     private(set) var screenSize = CGSize.zero
+    /// The Mac's displays within Screen Sharing's picture, left to right, and the one shown.
+    private(set) var screens: [CGRect] = []
+    var screenIndex = UserDefaults.standard.integer(forKey: "macScreenDisplay") {
+        didSet {
+            UserDefaults.standard.set(screenIndex, forKey: "macScreenDisplay")
+            if let full = fullImage { crop(full) }
+            pointer = CGPoint(x: visibleRect.midX, y: visibleRect.midY)
+        }
+    }
+    /// The shown display's place in Screen Sharing's picture; input is offset by its origin.
+    var visibleRect: CGRect {
+        screens.indices.contains(screenIndex) ? screens[screenIndex] : CGRect(origin: .zero, size: screenSize)
+    }
+    @ObservationIgnored private var fullImage: CGImage?
     /// Where the Mac's pointer is (screen pixels), for the trackpad, and the pointer's look,
     /// which Screen Sharing leaves to the viewer to draw.
     private(set) var pointer = CGPoint(x: -1, y: -1)
@@ -188,14 +203,30 @@ final class MacScreenSession: NSObject {
 
     fileprivate func show(_ frame: VNCFramebuffer) {
         guard let cgImage = frame.cgImage else { return }
-        show(UIImage(cgImage: cgImage))
+        show(cgImage, screens: frame.screens.map(\.cgFrame))
     }
 
-    fileprivate func show(_ image: UIImage) {
-        self.image = image
-        screenSize = image.size
-        if pointer.x < 0 { pointer = CGPoint(x: image.size.width / 2, y: image.size.height / 2) }
+    fileprivate func show(_ picture: CGImage, screens: [CGRect]) {
+        screenSize = CGSize(width: picture.width, height: picture.height)
+        // Only real displays, left to right; one display (or none reported) shows everything.
+        let bounds = CGRect(origin: .zero, size: screenSize)
+        let found = screens.map { $0.intersection(bounds) }.filter { !$0.isEmpty }
+            .sorted { ($0.minX, $0.minY) < ($1.minX, $1.minY) }
+        let displays = found.count > 1 ? found : []
+        if displays != self.screens {
+            self.screens = displays
+            if !displays.indices.contains(screenIndex) { screenIndex = 0 }
+        }
+        fullImage = picture
+        crop(picture)
+        if pointer.x < 0 || !visibleRect.contains(pointer) { pointer = CGPoint(x: visibleRect.midX, y: visibleRect.midY) }
         if state != .connected { state = .connected }
+    }
+
+    /// The shown display's part of the picture (cropping shares the pixels; no copy).
+    private func crop(_ picture: CGImage) {
+        let rect = visibleRect.integral
+        image = UIImage(cgImage: picture.cropping(to: rect) ?? picture)
     }
 
     fileprivate func showCursor(_ cursor: VNCCursor) {
@@ -205,7 +236,10 @@ final class MacScreenSession: NSObject {
 
     #if DEBUG
     /// Tests: a still picture in place of the Mac, so the layout can be checked without signing in.
-    func showForTesting(_ image: UIImage) { state = .connected; show(image) }
+    func showForTesting(_ image: UIImage, screens: [CGRect] = []) {
+        state = .connected
+        if let picture = image.cgImage { show(picture, screens: screens) }
+    }
     #endif
 
     // MARK: - Input (framebuffer pixels)
@@ -228,8 +262,10 @@ final class MacScreenSession: NSObject {
     func move(to point: CGPoint) { pointer = clamped(point); let (x, y) = xy(point); connection?.mouseMove(x: x, y: y) }
     func release(at point: CGPoint) { pointer = clamped(point); let (x, y) = xy(point); connection?.mouseButtonUp(.left, x: x, y: y) }
 
+    /// Kept on the display that's shown.
     private func clamped(_ point: CGPoint) -> CGPoint {
-        CGPoint(x: min(max(point.x, 0), max(screenSize.width - 1, 0)), y: min(max(point.y, 0), max(screenSize.height - 1, 0)))
+        let rect = visibleRect
+        return CGPoint(x: min(max(point.x, rect.minX), max(rect.maxX - 1, rect.minX)), y: min(max(point.y, rect.minY), max(rect.maxY - 1, rect.minY)))
     }
 
     // Trackpad: everything happens where the pointer is.
@@ -358,7 +394,7 @@ struct MacScreenView: View {
         .onAppear {
             #if DEBUG
             if ProcessInfo.processInfo.environment["CHATTERBOX_TEST_MAC_SCREEN"] != nil {
-                session.showForTesting(MacScreenView.testPicture())
+                session.showForTesting(MacScreenView.testPicture(), screens: MacScreenView.testDisplays)
                 return
             }
             #endif
@@ -373,6 +409,20 @@ struct MacScreenView: View {
 
     private var controls: some View {
         HStack(spacing: 10) {
+            // One display at a time; the arrows move between them.
+            if session.screens.count > 1 {
+                Button { session.screenIndex = (session.screenIndex + session.screens.count - 1) % session.screens.count } label: {
+                    Image(systemName: "chevron.left")
+                }
+                .accessibilityLabel("Previous Display")
+                Text("\(session.screenIndex + 1) of \(session.screens.count)")
+                    .font(.callout.monospacedDigit()).accessibilityIdentifier("mac-screen-display")
+                Button { session.screenIndex = (session.screenIndex + 1) % session.screens.count } label: {
+                    Image(systemName: "chevron.right")
+                }
+                .accessibilityLabel("Next Display")
+                Divider().frame(height: 18).overlay(Color.white.opacity(0.4))
+            }
             if session.state == .connected, !laptop {
                 Button { typing.toggle() } label: { Image(systemName: typing ? "keyboard.chevron.compact.down" : "keyboard") }
                     .accessibilityLabel(typing ? "Hide Keyboard" : "Keyboard")
@@ -401,14 +451,19 @@ struct MacScreenView: View {
     }
 
     #if DEBUG
-    /// A stand-in Mac screen for layout tests: a desktop with a window.
+    /// Stand-in Mac displays for layout tests: two, side by side, as Screen Sharing sends them.
+    static let testDisplays = [CGRect(x: 0, y: 0, width: 1800, height: 1169), CGRect(x: 1800, y: 0, width: 1512, height: 982)]
+
     static func testPicture() -> UIImage {
-        let size = CGSize(width: 1800, height: 1169)
+        let size = CGSize(width: 3312, height: 1169)
         return UIGraphicsImageRenderer(size: size, format: { let f = UIGraphicsImageRendererFormat(); f.scale = 1; return f }()).image { context in
-            UIColor(red: 0.18, green: 0.32, blue: 0.55, alpha: 1).setFill(); context.fill(CGRect(origin: .zero, size: size))
-            UIColor(white: 0.95, alpha: 1).setFill(); context.fill(CGRect(x: 0, y: 0, width: size.width, height: 44))
-            UIColor.white.setFill(); context.fill(CGRect(x: 300, y: 200, width: 1200, height: 760))
-            ("Mac Screen test" as NSString).draw(at: CGPoint(x: 340, y: 240), withAttributes: [.font: UIFont.systemFont(ofSize: 64, weight: .semibold)])
+            for (index, display) in testDisplays.enumerated() {
+                (index == 0 ? UIColor(red: 0.18, green: 0.32, blue: 0.55, alpha: 1) : UIColor(red: 0.45, green: 0.2, blue: 0.4, alpha: 1)).setFill()
+                context.fill(display)
+                UIColor(white: 0.95, alpha: 1).setFill(); context.fill(CGRect(x: display.minX, y: 0, width: display.width, height: 44))
+                UIColor.white.setFill(); context.fill(CGRect(x: display.minX + 200, y: 200, width: display.width - 400, height: display.height - 400))
+                ("Display \(index + 1)" as NSString).draw(at: CGPoint(x: display.minX + 240, y: 240), withAttributes: [.font: UIFont.systemFont(ofSize: 64, weight: .semibold)])
+            }
         }
     }
     #endif
@@ -477,7 +532,8 @@ struct MacScreenCanvas: UIViewRepresentable {
     func updateUIView(_ view: MacScreenScrollView, context: Context) {
         context.coordinator.session = session
         view.show(image)
-        view.showPointer(session.cursor, at: session.pointer, hotspot: session.cursorHotspot)
+        let origin = session.visibleRect.origin
+        view.showPointer(session.cursor, at: CGPoint(x: session.pointer.x - origin.x, y: session.pointer.y - origin.y), hotspot: session.cursorHotspot)
         if typing != view.keyInput.isFirstResponder {
             if typing { view.keyInput.becomeFirstResponder() } else { view.keyInput.resignFirstResponder() }
         }
@@ -490,7 +546,12 @@ struct MacScreenCanvas: UIViewRepresentable {
         private var lastScroll: CGFloat = 0
         init(session: MacScreenSession) { self.session = session }
 
-        private func point(_ gesture: UIGestureRecognizer) -> CGPoint { gesture.location(in: view?.imageView) }
+        /// A touch's point in Screen Sharing's picture: the shown display starts at its origin.
+        private func point(_ gesture: UIGestureRecognizer) -> CGPoint {
+            let local = gesture.location(in: view?.imageView)
+            let origin = session.visibleRect.origin
+            return CGPoint(x: local.x + origin.x, y: local.y + origin.y)
+        }
 
         @objc func tap(_ g: UITapGestureRecognizer) { session.click(at: point(g)) }
         @objc func doubleTap(_ g: UITapGestureRecognizer) { session.click(at: point(g), count: 2) }
@@ -570,6 +631,8 @@ final class MacScreenScrollView: UIScrollView, UIScrollViewDelegate {
         imageView.image = image
         guard image.size != imageSize else { return }
         imageSize = image.size
+        // Unzoomed first: the frame is set in Mac pixels, then fitted (another display's size).
+        zoomScale = 1
         imageView.frame = CGRect(origin: .zero, size: image.size)
         contentSize = image.size
         fit()
