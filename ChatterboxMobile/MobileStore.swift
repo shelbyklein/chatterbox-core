@@ -39,6 +39,8 @@ final class MobileStore {
     @ObservationIgnored var pendingImages: [UUID: [PendingImage]] = [:]
 
     @ObservationIgnored private var composers: [UUID: MobileComposerDraft<PendingImage>] = [:]
+    /// Mac Screen (the ⋯ menu): the Mac's screen, to see and control.
+    var showingMacScreen = false
     /// Feedback (top bar): the app's screenshot open in Mark Up.
     var feedbackSketch: SketchRequest?
     var feedbackProblem: String?

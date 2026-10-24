@@ -571,6 +571,9 @@ struct ChatListView: View {
             }
         }
         Button { showingActivity = true } label: { Label("Activity", systemImage: "clock") }
+        #if canImport(RoyalVNCKit) && !GOLEM_APP
+        Button { store.showingMacScreen = true } label: { Label("Mac Screen", systemImage: "display") }
+        #endif
         Button { showingUsage = true } label: { Label("Usage", systemImage: "chart.bar.xaxis") }
         Button { notificationSettings = true } label: { Label("Notifications", systemImage: "bell") }
         Button { appearance = true } label: { Label("Appearance", systemImage: "paintbrush") }
