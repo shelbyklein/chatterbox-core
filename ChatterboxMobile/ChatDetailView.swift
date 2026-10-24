@@ -371,9 +371,7 @@ struct ChatDetailView: View {
                     } else if error == nil && history.problem == nil {
                         ProgressView().frame(maxWidth: .infinity)
                     }
-                    if let error = error ?? history.problem {
-                        Label(error, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.orange)
-                    }
+                    if let error = error ?? history.problem { MobileProblemCard(error) }
                     // Include the bottom margin in the target, so scrolling reaches the true end.
                     Color.clear.frame(height: 1).padding(.bottom, 16).id("bottom")
                         // Before iOS 18 there's no scroll geometry: row appearance stands in for it

@@ -24,18 +24,78 @@ struct ChatSettingsForm<Leading: View>: View {
     let apply: (Companion.SettingsRequest) -> Void
     @ViewBuilder var leading: () -> Leading
 
-    /// Which agent's models the list shows; picking one from the other agent switches to it.
+    /// Which provider's models the list shows ("claude", "codex" or "open"); picking one
+    /// from another provider switches to it.
     @State private var browsing: String?
     private var isCodex: Bool { options.backend == "codex" }
     private var models: [Companion.ModelOption] { isCodex ? options.codexModels : options.claudeModels }
     private var currentModel: Companion.ModelOption? { models.first { $0.id == options.model } }
-    private var shownAgent: String { browsing ?? options.backend }
-    private var shownModels: [Companion.ModelOption] { shownAgent == "codex" ? options.codexModels : options.claudeModels }
+    /// The provider in use: an open model's, or the agent's.
+    private var provider: String { options.openModel != nil ? "open" : options.backend }
+    private var currentID: String { options.openModel ?? options.model }
+    private var shownProvider: String { browsing ?? provider }
+    private var shownModels: [Companion.ModelOption] {
+        switch shownProvider {
+        case "open": options.openModels ?? []
+        case "codex": options.codexModels
+        default: options.claudeModels
+        }
+    }
+
+    private var emptyNote: String {
+        switch shownProvider {
+        case "open": "No open models: the PC is off or still being checked."
+        case "codex": "Models load once Codex starts on the Mac."
+        default: "Models load once Claude Code starts on the Mac."
+        }
+    }
+
+    private func change(picking model: Companion.ModelOption) -> Companion.SettingsRequest {
+        switch shownProvider {
+        case "open": .init(openModel: model.id)
+        case options.backend: .init(model: model.id)
+        default: .init(backend: shownProvider, model: model.id)
+        }
+    }
+
+    private func detail(for model: Companion.ModelOption) -> String {
+        shownProvider == "open" || shownProvider == options.backend ? model.detail
+            : "switches to \(shownProvider == "codex" ? "Codex" : "Claude")"
+    }
 
     var body: some View {
             Form {
                 leading()
-                if let efforts = currentModel?.efforts, !efforts.isEmpty {
+                Section {
+                    // The provider first; its models drop down under it. Picking another
+                    // provider's model switches to it.
+                    Picker("Provider", selection: Binding(get: { shownProvider }, set: { browsing = $0 })) {
+                        Text("Claude").tag("claude")
+                        Text("Codex").tag("codex")
+                        if options.openModels != nil { Text("Open models").tag("open") }
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityIdentifier("model-provider")
+                    if shownModels.isEmpty {
+                        Text(emptyNote).foregroundStyle(.secondary)
+                    }
+                    ForEach(shownModels) { model in
+                        Button {
+                            apply(change(picking: model))
+                            browsing = nil
+                        } label: {
+                            row(model.name, detail: detail(for: model), isOn: shownProvider == provider && model.id == currentID)
+                        }
+                        .buttonStyle(ChoiceRowStyle())
+                    }
+                } header: {
+                    Text("Model")
+                } footer: {
+                    if shownProvider == "open" {
+                        Text("Run by \(isCodex ? "Codex" : "Claude Code") on the PC's graphics card, at medium effort.")
+                    }
+                }
+                if options.openModel == nil, let efforts = currentModel?.efforts, !efforts.isEmpty {
                     Section {
                         EffortSlider(efforts: efforts, effort: options.effort, defaultEffort: currentModel?.defaultEffort) {
                             apply(.init(effort: $0))
@@ -61,27 +121,6 @@ struct ChatSettingsForm<Leading: View>: View {
                     }
                 }
 
-                Section("Models") {
-                    // Browses either agent's list; picking from the other one switches to it.
-                    Picker("Agent", selection: Binding(get: { shownAgent }, set: { browsing = $0 })) {
-                        Text("Claude").tag("claude")
-                        Text("Codex").tag("codex")
-                    }
-                    .pickerStyle(.segmented)
-                    if shownModels.isEmpty {
-                        Text("Models load once \(shownAgent == "codex" ? "Codex" : "Claude Code") starts on the Mac.").foregroundStyle(.secondary)
-                    }
-                    ForEach(shownModels) { model in
-                        Button {
-                            apply(shownAgent == options.backend ? .init(model: model.id) : .init(backend: shownAgent, model: model.id))
-                            browsing = nil
-                        } label: {
-                            row(model.name, detail: shownAgent == options.backend ? model.detail : "switches to \(shownAgent == "codex" ? "Codex" : "Claude")",
-                                isOn: shownAgent == options.backend && model.id == options.model)
-                        }
-                        .buttonStyle(ChoiceRowStyle())
-                    }
-                }
             }
     }
 

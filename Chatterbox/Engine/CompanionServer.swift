@@ -500,7 +500,8 @@ final class CompanionServer {
             let picks = Companion.SettingsRequest(backend: request.query["backend"], model: request.query["model"],
                                                   effort: request.query["effort"], mode: request.query["mode"],
                                                   preset: request.query["preset"].flatMap(UUID.init(uuidString:)),
-                                                  fastMode: request.query["fastMode"].map { $0 == "true" })
+                                                  fastMode: request.query["fastMode"].map { $0 == "true" },
+                                                  openModel: request.query["openModel"])
             return .json(CompanionMapper.options(CompanionMapper.draftChat(picks, studio: request.query["studio"].flatMap(UUID.init(uuidString:)).flatMap(model.studio))))
         case ("GET", 2) where parts[1] == "presets":
             return .json(ModelPresets.shared.presets.map {
@@ -965,6 +966,12 @@ enum CompanionMapper {
                                       detail: entry.isClaude ? "Claude, through the proxy" : (entry.model.isDefault ? "Codex's default" : ""),
                                       efforts: entry.model.efforts, defaultEffort: entry.model.defaultEffort)
             }
+        // The PC's list, as the Mac's picker loads it (at most once a minute).
+        if !session.isDot { Task { await PCModels.shared.refresh() } }
+        let open = session.isDot ? nil : PCModels.shared.models.map {
+            Companion.ModelOption(id: $0, name: $0, detail: $0 == PCModels.recommended ? "On \(RemoteMachine.pc.name); fits its graphics card, fastest" : "On \(RemoteMachine.pc.name)",
+                                  efforts: [], defaultEffort: nil)
+        }
         let modes = PermissionModes.modes(for: session.record.backend).map {
             Companion.ModeOption(id: $0.id, title: $0.title, detail: $0.detail, systemImage: $0.systemImage, isUnrestricted: $0.isUnrestricted)
         }
@@ -975,7 +982,8 @@ enum CompanionMapper {
                      model: isCodex ? (session.record.codex?.model ?? "") : claudeOptionID(session.record.model),
                      effort: isCodex ? (session.record.codex?.effort ?? "") : session.record.effort,
                      claudeModels: claude, codexModels: codex, modes: modes, mode: session.mode.id, presets: presets,
-                     fastMode: session.supportsFastMode ? session.fastMode : nil)
+                     fastMode: session.supportsFastMode ? session.fastMode : nil,
+                     openModels: open, openModel: session.record.openModel)
     }
 
     /// A chat that's never saved, set up as a new one would be, then with `picks` applied:
@@ -1004,6 +1012,11 @@ enum CompanionMapper {
     static func apply(_ change: Companion.SettingsRequest, to session: ChatSession) {
         if let backend = change.backend.flatMap(Backend.init(rawValue:)), backend != session.record.backend {
             session.setBackend(backend)
+        }
+        if let open = change.openModel {
+            session.setOpenModel(open.isEmpty ? nil : open)
+        } else if change.model != nil, session.record.openModel != nil {
+            session.setOpenModel(nil)
         }
         let isCodex = session.record.backend == .codex
         if let model = change.model {

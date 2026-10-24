@@ -285,7 +285,7 @@ final class MobileStore {
         var query = URLComponents()
         query.queryItems = [("backend", picks.backend), ("model", picks.model), ("effort", picks.effort), ("mode", picks.mode),
                             ("preset", picks.preset?.uuidString), ("fastMode", picks.fastMode.map { $0 ? "true" : "false" }),
-                            ("studio", studio?.uuidString)]
+                            ("openModel", picks.openModel), ("studio", studio?.uuidString)]
             .compactMap { name, value in value.map { URLQueryItem(name: name, value: $0) } }
         return try await call("/v1/new-chat-options" + (query.percentEncodedQuery.map { "?" + $0 } ?? ""))
     }
@@ -479,9 +479,9 @@ final class MobileStore {
         } catch {
             try Task.checkCancellation()
             let away = connection.hosts.contains(where: Self.isTailscale)
-                ? "Away from home, Tailscale has to be on, on this phone and on the Mac."
-                : "To reach it away from home, turn on Tailscale on the Mac and this phone, then open Chatterbox at home once."
-            throw MobileError(message: "Can't reach \(connection.macName). Make sure it's awake and Chatterbox is open. \(away) (\(error.localizedDescription))")
+                ? "Away from home, turn on Tailscale."
+                : "Away from home, it needs Tailscale."
+            throw MobileError(message: "Can't reach \(connection.macName). Is it awake, with Chatterbox open? \(away)")
         }
     }
 

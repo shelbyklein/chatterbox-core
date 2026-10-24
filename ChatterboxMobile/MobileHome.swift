@@ -112,8 +112,8 @@ struct GolemHome: View {
                             if MobilePushNotifications.shared.readingChat == chat.id { MobilePushNotifications.shared.readingChat = nil }
                         }
                 } else if let problem = store.problem {
-                    ContentUnavailableView("Can't reach \(store.connection?.macName ?? "your Mac")", systemImage: "wifi.exclamationmark",
-                                           description: Text(problem))
+                    MobileProblemCard(problem)
+                        .padding(.horizontal, 24).frame(maxWidth: 420)
                 } else {
                     ProgressView()
                 }

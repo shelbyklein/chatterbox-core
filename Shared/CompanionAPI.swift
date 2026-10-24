@@ -217,6 +217,11 @@ enum Companion {
         /// No longer filled (presets are gone); older phones read an empty list.
         var presets: [PresetOption]
         var fastMode: Bool? = nil
+        /// Open-weight models on the PC, run by the chat's agent; nil where they can't be picked
+        /// (Golem, or an older Mac).
+        var openModels: [ModelOption]? = nil
+        /// The open model in use; nil: the agent's own.
+        var openModel: String? = nil
     }
 
     struct ModelOption: Codable, Hashable, Identifiable {
@@ -261,6 +266,9 @@ enum Companion {
         var mode: String? = nil
         var preset: UUID? = nil
         var fastMode: Bool? = nil
+        /// An open model on the PC; empty: back to the agent's own. Picking a model without
+        /// this also leaves the open model.
+        var openModel: String? = nil
     }
 
     /// A new chat, in a Studio or on its own.

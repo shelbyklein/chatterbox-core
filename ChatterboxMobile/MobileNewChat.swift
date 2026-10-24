@@ -40,7 +40,7 @@ struct MobileNewChatSheet: View {
                     // As in Chat Settings: the app's blue, whichever agent is picked.
                     .tint(.blue)
                 } else if let problem {
-                    ContentUnavailableView("Can't reach the Mac", systemImage: "wifi.exclamationmark", description: Text(problem))
+                    MobileProblemCard(problem).padding(.horizontal, 24).frame(maxWidth: 420, maxHeight: .infinity)
                 } else {
                     ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
@@ -66,8 +66,10 @@ struct MobileNewChatSheet: View {
         } else if let backend = change.backend, backend != options?.backend {
             // Another agent's model: that agent, with the model picked.
             picks = .init(backend: backend, model: change.model)
+        } else if let open = change.openModel {
+            picks.openModel = open; picks.effort = nil
         } else {
-            if let model = change.model { picks.model = model; picks.effort = nil }
+            if let model = change.model { picks.model = model; picks.effort = nil; picks.openModel = nil }
             if let effort = change.effort { picks.effort = effort }
             if let mode = change.mode { picks.mode = mode }
             if let fast = change.fastMode { picks.fastMode = fast }
@@ -86,7 +88,8 @@ struct MobileNewChatSheet: View {
         Task {
             do {
                 // The settings as shown, so the chat starts exactly as picked.
-                let settings = Companion.SettingsRequest(model: options.model, effort: options.effort, mode: options.mode, fastMode: options.fastMode)
+                let settings = Companion.SettingsRequest(model: options.model, effort: options.effort, mode: options.mode, fastMode: options.fastMode,
+                                                         openModel: options.openModel)
                 let detail = try await store.newChat(in: studio, backend: options.backend, preset: picks.preset, settings: settings, title: name)
                 dismiss()
                 start(detail)

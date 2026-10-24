@@ -97,36 +97,22 @@ struct ChatListView: View {
                             } label: { Image(systemName: "ellipsis.circle") }
                             .accessibilityLabel("Studio options")
                         }
-                    } else if sizeClass == .regular {
-                        // Keep the sidebar's title readable alongside its native toggle.
+                    } else {
+                        // Sort and layout live in the menu, so the bar keeps to three buttons:
+                        // on a closed iPhone Duo it runs down the side, and more would push
+                        // New Chat into an overflow menu.
                         ToolbarItem(placement: .topBarTrailing) {
                             Menu {
                                 connectionItems
-                                Picker("Sort", selection: $sortName) {
-                                    ForEach(Sort.allCases) { Label($0.title, systemImage: $0.icon).tag($0.rawValue) }
+                                Picker("Sort", selection: Binding(get: { sort }, set: { new in withAnimation(.easeOut(duration: 0.2)) { sortName = new.rawValue } })) {
+                                    ForEach(Sort.allCases) { Label($0.title, systemImage: $0.icon).tag($0) }
                                 }
-                                Button { withAnimation { showsCards.toggle() } } label: {
+                                Button { withAnimation(.easeOut(duration: 0.2)) { showsCards.toggle() } } label: {
                                     Label(showsCards ? "Show as List" : "Show as Cards", systemImage: showsCards ? "list.bullet" : "square.grid.2x2")
                                 }
                             } label: { Image(systemName: "ellipsis.circle") }
                             .accessibilityLabel("Connection")
                         }
-                    } else {
-                    ToolbarItem(placement: .topBarTrailing) { connectionMenu }
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Menu {
-                            Picker("Sort", selection: Binding(get: { sort }, set: { new in withAnimation(.easeOut(duration: 0.2)) { sortName = new.rawValue } })) {
-                                ForEach(Sort.allCases) { Label($0.title, systemImage: $0.icon).tag($0) }
-                            }
-                        } label: { Image(systemName: "arrow.up.arrow.down") }
-                        .accessibilityLabel("Sort, \(sort.title)")
-                    }
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button { withAnimation(.easeOut(duration: 0.2)) { showsCards.toggle() } } label: {
-                            Image(systemName: showsCards ? "list.bullet" : "square.grid.2x2")
-                        }
-                        .accessibilityLabel(showsCards ? "Show as List" : "Show as Cards")
-                    }
                     }
                     ToolbarItem(placement: .topBarTrailing) { FeedbackButton() }
                     ToolbarItem(placement: .topBarTrailing) { newChatMenu }
@@ -384,9 +370,7 @@ struct ChatListView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 18) {
                 loadingStatus
-                if let problem = store.problem {
-                    Label(problem, systemImage: "wifi.exclamationmark").font(.callout).foregroundStyle(.orange)
-                }
+                if let problem = store.problem { MobileProblemCard(problem) }
                 if let list = store.chatList {
                     if search.isEmpty { MobileNewReplies(activity: list.activity ?? [], chats: allChats, summary: summary(for:), open: open, rename: beginRename) }
                     if search.isEmpty, let pins = list.pins, !pins.isEmpty { MobilePinPills(pins: pins) }
@@ -436,9 +420,7 @@ struct ChatListView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 16) {
                 loadingStatus
-                if let problem = store.problem {
-                    Label(problem, systemImage: "wifi.exclamationmark").font(.callout).foregroundStyle(.orange)
-                }
+                if let problem = store.problem { MobileProblemCard(problem) }
                 if let list = store.chatList {
                     if search.isEmpty {
                         MobileNewReplies(activity: list.activity ?? [], chats: allChats, summary: summary(for:), open: open, rename: beginRename)
@@ -513,11 +495,8 @@ struct ChatListView: View {
         List {
             loadingStatus.listRowBackground(Color.clear)
             if let problem = store.problem {
-                Section {
-                    Label(problem, systemImage: "wifi.exclamationmark")
-                        .font(.callout)
-                        .foregroundStyle(.orange)
-                }
+                MobileProblemCard(problem)
+                    .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16)).listRowBackground(Color.clear).listRowSeparator(.hidden)
             }
             if let list = store.chatList {
                 if search.isEmpty {
@@ -558,18 +537,9 @@ struct ChatListView: View {
         }
     }
 
-    private var connectionMenu: some View {
-        Menu { connectionItems } label: { Image(systemName: "ellipsis.circle") }
-            .accessibilityLabel("Connection")
-    }
-
     @ViewBuilder
     private var connectionItems: some View {
-        if let connection = store.connection {
-            Section("Connected to \(connection.macName)") {
-                ForEach(connection.hosts, id: \.self) { Text($0) }
-            }
-        }
+        if let connection = store.connection { Text("Connected to \(connection.macName)") }
         Button { showingActivity = true } label: { Label("Activity", systemImage: "clock") }
         #if canImport(RoyalVNCKit) && !GOLEM_APP
         Button { store.showingMacScreen = true } label: { Label("Mac Screen", systemImage: "display") }
@@ -934,5 +904,31 @@ private struct StudioIndexCard: View {
             guard let chat = coverChat, let file = chat.thumbnail else { cover = nil; return }
             cover = try? await store.thumbnail(file, in: chat.id)
         }
+    }
+}
+
+/// Trouble reaching the Mac, as a small card: its first sentence as the title, the rest under it.
+struct MobileProblemCard: View {
+    private let title: String
+    private let detail: String
+
+    init(_ problem: String) {
+        let parts = problem.split(separator: ". ", maxSplits: 1)
+        title = String(parts[0]).trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        detail = parts.count > 1 ? String(parts[1]) : ""
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: title.hasPrefix("Can't reach") ? "wifi.exclamationmark" : "exclamationmark.triangle").foregroundStyle(.orange).font(.body.weight(.semibold))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.subheadline.weight(.semibold))
+                if !detail.isEmpty { Text(detail).font(.footnote).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 10)
+        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .accessibilityElement(children: .combine)
     }
 }
