@@ -1,4 +1,5 @@
 #if canImport(RoyalVNCKit) && !GOLEM_APP
+import Network
 import RoyalVNCKit
 import Security
 import SwiftUI
@@ -57,6 +58,10 @@ final class MacScreenSession: NSObject {
     }
 
     @ObservationIgnored private var connection: VNCConnection?
+    /// What it's doing while connecting, so a slow step shows.
+    private(set) var step = "Finding your Mac\u{2026}"
+    /// The Mac's addresses (home network, Tailscale); the one that answers first is used.
+    @ObservationIgnored private var hosts: [String] = []
     @ObservationIgnored private var host = ""
     @ObservationIgnored private var attempts = 0
     /// Frames arrive on RoyalVNC's own queue; one redraw at a time is queued for the main thread.
@@ -64,8 +69,9 @@ final class MacScreenSession: NSObject {
     @ObservationIgnored private let redrawLock = NSLock()
 
     /// Signs in with the saved login, if there is one; otherwise asks for it.
-    func connect(to host: String) {
-        self.host = host
+    func connect(to hosts: [String]) {
+        self.hosts = hosts
+        host = ""
         guard MacScreenLogin.load() != nil else { state = .signingIn; return }
         attempts = 0
         open()
@@ -98,9 +104,23 @@ final class MacScreenSession: NSObject {
     }
 
     private func open() {
-        guard !host.isEmpty else { state = .failed("Chatterbox doesn't know the Mac's address yet. Connect to the Mac first."); return }
-        attempts += 1
+        guard !hosts.isEmpty else { state = .failed("Chatterbox doesn't know the Mac's address yet. Connect to the Mac first."); return }
         state = .connecting
+        guard !host.isEmpty else {
+            // Try every address at once: at home the Wi-Fi one usually wins over Tailscale.
+            step = "Finding your Mac\u{2026}"
+            Task {
+                if let first = await Self.firstAnswering(hosts, port: 5900) {
+                    host = first
+                    open()
+                } else {
+                    state = .failed("Couldn't reach the Mac's Screen Sharing. It needs to be on (System Settings → General → Sharing → Screen Sharing), and the Mac awake.")
+                }
+            }
+            return
+        }
+        attempts += 1
+        step = "Signing in\u{2026}"
         let settings = VNCConnection.Settings(isDebugLoggingEnabled: false, hostname: host, port: 5900, isShared: true,
                                               isScalingEnabled: false, useDisplayLink: false, inputMode: .none,
                                               isClipboardRedirectionEnabled: false,
@@ -110,6 +130,43 @@ final class MacScreenSession: NSObject {
         self.connection = connection
         connection.connect()
     }
+
+    /// The first address with something listening on `port`, within a few seconds.
+    nonisolated static func firstAnswering(_ hosts: [String], port: UInt16) async -> String? {
+        await withTaskGroup(of: String?.self) { group in
+            for host in hosts {
+                group.addTask {
+                    await withCheckedContinuation { (done: CheckedContinuation<String?, Never>) in
+                        let connection = NWConnection(host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: port)!, using: .tcp)
+                        let lock = NSLock()
+                        var finished = false
+                        func finish(_ value: String?) {
+                            lock.lock(); defer { lock.unlock() }
+                            guard !finished else { return }
+                            finished = true
+                            connection.cancel()
+                            done.resume(returning: value)
+                        }
+                        connection.stateUpdateHandler = { state in
+                            switch state {
+                            case .ready: finish(host)
+                            case .failed, .cancelled: finish(nil)
+                            default: break
+                            }
+                        }
+                        connection.start(queue: .global())
+                        DispatchQueue.global().asyncAfter(deadline: .now() + 4) { finish(nil) }
+                    }
+                }
+            }
+            for await result in group {
+                if let result { group.cancelAll(); return result }
+            }
+            return nil
+        }
+    }
+
+    fileprivate func connected() { if image == nil { step = "Getting the screen\u{2026}" } }
 
     fileprivate func ended(_ error: Error?, from closing: VNCConnection) {
         guard closing === connection else { return }
@@ -212,6 +269,7 @@ final class MacScreenSession: NSObject {
 
 extension MacScreenSession: VNCConnectionDelegate {
     nonisolated func connection(_ connection: VNCConnection, stateDidChange connectionState: VNCConnection.ConnectionState) {
+        if connectionState.status == .connected { DispatchQueue.main.async { MainActor.assumeIsolated { self.connected() } } }
         guard connectionState.status == .disconnected else { return }
         let error = connectionState.error
         DispatchQueue.main.async { MainActor.assumeIsolated { self.ended(error, from: connection) } }
@@ -250,7 +308,7 @@ extension MacScreenSession: VNCConnectionDelegate {
 
 /// Full screen: the Mac's screen, controls on top, sign-in when needed.
 struct MacScreenView: View {
-    let host: String
+    let hosts: [String]
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @State private var session = MacScreenSession()
@@ -290,7 +348,7 @@ struct MacScreenView: View {
             }
             switch session.state {
             case .signingIn: MacScreenSignIn(session: session)
-            case .connecting where session.image == nil: ProgressView("Connecting to the Mac\u{2026}").tint(.white).foregroundStyle(.white)
+            case .connecting where session.image == nil: ProgressView(session.step).tint(.white).foregroundStyle(.white)
             case .failed(let message): failure(message)
             default: EmptyView()
             }
@@ -304,7 +362,7 @@ struct MacScreenView: View {
                 return
             }
             #endif
-            session.connect(to: host)
+            session.connect(to: hosts)
         }
         .onDisappear { session.disconnect() }
         .onChange(of: scenePhase) { _, phase in
