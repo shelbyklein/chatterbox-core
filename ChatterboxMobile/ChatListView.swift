@@ -58,7 +58,9 @@ struct ChatListView: View {
     @State private var opened: Companion.ChatSummary?
     /// Requests outlive transient detail views during split-view navigation.
     @State private var history: MobileChatHistory?
-    /// On iPad, the chat list stays beside the chat, in portrait too.
+    /// The active fold in this list's coordinates; nil while the device is flat.
+    @State private var division: CGRect?
+    /// Native collapse/navigation state is used only by the closed-phone layout.
     @State private var columns = NavigationSplitViewVisibility.all
     @State private var compactColumn = NavigationSplitViewColumn.sidebar
     @State private var search = ""
@@ -71,57 +73,36 @@ struct ChatListView: View {
     @State private var managementError: String?
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columns, preferredCompactColumn: $compactColumn) {
-            sidebar
-                .safeAreaInset(edge: .top, spacing: 0) { if fixedPage == nil { pagePicker } }
-                .navigationTitle(fixedPage?.title ?? store.connection?.macName ?? "Chatterbox")
-                .navigationBarTitleDisplayMode(.inline)
-                .refreshable { await store.loadChats() }
-                .searchable(text: $search, placement: .navigationBarDrawer(displayMode: page == .studios ? .always : .automatic), prompt: fixedPage.map { "Search \($0.title)" } ?? "Search sessions")
-                .sheet(item: $editingStudio) { group in
-                    if let id = group.studioID {
-                        StudioInstructionsEditor(title: group.title, studio: id, initial: group.instructions ?? "")
-                    }
-                }
-                .toolbar {
-                    if page == .studios {
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Menu {
-                                connectionItems
-                                Picker("Sort", selection: $sortName) {
-                                    ForEach(Sort.allCases.filter { $0 != .tag }) { Text($0.title).tag($0.rawValue) }
-                                }
-                                Button { withAnimation { studioListMode.toggle() } } label: {
-                                    Label(studioListMode ? "Show as Cards" : "Show as List", systemImage: studioListMode ? "square.grid.2x2" : "list.bullet")
-                                }
-                            } label: { Image(systemName: "ellipsis.circle") }
-                            .accessibilityLabel("Studio options")
-                        }
+        GeometryReader { geometry in
+            let split = verticalDivision(in: geometry.size)
+            if sizeClass == .regular || split != nil {
+                HStack(spacing: 0) {
+                    NavigationStack { configuredSidebar }
+                        .frame(width: split?.minX ?? min(380, max(300, geometry.size.width * 0.38)))
+                        .accessibilityIdentifier("session-sidebar-pane")
+                    if let split {
+                        Color(uiColor: .systemBackground).frame(width: split.width)
+                            .accessibilityHidden(true)
                     } else {
-                        // Sort and layout live in the menu, so the bar keeps to three buttons:
-                        // on a closed iPhone Duo it runs down the side, and more would push
-                        // New Chat into an overflow menu.
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Menu {
-                                connectionItems
-                                Picker("Sort", selection: Binding(get: { sort }, set: { new in withAnimation(.easeOut(duration: 0.2)) { sortName = new.rawValue } })) {
-                                    ForEach(Sort.allCases) { Label($0.title, systemImage: $0.icon).tag($0) }
-                                }
-                                Button { withAnimation(.easeOut(duration: 0.2)) { showsCards.toggle() } } label: {
-                                    Label(showsCards ? "Show as List" : "Show as Cards", systemImage: showsCards ? "list.bullet" : "square.grid.2x2")
-                                }
-                            } label: { Image(systemName: "ellipsis.circle") }
-                            .accessibilityLabel("Connection")
-                        }
+                        Divider()
                     }
-                    ToolbarItem(placement: .topBarTrailing) { FeedbackButton() }
-                    ToolbarItem(placement: .topBarTrailing) { newChatMenu }
+                    NavigationStack { detail }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .accessibilityIdentifier("session-detail-pane")
                 }
-                .navigationSplitViewColumnWidth(min: 320, ideal: 380, max: 460)
-        } detail: {
-            detail
+                // Unlike NavigationSplitView, these panes never offer a collapse button
+                // or hide the sidebar when the user opens a conversation.
+            } else {
+                NavigationSplitView(columnVisibility: $columns, preferredCompactColumn: $compactColumn) {
+                    configuredSidebar
+                        .navigationSplitViewColumnWidth(min: 320, ideal: 380, max: 460)
+                } detail: {
+                    detail
+                }
+                .navigationSplitViewStyle(.balanced)
+            }
         }
-        .navigationSplitViewStyle(.balanced)
+        .background { SessionDivisionProbe(division: $division).allowsHitTesting(false) }
         .onChange(of: compactColumn, initial: true) { _, column in onShowingChat(sizeClass != .regular && column == .detail) }
         .sheet(isPresented: $showingActivity, onDismiss: {
             // Opening a chat while the sheet is still closing is dropped; wait until it's gone.
@@ -197,6 +178,63 @@ struct ChatListView: View {
                 try? await Task.sleep(for: .seconds(4))
             }
         }
+    }
+
+    /// Shared list controls; only the surrounding navigation changes on a closed phone.
+    private var configuredSidebar: some View {
+        sidebar
+            .safeAreaInset(edge: .top, spacing: 0) { if fixedPage == nil { pagePicker } }
+            .navigationTitle(fixedPage?.title ?? store.connection?.macName ?? "Chatterbox")
+            .navigationBarTitleDisplayMode(.inline)
+            .refreshable { await store.loadChats() }
+            .searchable(text: $search, placement: .navigationBarDrawer(displayMode: page == .studios ? .always : .automatic), prompt: fixedPage.map { "Search \($0.title)" } ?? "Search sessions")
+            .sheet(item: $editingStudio) { group in
+                if let id = group.studioID {
+                    StudioInstructionsEditor(title: group.title, studio: id, initial: group.instructions ?? "")
+                }
+            }
+            .toolbar {
+                if page == .studios {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Menu {
+                            connectionItems
+                            Picker("Sort", selection: $sortName) {
+                                ForEach(Sort.allCases.filter { $0 != .tag }) { Text($0.title).tag($0.rawValue) }
+                            }
+                            Button { withAnimation { studioListMode.toggle() } } label: {
+                                Label(studioListMode ? "Show as Cards" : "Show as List", systemImage: studioListMode ? "square.grid.2x2" : "list.bullet")
+                            }
+                        } label: { Image(systemName: "ellipsis.circle") }
+                        .accessibilityLabel("Studio options")
+                    }
+                } else {
+                    // Sort and layout live in the menu, so the bar keeps to three buttons:
+                    // on a closed iPhone Duo it runs down the side, and more would push
+                    // New Chat into an overflow menu.
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Menu {
+                            connectionItems
+                            Picker("Sort", selection: Binding(get: { sort }, set: { new in withAnimation(.easeOut(duration: 0.2)) { sortName = new.rawValue } })) {
+                                ForEach(Sort.allCases) { Label($0.title, systemImage: $0.icon).tag($0) }
+                            }
+                            Button { withAnimation(.easeOut(duration: 0.2)) { showsCards.toggle() } } label: {
+                                Label(showsCards ? "Show as List" : "Show as Cards", systemImage: showsCards ? "list.bullet" : "square.grid.2x2")
+                            }
+                        } label: { Image(systemName: "ellipsis.circle") }
+                        .accessibilityLabel("Connection")
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) { FeedbackButton() }
+                ToolbarItem(placement: .topBarTrailing) { newChatMenu }
+            }
+    }
+
+    /// The reserved division is expressed in the probe's coordinates, matching this view.
+    /// Horizontal laptop folds keep the ordinary side-by-side session layout.
+    private func verticalDivision(in size: CGSize) -> CGRect? {
+        guard let division, division.height > division.width,
+              division.minX > 0, division.maxX < size.width else { return nil }
+        return division
     }
 
     /// iPad's sidebar style beside the chat; the iPhone's grouped list on its own.
@@ -939,5 +977,56 @@ struct MobileProblemCard: View {
         .padding(.horizontal, 14).padding(.vertical, 10)
         .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// The active fold in session-list coordinates. Observe layout and posture changes even
+/// when the window's overall size stays unchanged (flat → partially folded).
+private struct SessionDivisionProbe: UIViewRepresentable {
+    @Binding var division: CGRect?
+
+    func makeUIView(context: Context) -> Probe {
+        let probe = Probe()
+        probe.report = { frame in if division != frame { division = frame } }
+        return probe
+    }
+
+    func updateUIView(_ probe: Probe, context: Context) {
+        probe.report = { frame in if division != frame { division = frame } }
+    }
+
+    final class Probe: UIView {
+        var report: (CGRect?) -> Void = { _ in }
+        private var timer: Timer?
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            timer?.invalidate()
+            guard window != nil else { return }
+            timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.check() }
+            }
+        }
+
+        override func layoutSubviews() { super.layoutSubviews(); check() }
+
+        private func check() {
+            var frame: CGRect?
+            if #available(iOS 27.1, *) {
+                frame = reservedRegions(kind: .division).first(where: \.isActive)?.frame
+            }
+            #if DEBUG
+            // Native iPad fixture: simulate the region the real Duo reports while bent.
+            // Fractions are deliberately asymmetric in the regression to catch a fixed
+            // half-width layout or the old 460-point sidebar cap.
+            if let raw = ProcessInfo.processInfo.environment["CHATTERBOX_TEST_SESSION_DIVISION"],
+               let fraction = Double(raw), fraction > 0, fraction < 1 {
+                frame = CGRect(x: bounds.width * fraction - 6, y: 0, width: 12, height: bounds.height)
+            }
+            #endif
+            // Defer the binding write until UIKit has finished its layout callback.
+            let value = frame
+            DispatchQueue.main.async { [weak self] in self?.report(value) }
+        }
     }
 }
