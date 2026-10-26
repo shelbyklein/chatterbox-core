@@ -16,6 +16,7 @@ final class AppModel {
     var editingStudioInstructions: UUID?
     var selectedID: UUID? {
         didSet {
+            if selectedID != nil { selectionClearedByArchive = false }
             showingHome = false
             showingAutomations = false
             showingCommandCenter = false
@@ -36,6 +37,8 @@ final class AppModel {
             }
         }
     }
+    /// List refreshes must not reopen a chat after the user archived the selected one.
+    @ObservationIgnored private var selectionClearedByArchive = false
     /// The main views, each returning to where it was left.
     enum MainView: String { case projects, studios, chats }
 
@@ -543,11 +546,16 @@ final class AppModel {
     /// Hides a chat from the main lists and stops its agent. Nothing is removed; a project
     /// chat keeps its folder, and opening that folder again brings the chat back.
     func archive(_ session: ChatSession) {
-        guard session.hasMessages || session.record.projectFolder != nil || session.record.sidechatOf != nil else { return delete(session) }
+        let discardEmpty = !session.hasMessages && session.record.projectFolder == nil && session.record.sidechatOf == nil
+        if selectedID == session.id {
+            let home = showingHome, automations = showingAutomations, commandCenter = showingCommandCenter
+            selectedID = nil
+            selectionClearedByArchive = true
+            showingHome = home; showingAutomations = automations; showingCommandCenter = commandCenter
+        }
+        if discardEmpty { return delete(session, selectingReplacement: false) }
         session.shutdown()
         session.setArchived(true)
-        if selectedID == session.id { selectedID = activeSessions.first?.id }
-        if activeSessions.isEmpty { newChat() }
     }
 
     func unarchive(_ session: ChatSession) {
@@ -556,13 +564,13 @@ final class AppModel {
         selectedID = session.id
     }
 
-    func delete(_ session: ChatSession) {
+    func delete(_ session: ChatSession, selectingReplacement: Bool = true) {
         if RuntimeClient.usesDaemon {
             RuntimeClient.shared.command("delete",body:["chatID":.string(session.id.uuidString)])
             // Gone from the lists now, not after the service's next full chat list (seconds
             // when it's busy). If the delete fails, that list brings the chat back.
             sessions.removeAll { $0.id == session.id }
-            if selectedID == session.id { selectedID = activeSessions.first?.id }
+            if selectingReplacement, selectedID == session.id { selectedID = activeSessions.first?.id }
             return
         }
         session.shutdown()
@@ -572,8 +580,8 @@ final class AppModel {
         Attachments.remove(session.allAttachments.filter { !inUse.contains($0.path) })
         sessions.removeAll { $0.id == session.id }
         try? FileManager.default.removeItem(at: fileURL(session.id))
-        if selectedID == session.id { selectedID = activeSessions.first?.id }
-        if activeSessions.isEmpty { newChat() }
+        if selectingReplacement, selectedID == session.id { selectedID = activeSessions.first?.id }
+        if selectingReplacement, activeSessions.isEmpty { newChat() }
     }
 
     // MARK: - Projects
@@ -983,6 +991,7 @@ final class AppModel {
     }
 
     private func restoreSelectedSession() {
+        guard !selectionClearedByArchive else { return }
         guard selectedID == nil || !sessions.contains(where: { $0.id == selectedID }) else { return }
         let saved = AppPreferences.defaults.string(forKey: "macLastOpenSession").flatMap(UUID.init(uuidString:))
         let session = saved.flatMap { id in sessions.first { $0.id == id && $0.record.archivedAt == nil } }
