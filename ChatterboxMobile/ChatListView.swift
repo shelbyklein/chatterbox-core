@@ -78,6 +78,9 @@ struct ChatListView: View {
             if sizeClass == .regular || split != nil {
                 HStack(spacing: 0) {
                     NavigationStack { configuredSidebar }
+                        // This is an internal edge, not the window's camera/rail edge.
+                        // The containing geometry already reserves the outer safe area.
+                        .ignoresSafeArea(.container, edges: .trailing)
                         .frame(width: split?.minX ?? min(380, max(300, geometry.size.width * 0.38)))
                         .accessibilityIdentifier("session-sidebar-pane")
                     if let split {
@@ -1012,8 +1015,10 @@ private struct SessionDivisionProbe: UIViewRepresentable {
 
         private func check() {
             var frame: CGRect?
-            if #available(iOS 27.1, *) {
-                frame = reservedRegions(kind: .division).first(where: \.isActive)?.frame
+            var margins = UIEdgeInsets.zero
+            if #available(iOS 27.1, *), let region = reservedRegions(kind: .division).first(where: \.isActive) {
+                frame = region.frame
+                margins = region.margins
             }
             #if DEBUG
             // Native iPad fixture: simulate the region the real Duo reports while bent.
@@ -1021,11 +1026,15 @@ private struct SessionDivisionProbe: UIViewRepresentable {
             // half-width layout or the old 460-point sidebar cap.
             if let raw = ProcessInfo.processInfo.environment["CHATTERBOX_TEST_SESSION_DIVISION"],
                let fraction = Double(raw), fraction > 0, fraction < 1 {
-                frame = CGRect(x: bounds.width * fraction - 6, y: 0, width: 12, height: bounds.height)
+                let margin = Double(ProcessInfo.processInfo.environment["CHATTERBOX_TEST_SESSION_DIVISION_MARGIN"] ?? "") ?? 0
+                frame = CGRect(x: bounds.width * fraction - 6 - margin, y: 0, width: 12 + 2 * margin, height: bounds.height)
+                margins = UIEdgeInsets(top: 0, left: margin, bottom: 0, right: margin)
             }
             #endif
+            // UIKit includes touch-clearance margins in the region. They are not an
+            // empty strip between screens; divide at the physical hinge instead.
+            let value = frame.map { $0.inset(by: margins) }
             // Defer the binding write until UIKit has finished its layout callback.
-            let value = frame
             DispatchQueue.main.async { [weak self] in self?.report(value) }
         }
     }
