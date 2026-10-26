@@ -77,10 +77,7 @@ struct ChatListView: View {
             let split = verticalDivision(in: geometry.size)
             if sizeClass == .regular || split != nil {
                 HStack(spacing: 0) {
-                    NavigationStack { configuredSidebar }
-                        // This is an internal edge, not the window's camera/rail edge.
-                        // The containing geometry already reserves the outer safe area.
-                        .ignoresSafeArea(.container, edges: .trailing)
+                    NavigationStack { configuredSidebar.background(SafeAreaToOwnFrame().allowsHitTesting(false)) }
                         .frame(width: split?.minX ?? min(380, max(300, geometry.size.width * 0.38)))
                         .accessibilityIdentifier("session-sidebar-pane")
                     if let split {
@@ -388,9 +385,10 @@ struct ChatListView: View {
 
     /// The same chats as the list, as cards two to a row under the same headings.
     /// A narrow iPad sidebar uses one readable card rather than squeezing two phone cards.
+    /// Two to a row: the list is a phone's width, or a sidebar beside the session (about
+    /// 330 points on a flat iPhone Duo, too narrow for 160-point cards to pair up).
     private var cardColumns: [GridItem] {
-        sizeClass == .regular ? [GridItem(.adaptive(minimum: 160), spacing: 10)] :
-            [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)]
+        [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)]
     }
 
     @ViewBuilder
@@ -1036,6 +1034,33 @@ private struct SessionDivisionProbe: UIViewRepresentable {
             let value = frame.map { $0.inset(by: margins) }
             // Defer the binding write until UIKit has finished its layout callback.
             DispatchQueue.main.async { [weak self] in self?.report(value) }
+        }
+    }
+}
+
+/// UIKit hands the sidebar's navigation stack the window's whole right inset (the tab bar
+/// column on a landscape iPhone Duo, 84 points) though the sidebar is nowhere near that edge,
+/// leaving its search field and list short of its divider. This trims the sidebar hosting
+/// controller's insets to the part of the window's insets it actually overlaps.
+private struct SafeAreaToOwnFrame: UIViewControllerRepresentable {
+    func makeUIViewController(context: Context) -> Trimmer { Trimmer() }
+    func updateUIViewController(_ controller: Trimmer, context: Context) { controller.trim() }
+
+    final class Trimmer: UIViewController {
+        override func viewDidLayoutSubviews() { super.viewDidLayoutSubviews(); trim() }
+        override func viewSafeAreaInsetsDidChange() { super.viewSafeAreaInsetsDidChange(); DispatchQueue.main.async { [weak self] in self?.trim() } }
+
+        func trim() {
+            // The sidebar's own hosting controller, inside the navigation controller.
+            guard let host = parent, let window = host.view.window else { return }
+            let frame = host.view.convert(host.view.bounds, to: window)
+            let edges = window.safeAreaInsets
+            // What the window's insets cover of this frame, on each side.
+            let left = max(0, edges.left - frame.minX), right = max(0, edges.right - (window.bounds.width - frame.maxX))
+            let added = host.additionalSafeAreaInsets
+            let inherited = (left: host.view.safeAreaInsets.left - added.left, right: host.view.safeAreaInsets.right - added.right)
+            let wanted = UIEdgeInsets(top: added.top, left: left - inherited.left, bottom: added.bottom, right: right - inherited.right)
+            if abs(wanted.left - added.left) > 0.5 || abs(wanted.right - added.right) > 0.5 { host.additionalSafeAreaInsets = wanted }
         }
     }
 }
