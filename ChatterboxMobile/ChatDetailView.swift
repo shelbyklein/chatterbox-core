@@ -60,6 +60,8 @@ struct ChatDetailView: View {
     /// Opens another chat (a fork) in this one's place.
     var open: (Companion.ChatSummary) -> Void = { _ in }
     let history: MobileChatHistory
+    /// Archiving closes the chat: the list stays as it was, with nothing open beside it.
+    var closeChat: () -> Void = {}
     /// On the iPhone's Golem tab: false shows him large and centered with no message box,
     /// true tucks him into his spot under the last message and brings the box back.
     var golemComposing: Binding<Bool>? = nil
@@ -774,7 +776,12 @@ struct ChatDetailView: View {
                     Label("Unarchive", systemImage: "tray.and.arrow.up")
                 }
             } else {
-                Button(role: .destructive) { perform { try await store.setArchived(true, chat: chat.id) } } label: {
+                Button(role: .destructive) {
+                    Task {
+                        do { _ = try await store.setArchived(true, chat: chat.id); closeChat(); await store.loadChats() }
+                        catch { self.error = error.localizedDescription }
+                    }
+                } label: {
                     Label("Archive", systemImage: "archivebox")
                 }
             }

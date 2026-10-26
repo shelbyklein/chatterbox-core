@@ -556,7 +556,7 @@ struct ChatListView: View {
         if let chat = selectedChat, let history, history.id == chat.id {
             // NavigationSplitView supplies the detail navigation container. A nested
             // stack can retain the old detail or reset compact-column navigation.
-            ChatDetailView(chat: chat, open: open, history: history)
+            ChatDetailView(chat: chat, open: open, history: history, closeChat: closeChat)
                 .id(chat.id)
                 .onAppear { MobilePushNotifications.shared.readingChat = chat.id }
                 .onDisappear {
@@ -587,9 +587,18 @@ struct ChatListView: View {
     private func archive(_ chat: Companion.ChatSummary) {
         Task {
             _ = try? await store.setArchived(true, chat: chat.id)
-            if selection == chat.id { selection = nil }
+            if selection == chat.id { closeChat() }
             await store.loadChats()
         }
+    }
+
+    /// Nothing open beside the list (on iPhone, back to the list), on the same page.
+    private func closeChat() {
+        selection = nil
+        opened = nil
+        history?.cancel()
+        history = nil
+        compactColumn = .sidebar
     }
 
     private func beginRename(_ chat: Companion.ChatSummary) {
