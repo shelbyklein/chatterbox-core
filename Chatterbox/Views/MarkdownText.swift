@@ -339,7 +339,11 @@ private struct BlockView: View {
             Divider().padding(.vertical, 4)
 
         case .code(let code, let language, let closed):
-            CodeBlock(code: code, language: language, closed: closed)
+            if DraftCard.languages.contains(language.lowercased()) {
+                DraftCard(draft: code, closed: closed)
+            } else {
+                CodeBlock(code: code, language: language, closed: closed)
+            }
         }
     }
 }
@@ -423,6 +427,140 @@ extension EnvironmentValues {
     }
 }
 #endif
+
+/// Something to send or paste elsewhere (an email, a message), from a ```draft block:
+/// shown as it will read, with Copy (formatted, for Mail and Outlook, and plain) and, for an
+/// email, its subject on its own and Open in Mail.
+struct DraftCard: View {
+    static let languages: Set<String> = ["draft", "email"]
+    let draft: String
+    var closed = true
+    @Environment(\.readerStyle) private var style
+    @Environment(\.openURL) private var openURL
+    @State private var copied: String?
+
+    /// An email's "Subject:" first line, apart from its body.
+    var parts: (subject: String?, body: String) {
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lines = text.components(separatedBy: "\n")
+        guard let first = lines.first, first.lowercased().hasPrefix("subject:") else { return (nil, text) }
+        let subject = Self.plain(String(first.dropFirst("subject:".count))).trimmingCharacters(in: .whitespaces)
+        return (subject, lines.dropFirst().joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    var body: some View {
+        let (subject, text) = parts
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                Label(subject == nil ? "Draft" : "Email draft", systemImage: subject == nil ? "doc.on.clipboard" : "envelope")
+                    .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                Spacer()
+                if closed {
+                    if let subject, !subject.isEmpty {
+                        button("Copy Subject", key: "subject") { Self.copy(plain: subject, rich: nil) }
+                        button("Open in Mail", key: "mail") {
+                            if let url = Self.mailURL(subject: subject, body: Self.plain(text)) { openURL(url) }
+                        }
+                    }
+                    button("Copy", key: "body") { Self.copy(plain: Self.plain(text), rich: Self.rich(text)) }
+                        .fontWeight(.semibold)
+                }
+            }
+            if let subject {
+                (Text("Subject: ").foregroundStyle(.secondary) + Text(subject).bold())
+                    .font(style.body).textSelection(.enabled)
+                Divider()
+            }
+            MarkdownText(text: text)
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 10).fill(.quaternary.opacity(0.35)))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.quaternary))
+    }
+
+    private func button(_ title: String, key: String, action: @escaping () -> Void) -> some View {
+        Button(copied == key ? "Copied" : title) {
+            action()
+            if key != "mail" {
+                copied = key
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { if copied == key { copied = nil } }
+            }
+        }
+        .buttonStyle(.borderless)
+        .font(.caption)
+    }
+
+    /// Bullets as "•", Markdown marks gone: what pastes into a plain text field.
+    static func plain(_ markdown: String) -> String {
+        bulleted(markdown).components(separatedBy: "\n").map { line in
+            (try? AttributedString(markdown: line, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+                .map { String($0.characters) } ?? line
+        }.joined(separator: "\n")
+    }
+
+    /// The same with bold, italics and links kept, as RTF.
+    static func rich(_ markdown: String) -> Data? {
+        guard let parsed = try? NSAttributedString(markdown: Data(bulleted(markdown).utf8),
+                                                    options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) else { return nil }
+        // Markdown marks bold and italics as intents; RTF needs fonts.
+        let attributed = NSMutableAttributedString(attributedString: parsed)
+        let whole = NSRange(location: 0, length: attributed.length)
+        #if canImport(AppKit)
+        typealias Font = NSFont
+        func styled(_ bold: Bool, _ italic: Bool) -> Font {
+            var font = Font.systemFont(ofSize: 13, weight: bold ? .semibold : .regular)
+            if italic { font = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask) }
+            return font
+        }
+        #else
+        typealias Font = UIFont
+        func styled(_ bold: Bool, _ italic: Bool) -> Font {
+            let font = Font.systemFont(ofSize: 15, weight: bold ? .semibold : .regular)
+            guard italic, let descriptor = font.fontDescriptor.withSymbolicTraits(.traitItalic) else { return font }
+            return Font(descriptor: descriptor, size: 15)
+        }
+        #endif
+        attributed.addAttribute(.font, value: styled(false, false), range: whole)
+        attributed.enumerateAttribute(.inlinePresentationIntent, in: whole) { value, range, _ in
+            guard let raw = value as? UInt else { return }
+            let intent = InlinePresentationIntent(rawValue: raw)
+            let bold = intent.contains(.stronglyEmphasized), italic = intent.contains(.emphasized)
+            if bold || italic { attributed.addAttribute(.font, value: styled(bold, italic), range: range) }
+        }
+        return try? attributed.data(from: whole, documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf])
+    }
+
+    private static func bulleted(_ markdown: String) -> String {
+        markdown.components(separatedBy: "\n").map { line in
+            let trimmed = line.drop { $0 == " " }
+            let indent = String(repeating: "    ", count: (line.count - trimmed.count) / 2)
+            if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") || trimmed.hasPrefix("+ ") { return indent + "• " + trimmed.dropFirst(2) }
+            return line
+        }.joined(separator: "\n")
+    }
+
+    static func copy(plain: String, rich: Data?) {
+        #if canImport(AppKit)
+        let board = NSPasteboard.general
+        board.clearContents()
+        if let rich { board.setData(rich, forType: .rtf) }
+        board.setString(plain, forType: .string)
+        #else
+        var item: [String: Any] = ["public.utf8-plain-text": plain]
+        if let rich { item["public.rtf"] = rich }
+        UIPasteboard.general.items = [item]
+        #endif
+    }
+
+    /// A new message in the default mail app, addressed to no one yet.
+    static func mailURL(subject: String, body: String) -> URL? {
+        var parts = URLComponents()
+        parts.scheme = "mailto"
+        parts.path = ""
+        parts.queryItems = [URLQueryItem(name: "subject", value: subject), URLQueryItem(name: "body", value: body)]
+        return parts.url
+    }
+}
 
 private struct CodeBlock: View {
     let code: String

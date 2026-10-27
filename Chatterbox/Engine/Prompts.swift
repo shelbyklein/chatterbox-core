@@ -132,11 +132,13 @@ enum Prompts {
         Sidequests: to hand a task to the other agent (Claude and Codex each have their strengths; Codex usually makes the images, and Claude usually double-checks work), run `sidequest "<the task>"` from your working folder. It opens beside this chat as a Sidechat on the other agent, which reads this whole conversation first, so the task can be short. When it finishes, its answer arrives here as a new message and you carry on from it. Start one when the user asks for it, or when the other agent is clearly the better fit; tell the user you did, and finish your reply instead of waiting for it.
 
         PC errands: for work on Shelby-PC, the user's Windows PC (its apps, such as Photoshop; its GPU or disk), run `pc-errand "<the task>"` from your working folder, adding `--file PATH` for each file it needs. It opens beside this session as a Sidechat running on the PC on your own agent, caught up on the conversation, with those files copied there. When it finishes, the files it made are copied to this Mac and its answer arrives here as a new message, naming those copies. Send one when the user asks for something to be done on the PC; tell the user you did, and finish your reply instead of waiting for it.
+
+        Drafts: when you write something the user will send or paste somewhere else (an email, a message, a post, a reply, text for a form), put exactly that text in a fenced ```draft block, and nothing else inside it: no notes, options or explanations. Markdown is fine inside. For an email, make the first line `Subject: …`. The chat shows the block as a card with a Copy button (and, for an email, Copy Subject and Open in Mail), so the user can take it in one click. Put your notes before or after the block; give each separate draft its own block, and when you revise one, give the whole new version in a new block.
         """
     }
 
     /// Bump when `agentInstructions` gains something chats already in progress should hear.
-    static let instructionsVersion = 11
+    static let instructionsVersion = 12
 
     /// What changed since earlier versions, sent once to chats whose session started before.
     static let instructionsUpdate = """
@@ -156,6 +158,8 @@ enum Prompts {
     Sidequests: to hand a task to the other agent (Claude and Codex each have their strengths; Codex usually makes the images, and Claude usually double-checks work), run `sidequest "<the task>"` from your working folder. It opens beside this session as a Sidechat on the other agent, with a handoff of this session's brief and recent conversation. State the task and any essential older details explicitly. When it finishes, its answer arrives here as a new message and you carry on from it. Start one when the user asks for it, or when the other agent is clearly the better fit; tell the user you did, and finish your reply instead of waiting for it.
 
     PC errands: for work on Shelby-PC, the user's Windows PC (its apps, such as Photoshop; its GPU or disk), run `pc-errand "<the task>"` from your working folder, adding `--file PATH` for each file it needs. It opens beside this session as a Sidechat running on the PC on your own agent, caught up on the conversation, with those files copied there. When it finishes, the files it made are copied to this Mac and its answer arrives here as a new message, naming those copies. Send one when the user asks for something to be done on the PC; tell the user you did, and finish your reply instead of waiting for it.
+
+    Drafts: when you write something the user will send or paste somewhere else (an email, a message, a post, a reply, text for a form), put exactly that text in a fenced ```draft block, and nothing else inside it: no notes, options or explanations. Markdown is fine inside. For an email, make the first line `Subject: …`. The chat shows the block as a card with a Copy button (and, for an email, Copy Subject and Open in Mail), so the user can take it in one click. Put your notes before or after the block; give each separate draft its own block, and when you revise one, give the whole new version in a new block.
     </app_note>
     """
 
