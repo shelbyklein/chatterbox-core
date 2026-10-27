@@ -454,7 +454,8 @@ struct DraftCard: View {
             HStack(spacing: 12) {
                 Label(subject == nil ? "Draft" : "Email draft", systemImage: subject == nil ? "doc.on.clipboard" : "envelope")
                     .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                Spacer()
+                    .lineLimit(1).fixedSize()
+                Spacer(minLength: 8)
                 if closed {
                     if let subject, !subject.isEmpty {
                         button("Copy Subject", key: "subject") { Self.copy(plain: subject, rich: nil) }
@@ -488,6 +489,8 @@ struct DraftCard: View {
         }
         .buttonStyle(.borderless)
         .font(.caption)
+        .lineLimit(1)
+        .accessibilityIdentifier("draft-" + key)
     }
 
     /// Bullets as "•", Markdown marks gone: what pastes into a plain text field.
