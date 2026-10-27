@@ -3,7 +3,7 @@ import Foundation
 enum ChatPromotion {
     @MainActor static func eligible(_ chat: ChatSession) -> Bool {
         let r = chat.record
-        return !chat.isDot && r.archivedAt == nil && r.projectFolder == nil && r.studioID == nil
+        return r.archivedAt == nil && r.projectFolder == nil && r.studioID == nil
             && r.sidechatOf == nil && r.worktreeOf == nil && r.convertedProjectFolder == nil && r.automationID == nil
     }
 

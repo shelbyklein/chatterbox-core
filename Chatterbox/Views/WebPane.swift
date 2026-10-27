@@ -267,7 +267,7 @@ extension EnvironmentValues {
 struct FloatingChat: View {
     let session: ChatSession
     let onExpand: () -> Void
-    /// The bubble's symbol (Dot has its own).
+    /// The bubble's symbol.
     var icon = "bubble.left.and.bubble.right.fill"
     /// A heading line above the title (a sidequest's "Codex · Sidequest").
     var label: String?
@@ -340,48 +340,7 @@ struct FloatingChat: View {
 
     /// The chat shrunk to a round bubble. It shows when the agent is working, and turns
     /// yellow when it's waiting on you.
-    @ViewBuilder
     private var bubble: some View {
-        #if GOLEM_APP
-        if session.isDot, GolemAvatar.shared.hasAnimations {
-            golemBubble
-        } else {
-            roundBubble
-        }
-        #else
-        roundBubble
-        #endif
-    }
-
-    /// Golem himself stands in for the bubble: thinking while he works, perking up with news,
-    /// a count of unread replies, and a yellow ring when something waits on you.
-    #if GOLEM_APP
-    private var golemBubble: some View {
-        let unread = Attention.shared.dotUnreadCount(session)
-        return Button { collapsed = false } label: {
-            GolemAnimated(mood: GolemAvatar.mood(of: session))
-                .frame(width: 84, height: 84)
-                .background(Circle().fill(session.isWaitingOnYou ? Color.yellow.opacity(0.18) : .clear).padding(6))
-                .overlay(alignment: .topTrailing) {
-                    if unread > 0 {
-                        Text("\(unread)")
-                            .font(.caption2.weight(.bold))
-                            .foregroundStyle(Color.onHighlight)
-                            .padding(.horizontal, 5).padding(.vertical, 1)
-                            .background(Capsule().fill(Color.highlight))
-                            .offset(x: -6, y: 8)
-                    }
-                }
-                .shadow(color: .black.opacity(0.35), radius: 8, y: 4)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(session.isWaitingOnYou ? "\(session.title) is waiting on you"
-              : unread > 0 ? "\(unread) new from \(session.title)" : "Show \(session.title)")
-    }
-
-    #endif
-    private var roundBubble: some View {
         let color = appearance.style.agentColor(for: session)
         return Button { collapsed = false } label: {
             ZStack {

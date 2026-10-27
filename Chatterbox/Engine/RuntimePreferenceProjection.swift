@@ -29,11 +29,7 @@ import CoreFoundation
     }
     private func values()->[String:JSON]{
         var values:[String:JSON]=[:]
-        #if GOLEM_APP
-        let keys:Set<String>=["dotDefaultBackend","dotDefaultModel","dotApplyDefault","dotSeenItem"]
-        #else
         let keys=RuntimePreferences.keys.subtracting(["companionDevices","pins","companionEnabled"])
-        #endif
         for key in keys{
             guard let value=AppPreferences.defaults.object(forKey:key) else{continue}
             if let string=value as? String{values[key] = .string(string)}

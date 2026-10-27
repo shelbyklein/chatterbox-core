@@ -9,8 +9,6 @@ struct MobilePushSettings: View {
     @AppStorage("mobilePushSound") private var sound = true
     @AppStorage("mobilePush_needs") private var needs = true
     @AppStorage("mobilePush_replies") private var replies = true
-    @AppStorage("mobilePush_golem") private var golem = true
-    @AppStorage("mobilePush_email") private var email = true
     @State private var error: String?
     /// What the background service said about its own Keychain access.
     @State private var serviceStatus: String?
@@ -53,8 +51,6 @@ struct MobilePushSettings: View {
                 if let serviceStatus { Text(serviceStatus).font(.caption).foregroundStyle(.secondary).textSelection(.enabled) }
                 Toggle("Approvals and questions", isOn: $needs)
                 Toggle("Finished replies", isOn: $replies)
-                Toggle("Golem briefings", isOn: $golem)
-                Toggle("Important email", isOn: $email)
                 Toggle("Include message previews", isOn: $previews)
                 Toggle("Sound", isOn: $sound)
                 Text(push.status).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)

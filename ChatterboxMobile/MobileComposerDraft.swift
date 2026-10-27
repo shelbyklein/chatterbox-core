@@ -15,7 +15,6 @@ final class MobileComposerDraft<Image> {
     var text: String { didSet { persistText(text) } }
     var images: [Image] { didSet { persistImages(images) } }
     private(set) var inFlight: UUID?
-    private(set) var inputGeneration = UUID()
     var sending: Bool { inFlight != nil }
     @ObservationIgnored private let persistText: (String) -> Void
     @ObservationIgnored private let persistImages: ([Image]) -> Void
@@ -33,17 +32,9 @@ final class MobileComposerDraft<Image> {
         guard !sending, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !images.isEmpty else { return nil }
         let submission = Submission(id: UUID(), text: text, images: images)
         inFlight = submission.id
-        inputGeneration = UUID()
         text = ""
         images = []
         return submission
-    }
-
-    /// Speech recognition can deliver its final callback after Stop/Send. Reject
-    /// transcriptions belonging to the draft that has already been submitted.
-    func applyTranscription(_ spoken: String, prefix: String, generation: UUID) {
-        guard inputGeneration == generation else { return }
-        text = prefix.isEmpty ? spoken : prefix + " " + spoken
     }
 
     func finish(_ submission: Submission, failed: Bool = false) {

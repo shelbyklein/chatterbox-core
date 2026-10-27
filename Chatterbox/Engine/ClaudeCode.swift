@@ -60,10 +60,6 @@ final class ClaudeCodeProcess {
         var extraDirectories: [String] = []
         /// Resume into a new session instead of continuing the old one (a forked chat).
         var forkSession = false
-        /// Extra tool servers, as `--mcp-config` JSON (Dot's chatterbox tools).
-        var mcpConfig: String?
-        /// Tools that run without asking.
-        var allowedTools: [String] = []
         /// The Tools settings: a file of servers to add, rules for what's off, plugin folders.
         var toolsMCPConfig: String?
         var disallowedTools: [String] = []
@@ -108,8 +104,6 @@ final class ClaudeCodeProcess {
             if config.forkSession { args.append("--fork-session") }
         }
         for dir in config.extraDirectories { args += ["--add-dir", dir] }
-        if let mcp = config.mcpConfig { args += ["--mcp-config", mcp] }
-        if !config.allowedTools.isEmpty { args += ["--allowedTools", config.allowedTools.joined(separator: ",")] }
         // Joined with "=": these flags take several values, and a bare one swallows what follows.
         if let file = config.toolsMCPConfig { args.append("--mcp-config=" + file) }
         for rule in config.disallowedTools { args.append("--disallowedTools=" + rule) }

@@ -2,7 +2,7 @@ import Foundation
 import IOKit.pwr_mgt
 
 /// Keeps the Mac from sleeping while Chatterbox is open, so your phone can reach it and
-/// agents, check-ins, and the email watch keep running. The display still sleeps; closing a
+/// agents keep running. The display still sleeps; closing a
 /// laptop's lid still sleeps it (unless it's on power with an external display).
 @MainActor
 final class KeepAwake {

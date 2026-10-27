@@ -69,7 +69,7 @@ extension ChatSession {
     /// A note for the agent when its connection changed since it was last told, so it knows
     /// whether hosted tools came back or may be gone. Only for a connection you chose.
     func takeCodexRouteUpdate() -> String? {
-        guard !isDot, record.codex != nil else { return nil }
+        guard record.codex != nil else { return nil }
         let connection = codexConnection
         let told = record.codex?.sentRoute
         guard told != connection.key else { return nil }

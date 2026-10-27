@@ -26,7 +26,7 @@ struct ThreadCard: View {
     @Environment(AppModel.self) private var model
     private let appearance = ReaderStyleSettings()
 
-    private var title: String { session.isDot ? model.dotName : (session.record.projectFolder != nil ? session.projectName : session.title) }
+    private var title: String { session.record.projectFolder != nil ? session.projectName : session.title }
     private var status: String {
         if session.record.archivedAt != nil { return "Archived" }
         if session.isWaitingOnYou { return "Needs you" }
@@ -127,12 +127,7 @@ struct ThreadCard: View {
                         .accessibilityLabel("Latest image in " + title)
                 }
                 HStack(spacing: 6) {
-                    #if GOLEM_APP
-                    if session.isDot { GolemHead(size: expanded ? 26 : 18) }
-                    else { backendIcon }
-                    #else
                     backendIcon
-                    #endif
                     Spacer(minLength: 0)
                     if expanded { Text(status).font(.system(size: 10.5 * scale, weight: .medium)).lineLimit(1) }
                     activityIndicator
@@ -274,8 +269,7 @@ enum HomeThreads {
             // Sidequests show inside their chat's card.
             return threads.filter { !model.showsInsideParentCard($0) }
         }
-        var result = [group("golem", model.dotName, model.activeSessions.filter(\.isDot)),
-                      group("projects", "Projects", model.sidebarProjects.flatMap(family))]
+        var result = [group("projects", "Projects", model.sidebarProjects.flatMap(family))]
         for studio in model.activeStudios {
             result.append(group(studio.id.uuidString, studio.name, model.chats(in: studio).flatMap(family)))
         }
@@ -297,7 +291,7 @@ enum HomeThreads {
                 if group.id == "projects" { destination = .projects }
                 else if studioIDs.contains(group.id) { destination = .studios }
                 else if group.id == "other", session.record.studioID.map({ studioIDs.contains($0.uuidString) }) == true { destination = .studios }
-                else if group.id == "other", !session.isDot, session.record.projectFolder != nil || session.record.worktreeOf != nil || session.record.convertedProjectFolder != nil { destination = .projects }
+                else if group.id == "other", session.record.projectFolder != nil || session.record.worktreeOf != nil || session.record.convertedProjectFolder != nil { destination = .projects }
                 else { destination = .chats }
                 return destination == page
             }

@@ -49,7 +49,7 @@ extension AppModel {
     @discardableResult
     func newStudio(named name: String, folder: String? = nil, moving session: ChatSession? = nil) -> Studio? {
         if let session {
-            guard session.record.projectFolder == nil, !session.isRunning, !session.isRestartingThread, !session.isDot, session.record.archivedAt == nil else { return nil }
+            guard session.record.projectFolder == nil, !session.isRunning, !session.isRestartingThread, session.record.archivedAt == nil else { return nil }
         }
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let name = trimmed.isEmpty ? "Studio" : trimmed
@@ -70,7 +70,7 @@ extension AppModel {
     @discardableResult
     func convertProjectToStudio(_ session: ChatSession, named name: String) -> Studio? {
         guard let folder = session.record.projectFolder ?? session.record.convertedProjectFolder, session.record.worktreeOf == nil,
-              session.record.archivedAt == nil, !session.isDot, !session.isRunning, !session.isRestartingThread else { return nil }
+              session.record.archivedAt == nil, !session.isRunning, !session.isRestartingThread else { return nil }
         for path in [folder, session.workingFolder] {
             var directory: ObjCBool = false
             guard FileManager.default.fileExists(atPath: path, isDirectory: &directory), directory.boolValue else { return nil }
@@ -87,7 +87,7 @@ extension AppModel {
     @discardableResult
     func convertProjectToStudio(_ session: ChatSession, into studio: Studio, keepFolder: Bool = true) -> Studio? {
         guard let folder = session.record.projectFolder ?? session.record.convertedProjectFolder, session.record.worktreeOf == nil,
-              session.record.archivedAt == nil, !session.isDot, !session.isRunning, !session.isRestartingThread,
+              session.record.archivedAt == nil, !session.isRunning, !session.isRestartingThread,
               studio.archivedAt == nil, activeStudios.contains(where: { $0.id == studio.id && $0.folder == studio.folder }) else { return nil }
         for path in [folder, session.workingFolder, studio.folder] {
             var directory: ObjCBool = false
@@ -153,7 +153,7 @@ extension AppModel {
     @discardableResult
     func joinStudio(_ session: ChatSession, studio: Studio, keepFolder: Bool) -> Bool {
         guard session.record.projectFolder == nil, session.record.archivedAt == nil,
-              !session.isDot, !session.isRunning, !session.isRestartingThread,
+              !session.isRunning, !session.isRestartingThread,
               studio.archivedAt == nil, activeStudios.contains(where: { $0.id == studio.id && $0.folder == studio.folder }) else { return false }
         for path in [session.workingFolder, studio.folder] {
             var directory: ObjCBool = false
@@ -185,8 +185,7 @@ extension AppModel {
     /// Whether a chat can be forked: not mid-reply, and not a project's chat (a project
     /// folder has one chat).
     func canFork(_ session: ChatSession) -> Bool {
-        // Dot is one of a kind: a copy would take over as Dot (the first one found wins).
-        !session.isRunning && !session.isDot && session.record.projectFolder == nil && session.hasMessages
+        !session.isRunning && session.record.projectFolder == nil && session.hasMessages
     }
 
     /// Copies a chat into a new one beside it (in the same Studio, if it's in one) that
@@ -211,10 +210,6 @@ extension AppModel {
             record.sidechatProjectFolder = session.convertedProjectScope
             record.convertedProjectFolder = nil
         }
-        // Never carry Dot's identity into a copy, even if a caller skips canFork.
-        record.isDot = nil
-        record.sentDotName = nil
-        record.dotFollowing = nil
         record.currentIssue = nil
         record.turnStartedAt = nil
         record.backgroundTasks = nil

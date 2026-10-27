@@ -4,10 +4,10 @@ import Foundation
 /// RemoteMachine). A PC chat's agent works in its own scratch workspace there; files it
 /// writes are copied back to `~/Chatterbox/PC/<workspace>` for previews.
 extension ChatSession {
-    /// The machine this chat's agent runs on; nil is this Mac. Golem always stays here.
-    var runMachine: RemoteMachine? { isDot ? nil : RemoteMachine.named(record.runOn) }
+    /// The machine this chat's agent runs on; nil is this Mac.
+    var runMachine: RemoteMachine? { RemoteMachine.named(record.runOn) }
     /// On Shelby-PC in either way: an open model there, or the agent running there.
-    var usesPC: Bool { !isDot && (record.openModel != nil || runMachine != nil) }
+    var usesPC: Bool { record.openModel != nil || runMachine != nil }
 
     /// Where the agent works on the PC, named the first time it's needed.
     func pcWorkspace(on machine: RemoteMachine) -> String {
@@ -19,7 +19,7 @@ extension ChatSession {
     /// agent starts a new one there, caught up on the conversation so far.
     func setRunOn(_ machine: String?) {
         if let remoteCommand { remoteCommand("settings", ["runOn": machine.map(JSON.string) ?? .null]); return }
-        guard !isDot, machine != record.runOn, !isRunning else { return }
+        guard machine != record.runOn, !isRunning else { return }
         claudeWorkingFolderChanged()
         if let thread = record.codex?.threadId { Task { await codexServer.unsubscribeIdleThread(thread) } }
         record.codex?.threadId = nil
@@ -39,7 +39,7 @@ extension ChatSession {
     /// Claude restarts with the new endpoint, resuming its session; Codex reloads its thread.
     func setOpenModel(_ model: String?) {
         if let remoteCommand { remoteCommand("settings", ["openModel": model.map(JSON.string) ?? .null]); return }
-        guard !isDot, model != record.openModel else { return }
+        guard model != record.openModel else { return }
         record.openModel = model
         if record.backend == .claude { restartClaudeForNewTools() }
         noteSettingsChange()

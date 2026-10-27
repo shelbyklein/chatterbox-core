@@ -65,13 +65,6 @@ extension ChatSession {
             if let brief = takeBriefUpdate() { content.append(.text(brief)) }
             if let secrets = takeSecretsUpdate() { content.append(.text(secrets)) }
             if let computer = takeComputerUpdate() { content.append(.text(computer)) }
-            // A resumed session keeps the name it started with, so a rename is said outright.
-            if isDot, record.sentDotName != title {
-                if record.sentDotName != nil {
-                    content.append(.text("<app_note>\nThe user renamed you: your name is now \(title). Use it from here on.\n</app_note>"))
-                }
-                record.sentDotName = title
-            }
             content += Attachments.claudeContent(for: message)
             claudeAwaitingEcho.append(message.text)
             process.sendUser(content)
@@ -179,13 +172,11 @@ extension ChatSession {
             effort: record.openModel == nil ? record.effort : "",
             permissionMode: claudePermissionMode,
             appendSystemPrompt: Prompts.fullInstructions(record.personality, backend: .claude, projectFolder: machine == nil ? record.boundFolder : nil,
-                                                         studio: studio, brief: record.brief) + (isDot ? "\n\n" + Prompts.dotInstructions(name: title) : "")
+                                                         studio: studio, brief: record.brief)
                 + pcInstructions(workspace: cwd),
             resumeSessionID: record.claudeSessionID,
             extraDirectories: machine == nil ? [Attachments.directory.path] : [],
             forkSession: record.claudeForkPending == true,
-            mcpConfig: claudeMCPConfig,
-            allowedTools: claudeAllowedTools,
             toolsMCPConfig: local ? claudeToolsMCPConfigFile(tools) : nil,
             disallowedTools: Self.claudeDisallowedTools(tools),
             pluginDirs: local ? claudeToolsPluginDir(tools).map { [$0] } ?? [] : [],
@@ -222,8 +213,7 @@ extension ChatSession {
     }
 
     private var claudeWorkingFolder: String {
-        if isDot { return RuntimePaths.assistantFolder }
-        return record.boundFolder ?? AppPreferences.defaults.string(forKey: "codexFolder") ?? NSHomeDirectory()
+        record.boundFolder ?? AppPreferences.defaults.string(forKey: "codexFolder") ?? NSHomeDirectory()
     }
 
     private var claudePermissionMode: String { record.claudeModeID }
@@ -659,13 +649,13 @@ extension ChatSession {
 }
 
 extension ChatSession {
-    /// EasyCLIProxyAPI for this chat's Claude Code, when it's on (never for the assistant).
+    /// EasyCLIProxyAPI for this chat's Claude Code, when it's on.
     /// Claude Code turns tool search off for a non-Anthropic base URL, which loads every MCP
     /// tool schema up front (Studio chats started at ~160k tokens instead of ~33k), so it's
     /// switched back on; the proxy passes deferred tool loading through.
     /// On the PC it's reached through a tunnel on the agent's own SSH connection.
     var claudeProxyEnvironment: [String: String] {
-        guard !isDot, let mac = EasyCLIProxy.shared.active(for: .claude) else { return [:] }
+        guard let mac = EasyCLIProxy.shared.active(for: .claude) else { return [:] }
         let proxy = runMachine == nil ? mac : mac.onPC(port: EasyCLIProxy.pcClaudePort(for: id))
         return ["ANTHROPIC_BASE_URL": proxy.base, "ANTHROPIC_AUTH_TOKEN": proxy.key, "ANTHROPIC_API_KEY": "",
                 "ENABLE_TOOL_SEARCH": "true"]
@@ -673,7 +663,7 @@ extension ChatSession {
 
     /// The tunnel a PC launch needs for `claudeProxyEnvironment`.
     var claudeProxyForwards: [RemoteLaunch.Forward] {
-        guard runMachine != nil, record.openModel == nil, !isDot, let mac = EasyCLIProxy.shared.active(for: .claude) else { return [] }
+        guard runMachine != nil, record.openModel == nil, let mac = EasyCLIProxy.shared.active(for: .claude) else { return [] }
         return [mac.forward(fromPC: EasyCLIProxy.pcClaudePort(for: id))]
     }
 

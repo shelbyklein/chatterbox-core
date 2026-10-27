@@ -235,22 +235,10 @@ struct CommandCenterTile: View {
                     #endif
             }.buttonStyle(.borderless).padding(12).frame(height: 44)
             Divider()
-            if session.isDot && model.showingDot {
-                VStack(spacing: 12) {
-                    #if GOLEM_APP
-                    GolemHead(size: 40)
-                    #else
-                    Image(systemName: "bubble.left").font(.largeTitle)
-                    #endif
-                    Text("\(model.dotName) is in the mini window")
-                    Button("Bring Session Here") { model.showingDot = false }
-                }.frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ChatView(session: session).id(session.id)
-                    .environment(\.compactChat, true)
-                    .environment(\.commandCenterTile, CommandCenterTileContext(isActive: active, activate: activate))
-                    .environment(\.chatSwitchCoordinator, nil)
-            }
+            ChatView(session: session).id(session.id)
+                .environment(\.compactChat, true)
+                .environment(\.commandCenterTile, CommandCenterTileContext(isActive: active, activate: activate))
+                .environment(\.chatSwitchCoordinator, nil)
         }
         .background(Theme.currentBackground ?? Color(nsColor: .windowBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 12))

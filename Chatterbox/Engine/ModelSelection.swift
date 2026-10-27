@@ -119,7 +119,7 @@ final class ModelSelection {
     // MARK: - Last used
 
     func remember(_ last: LastModel, for session: ChatSession) {
-        guard !session.isDot, let data = try? JSONEncoder().encode(last), let text = String(data: data, encoding: .utf8) else { return }
+        guard let data = try? JSONEncoder().encode(last), let text = String(data: data, encoding: .utf8) else { return }
         AppPreferences.defaults.set(text, forKey: Self.lastKey(SessionKind.of(session)))
     }
 

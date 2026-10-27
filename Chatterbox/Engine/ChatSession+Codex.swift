@@ -129,7 +129,7 @@ extension ChatSession {
         let result = try await server.request("thread/resume", .object(params), timeout: .seconds(10))
         guard result["thread"]?["id"]?.string == thread else { throw CodexError(message: "Codex didn't reconnect to the original thread.") }
         server.markLoaded(thread)
-        codexDotConfiguration = codexConfigurationKey
+        codexLoadedConfiguration = codexConfigurationKey
     }
 
     /// A restored running flag may outlive its completed provider turn. Confirm the
@@ -236,7 +236,7 @@ extension ChatSession {
                     record.codex?.threadId = id
                     codexRegisterHandler(id)
                     server.markLoaded(id)
-                    codexDotConfiguration = codexConfigurationKey
+                    codexLoadedConfiguration = codexConfigurationKey
                     onChange?(self)
                     return id
                 }
@@ -253,17 +253,16 @@ extension ChatSession {
         if let existing = settings.threadId {
             await server.waitForThreadUnsubscribe(existing)
             codexRegisterHandler(existing)
-            if server.isThreadSubscribed(existing), codexDotConfiguration == codexConfigurationKey { return existing }
+            if server.isThreadSubscribed(existing), codexLoadedConfiguration == codexConfigurationKey { return existing }
             do {
                 var params: [String: JSON] = [
                     "threadId": .string(existing), "cwd": .string(codexFolder(settings)), "excludeTurns": true,
                 ]
                 let threadParams = codexThreadParams(settings)
                 params["config"] = threadParams["config"]
-                if isDot { params["developerInstructions"] = threadParams["developerInstructions"] }
                 _ = try await server.request("thread/resume", .object(params))
                 server.markLoaded(existing)
-                codexDotConfiguration = codexConfigurationKey
+                codexLoadedConfiguration = codexConfigurationKey
                 return existing
             } catch {
                 notice("Couldn't reopen the earlier Codex session, so this continues in a new one.")
@@ -281,7 +280,7 @@ extension ChatSession {
         record.instructionsVersion = Prompts.instructionsVersion
         codexRegisterHandler(id)
         server.markLoaded(id)
-        codexDotConfiguration = codexConfigurationKey
+        codexLoadedConfiguration = codexConfigurationKey
         onChange?(self)
         return id
     }
@@ -296,14 +295,8 @@ extension ChatSession {
                                                                          studio: studio, brief: record.brief) + pcInstructions(workspace: codexFolder(settings))),
         ]
         if let model = codexTurnModel(settings).model { params["model"] = .string(model) }
-        if isDot {
-            guard let instructions = params["developerInstructions"]?.string else { return params }
-            params["developerInstructions"] = .string(instructions + "\n\n" + dotCodexInstructions)
-            params["config"] = dotCodexConfig
-        } else {
-            // Always explicit, so a thread that used another connection switches cleanly.
-            params["config"] = .object(codexConnection.config)
-        }
+        // Always explicit, so a thread that used another connection switches cleanly.
+        params["config"] = .object(codexConnection.config)
         // The agent computer's tools, when this chat uses it.
         let computer = codexComputerConfig
         if !computer.isEmpty {
@@ -334,7 +327,6 @@ extension ChatSession {
     var codexConfigurationKey: String {
         let tools = ToolScopes.fingerprint(for: self)
         let secrets = "|secrets:" + SecretVault.shared.fingerprint(for: self) + (tools.isEmpty ? "" : "|tools:" + tools)
-        if isDot { return dotCodexConfigurationKey + secrets }
         let computer = computerConfigurationKey.isEmpty ? "" : "|" + computerConfigurationKey
         return codexConnection.key + secrets + computer
     }

@@ -51,8 +51,6 @@ struct ContentView: View {
     /// The chat that goes into the Studio being named, when making one from a chat.
     @State private var studioFromChat: ChatSession?
     @State private var renamingStudio: Studio?
-    @State private var renamingDot = false
-    @State private var dotName = ""
     /// The Studio a dragged chat is over, which lights up.
     @State private var dropStudio: UUID?
     /// Show only projects with this tag; empty shows everything.
@@ -149,31 +147,14 @@ struct ContentView: View {
                 // A website pin: the page takes the chat's place, and the chat floats over it.
                 ZStack(alignment: .bottomTrailing) {
                     WebPaneView(page: page) { model.webPage = nil }
-                    if let session = model.selected, !(session.isDot && model.showingDot) {
+                    if let session = model.selected {
                         FloatingChat(session: session) { model.webPage = nil }
                             .padding(16)
                     }
                 }
             } else if let session = model.selected {
-                if session.isDot, model.showingDot {
-                    // Only one editable Golem composer at a time, so drafts never diverge.
-                    VStack(spacing: 12) {
-                        Image(systemName:"arrow.up.forward.app")
-                        Text("\(model.dotName) is in the mini window").font(.title3.weight(.medium))
-                        HStack {
-                            #if GOLEM_APP
-                            Button("Show Mini") { model.dotMiniWindow?.show() }
-                            #else
-                            Button("Open Golem") {GolemIntegration.shared.open()}
-                            #endif
-                            Button("Bring Session Here") { model.openDot() }
-                        }
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    ChatView(session: session)
-                        .id(session.id)
-                }
+                ChatView(session: session)
+                    .id(session.id)
             } else if let status = model.sessionLoadStatus {
                 VStack(spacing: 12) {
                     ProgressView()
@@ -204,8 +185,7 @@ struct ContentView: View {
     }
 
     private var mainChatID: UUID? {
-        guard !model.showingAutomations, !model.showingCommandCenter, !model.showingHome, !model.showingSettings, model.webPage == nil, let session = model.selected,
-              !(session.isDot && model.showingDot) else { return nil }
+        guard !model.showingAutomations, !model.showingCommandCenter, !model.showingHome, !model.showingSettings, model.webPage == nil, let session = model.selected else { return nil }
         return session.id
     }
 
@@ -251,8 +231,6 @@ struct ContentView: View {
         .sheet(isPresented: $model.showingCloneFromGitHub) { CloneFromGitHubView() }
         .sheet(isPresented: $model.showingNewProject) { NewProjectSheet().environment(model) }
         .sheet(item: $model.namingNewSession) { request in NewSessionSheet(request: request).environment(model) }
-        .sheet(isPresented: $model.editingDotMemory) { DotMemorySheet() }
-        // Dot asked to show you its computer.
         .sheet(item: $model.pinSheet) { AddPinSheet(request: $0) }
         .sheet(item: $sidequestFrom) { parent in
             SidequestForm(agent: parent.record.backend == .claude ? "Codex" : "Claude", from: parent.record.backend.label, task: $sidequestTask) {
@@ -520,7 +498,6 @@ extension ContentView {
         }
     }
 
-    /// Dot at the top of the sidebar: click to open it full size.
     /// A message's first lines without Markdown marks, for a one-glance preview.
     static func plainPreview(_ text: String) -> String {
         text.replacingOccurrences(of: "**", with: "").replacingOccurrences(of: "`", with: "")
@@ -529,69 +506,7 @@ extension ContentView {
             .split(separator: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.joined(separator: " ")
     }
 
-    #if GOLEM_APP
-    private var dotRow: some View {
-        let dot = model.dot
-        let selected = dot != nil && model.selectedID == dot?.id
-        let unread = dot.map(Attention.shared.dotUnreadCount) ?? 0
-        let latest = unread > 0 ? dot.flatMap(Attention.shared.dotLatestUnread) : nil
-        return HStack(spacing: 12) {
-            GolemHead(size: 36)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(model.dotName).font(.system(size: 15, weight: unread > 0 ? .bold : .semibold))
-                if let latest {
-                    // The newest unread message, in full color, so it reads as news.
-                    Text(Self.plainPreview(latest)).font(.caption).foregroundStyle(.primary).lineLimit(2)
-                } else {
-                    Text(dot?.lastActionSummary ?? "Runs your sessions for you. \u{2318}J from anywhere.")
-                        .font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                }
-            }
-            Spacer(minLength: 0)
-            if unread > 0 {
-                Text(unread == 1 ? "1 new" : "\(unread) new")
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(Color.onHighlight)
-                    .padding(.horizontal, 6).padding(.vertical, 2)
-                    .background(Capsule().fill(Color.highlight))
-                    .help("\(unread) unread \(unread == 1 ? "message" : "messages") from \(model.dotName)")
-            }
-            if dot?.isWaitingOnYou == true {
-                Circle().fill(Color.yellow).frame(width: 7, height: 7)
-            } else if dot?.isRunning == true {
-                ActivitySpinner(color: .secondary).frame(width: 10, height: 10)
-            }
-        }
-        .frame(minHeight: 72)
-        .contentShape(Rectangle())
-        .environment(\.colorScheme, selected ? .light : colorScheme)
-        .onTapGesture { model.openDot() }
-        .listRowBackground(RoundedRectangle(cornerRadius: 8)
-            .fill(selected ? Color.white : Color.highlight.opacity(unread > 0 ? 0.14 : 0))
-            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.highlight.opacity(unread > 0 && !selected ? 0.5 : 0), lineWidth: 1))
-            .padding(.horizontal, 10))
-        .contextMenu {
-            Button("Open \(model.dotName)") { model.openDot() }
-            if let dot {
-                RestartThreadControl(session: dot)
-                NewSidechatControl(parent: dot)
-            }
-            Button("Rename\u{2026}") { dotName = model.dotName; renamingDot = true }
-            Button(model.showingDot ? "Hide Mini Window" : "Show Mini Window  \u{2318}J") { model.showingDot.toggle() }
-        }
-        .help("\(model.dotName) runs your other sessions: ask it to check on a project, hand work to a session, or start one.")
-        .alert("Rename \(model.dotName)", isPresented: $renamingDot) {
-            TextField("Name", text: $dotName)
-            Button("Rename") { model.renameDot(dotName) }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Its name everywhere in Chatterbox, and what it's told it's called.")
-        }
-    }
-
     /// Moves dragged chats into a Studio. Project chats stay with their projects.
-    #endif
-
     private func drop(_ ids: [String], into studio: Studio) -> Bool {
         dropStudio = nil
         let moved = ids.compactMap(UUID.init(uuidString:))
@@ -762,7 +677,7 @@ extension ContentView {
         }
         if session.record.archivedAt == nil {
             NewSidechatControl(parent: session)
-            if !session.isSidequest, !session.isDot {
+            if !session.isSidequest {
                 Button("Sidequest to \(session.record.backend == .claude ? "Codex" : "Claude")\u{2026}", systemImage: "point.topleft.down.to.point.bottomright.curvepath") {
                     sidequestTask = ""; sidequestFrom = session
                 }
@@ -1298,14 +1213,6 @@ extension ContentView {
                 #if DEBUG
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { SidebarDebug.activity = $0 }
                 #endif
-            if !isFiltering && model.studioSidebarID == nil {
-                #if GOLEM_APP
-                List { Section { dotRow } }
-                    .scrollDisabled(true)
-                    .scrollContentBackground(.hidden)
-                    .frame(height: 100)
-                #endif
-            }
             GeometryReader { geometry in
                 VStack(spacing: 0) {
                     if !visiblePinnedThreads.isEmpty {
@@ -1906,7 +1813,7 @@ private struct StudioRail: View {
 
     private func row(_ studio: Studio) -> some View {
         let selected = model.studioSidebarID == studio.id
-        let attention = model.activeSessions.filter { $0.record.studioID == studio.id && !$0.isDot && Attention.shared.needsAttention($0) }.count
+        let attention = model.activeSessions.filter { $0.record.studioID == studio.id && Attention.shared.needsAttention($0) }.count
         return Button {
             if let latest = model.chats(in: studio).first { model.selectedID = latest.id } else { model.studioSidebarID = studio.id }
         } label: {

@@ -95,15 +95,10 @@ struct DisplayItem: Identifiable, Codable, Equatable {
     var answers: [String: [String]]?
     /// Approval rows: which buttons to show. nil is the usual Allow / Allow for This Chat / Deny.
     var approvalStyle: ApprovalStyle?
-    /// A user row Chatterbox sent for Dot (a check-in), shown by its label in `detail`.
+    /// A user row Chatterbox sent on its own (a sidequest's result), shown by its label in `detail`.
     var automatic: Bool?
     /// In the chat a sidequest came from: the sidequest this row starts or brings back.
     var sidequest: UUID?
-    /// Question rows: answers Golem suggests (by question id), why, and under which name.
-    /// Only a suggestion: the card shows it picked, and nothing is sent until you send it.
-    var suggested: [String: [String]]?
-    var suggestedReason: String?
-    var suggestedBy: String?
 
     enum ApprovalStyle: String, Codable { case plan }
 }
@@ -166,12 +161,6 @@ struct ConversationRecord: Codable {
     var remoteControl: Bool?
     /// Claude Code's tasks for this session, shown as the plan (see ChatSession+Tasks).
     var claudeTasks: [ClaudeTask]?
-    /// This is Dot's chat (see Dot.swift).
-    var isDot: Bool?
-    /// The name Dot was last told it has, so a rename reaches it with the next message.
-    var sentDotName: String?
-    /// Dot handed this chat work, and tells you when it's done (see DotActivity).
-    var dotFollowing: Bool?
     var items: [DisplayItem] = []
     /// The Claude Code session this chat continues, so it survives app restarts.
     var claudeSessionID: String?
@@ -276,7 +265,7 @@ struct ConversationRecord: Codable {
         copy.sentPersonality = nil; copy.instructionsVersion = nil
         copy.sentUserInstructions = nil; copy.sentSecretsKey = nil
         copy.sentStudioInstructions = nil; copy.sentBrief = nil; copy.brief = nil
-        copy.sentDotName = nil; copy.sentComputerNote = nil
+        copy.sentComputerNote = nil
         copy.claudeTasks = nil; copy.sidequestTask = nil
         return copy
     }

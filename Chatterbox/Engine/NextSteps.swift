@@ -61,9 +61,7 @@ final class NextSteps {
               let reply = session.items.last(where: { $0.kind == .assistant && $0.phase == .final }),
               session.items.last(where: { $0.kind == .assistant })?.id == reply.id,
               reply.text.count >= minAnswerChars,
-              // Golem's quiet "nothing to report" check-ins aren't worth a suggestion.
-              reply.text.trimmingCharacters(in: .whitespacesAndNewlines) != "NO_REPORT",
-              // Answers to what you wrote, not to Chatterbox's own check-ins and briefings.
+              // Answers to what you wrote, not to messages Chatterbox sent on its own.
               let asked = session.items.last(where: { $0.kind == .user }), asked.automatic != true
         else { return }
         pending[session.id] = reply.id

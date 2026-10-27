@@ -92,22 +92,18 @@ final class ChatSession: Identifiable {
     @ObservationIgnored var codexPlanItems: [String: UUID] = [:]
     @ObservationIgnored var codexTurnMessageItems: [UUID] = []
     @ObservationIgnored var codexStopRequested = false
-    /// Dot's per-thread tools/instructions last applied to the current Codex process.
-    @ObservationIgnored var codexDotConfiguration: String?
+    /// The per-thread configuration last applied to the current Codex process.
+    @ObservationIgnored var codexLoadedConfiguration: String?
     /// Stopping so a message can go straight in ("Send Now"), not a plain Stop.
     @ObservationIgnored var stoppingToSend = false
     /// What's typed in the message box but not sent yet, and files attached to it. Kept with
     /// the chat, so switching to another chat and back doesn't lose it.
     /// Not observed: only ChatView sets them, and it keeps its own copy while you type.
     @ObservationIgnored var applyingRemoteState=false
-    #if GOLEM_APP
-    var draft = "" {didSet{syncRemoteDraft()}}
-    #else
     @ObservationIgnored var draft = "" {didSet{syncRemoteDraft()}}
-    #endif
-    /// The reply in progress answers a check-in Chatterbox sent (see DotActivity).
+    /// The reply in progress answers a message Chatterbox sent on its own (a sidequest's result).
     @ObservationIgnored var automaticTurn = false
-    /// Chatterbox's usual "finished" alert is skipped for this turn (Dot's quiet check-ins).
+    /// Chatterbox's usual "finished" alert is skipped for this turn.
     @ObservationIgnored var skipFinishedAlert = false
     /// Restart Claude Code once this reply ends, so the next message gets new tools.
     @ObservationIgnored var restartForToolsAfterTurn = false
@@ -123,7 +119,7 @@ final class ChatSession: Identifiable {
         return claudeCommands ?? ClaudeModels.shared.commands
     }
 
-    /// Called as a turn ends, before the change is saved: Dot's check-ins tidy up here.
+    /// Called as a turn ends, before the change is saved.
     func turnEnded() {
         RuntimeHooks.note("Reply ended in \u{201C}\(title)\u{201D} (\(record.items.count) rows)")
         record.updatedAt = Date()
@@ -133,17 +129,13 @@ final class ChatSession: Identifiable {
             return
         }
         if restartForToolsAfterTurn {
-            // Tools changed during the reply (Dot turned its computer on or off).
+            // Tools changed during the reply.
             restartForToolsAfterTurn = false
             DispatchQueue.main.async { [weak self] in self?.restartClaudeForNewTools() }
         }
         RuntimeHooks.turnEnded(self)
     }
-    #if GOLEM_APP
-    var draftAttachments: [Attachment] = [] {didSet{syncRemoteDraft()}}
-    #else
     @ObservationIgnored var draftAttachments: [Attachment] = [] {didSet{syncRemoteDraft()}}
-    #endif
     /// Typing sends the background service the newest draft at most every 0.3 s, not every keystroke.
     @ObservationIgnored private var remoteDraftScheduled=false
     /// A draft the background service hasn't confirmed yet: a reconnect mustn't replace it
@@ -388,42 +380,11 @@ final class ChatSession: Identifiable {
             if let answers, let value = try? JSON.value(answers) { body["answers"] = value }
             remoteCommand("answer", .object(body)); return
         }
-        if let item = record.items.first(where: { $0.id == itemID }), let suggested = item.suggested {
-            RuntimeHooks.answered(self, item, suggested, answers)
-        }
         switch record.backend {
         case .codex: codexAnswer(itemID, answers: answers)
         case .claude: claudeAnswer(itemID, answers: answers)
         }
     }
-
-    /// Golem's suggested answers for a pending question card: checked against its questions,
-    /// shown on the card, and sent only when you send them. Throws a reason it can't.
-    func suggestAnswers(_ itemID: UUID, answers: [String: [String]], reason: String, by name: String) throws {
-        guard let index = record.items.firstIndex(where: { $0.id == itemID }),
-              record.items[index].kind == .questions, record.items[index].approvalState == .pending else {
-            throw SuggestionError(message: "That session has no pending question card with that id.")
-        }
-        let questions = record.items[index].questions ?? []
-        var cleaned: [String: [String]] = [:]
-        for (id, picks) in answers {
-            guard let question = questions.first(where: { $0.id == id }) else {
-                throw SuggestionError(message: "No question with id \u{201C}\(id)\u{201D} on that card.")
-            }
-            if question.isSecret { throw SuggestionError(message: "That question asks for a secret; only the user can answer it.") }
-            let values = picks.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
-            if !question.multiSelect, values.count > 1 { throw SuggestionError(message: "\u{201C}\(question.question)\u{201D} takes one answer.") }
-            if !values.isEmpty { cleaned[id] = values }
-        }
-        guard !cleaned.isEmpty else { throw SuggestionError(message: "No answers to suggest.") }
-        record.items[index].suggested = cleaned
-        record.items[index].suggestedReason = reason.trimmingCharacters(in: .whitespacesAndNewlines)
-        record.items[index].suggestedBy = name
-        RuntimeHooks.suggested(self, record.items[index])
-        onChange?(self)
-    }
-
-    struct SuggestionError: Error { let message: String }
 
     /// Stops any agent process this chat owns, e.g. when the chat is deleted.
     func shutdown() {
@@ -543,14 +504,13 @@ final class ChatSession: Identifiable {
         if backend == .codex, record.codex == nil {
             let defaults = AppPreferences.defaults
             record.codex = CodexSettings(
-                folder: isDot ? RuntimePaths.assistantFolder : (record.boundFolder ?? defaults.string(forKey: "codexFolder") ?? NSHomeDirectory()),
+                folder: record.boundFolder ?? defaults.string(forKey: "codexFolder") ?? NSHomeDirectory(),
                 canEdit: false,
                 mode: PermissionModes.defaultCodex
             )
             record.codex?.model = defaults.string(forKey: "codexDefaultModel").flatMap { $0.isEmpty ? nil : $0 }
             record.codex?.effort = defaults.string(forKey: "codexDefaultEffort").flatMap { $0.isEmpty ? nil : $0 }
         }
-        if isDot, backend == .codex { record.codex?.folder = RuntimePaths.assistantFolder }
         record.activeBackend = backend
         // The incoming agent may not have seen the current tone.
         record.sentPersonality = nil

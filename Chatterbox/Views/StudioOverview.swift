@@ -272,7 +272,7 @@ private struct StudioColumn: View {
 
     /// The Studio's sessions (Sidechats and sidequests too) the toolbar's Studios badge counts.
     private func attention(in studio: Studio) -> Int {
-        model.activeSessions.filter { $0.record.studioID == studio.id && !$0.isDot && Attention.shared.needsAttention($0) }.count
+        model.activeSessions.filter { $0.record.studioID == studio.id && Attention.shared.needsAttention($0) }.count
     }
 
     private func entry(_ value: StudioSelection, title: String, count: Int, attention: Int, icon: String) -> some View {

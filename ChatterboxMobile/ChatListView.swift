@@ -18,14 +18,10 @@ struct ChatListView: View {
             case .chats: "bubble.left.and.bubble.right"
             }
         }
-        /// The one kind of group the page lists (All lists every kind but Golem's).
+        /// The one kind of group the page lists (All and Pinned list every kind).
         var kind: Companion.ChatGroup.Kind { self == .projects ? .projects : self == .studios ? .studio : .chats }
-        func includes(_ kind: Companion.ChatGroup.Kind) -> Bool { self == .all || self == .pinned ? kind != .dot : kind == self.kind }
+        func includes(_ kind: Companion.ChatGroup.Kind) -> Bool { self == .all || self == .pinned || kind == self.kind }
     }
-    /// On iPhone Golem has his own tab, so the list leaves him out.
-    var hidesAssistant = true
-    /// Tells the iPhone's home whether a chat is open (its edge swipe yields to Back then).
-    var onShowingChat: (Bool) -> Void = { _ in }
     /// Set when the list is one of the home's bottom tabs: only that page, no page switcher.
     var fixedPage: Page? = nil
     @Environment(MobileStore.self) private var store
@@ -103,7 +99,6 @@ struct ChatListView: View {
             }
         }
         .background { SessionDivisionProbe(division: $division).allowsHitTesting(false) }
-        .onChange(of: compactColumn, initial: true) { _, column in onShowingChat(sizeClass != .regular && column == .detail) }
         .sheet(isPresented: $showingActivity, onDismiss: {
             // Opening a chat while the sheet is still closing is dropped; wait until it's gone.
             if let id = activityPick { activityPick = nil; MobilePushNotifications.shared.pendingChat = id }
@@ -164,10 +159,6 @@ struct ChatListView: View {
         // Keeps the list current while it's on screen.
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
-            // The assistant's animations, kept in step with the Mac's.
-            #if GOLEM_APP
-            Task { await MobileGolem.shared.load(from: store) }
-            #endif
             while !Task.isCancelled {
                 await store.loadChats()
                 #if DEBUG
@@ -251,9 +242,9 @@ struct ChatListView: View {
         }
     }
 
-    /// The page's groups; a search looks through every page. Golem is never listed here.
+    /// The page's groups; a search looks through every page.
     private var groups: [Companion.ChatGroup] {
-        let all = (store.chatList?.groups ?? []).filter { $0.kind != .dot || !hidesAssistant }
+        let all = store.chatList?.groups ?? []
         // A tab searches its own page; the switcher's search looks through every page.
         let everyChat = all.flatMap(\.chats)
         // Sidequests are shown with the chat that started them, not as chats of their own.
@@ -262,7 +253,7 @@ struct ChatListView: View {
             group.chats = group.chats.filter { !MobileSidequests.listedWithParent($0, in: everyChat) }
             return group
         }
-        let shown = filtered(search.isEmpty || fixedPage != nil ? lists.filter { page.includes($0.kind) } : lists.filter { $0.kind != .dot })
+        let shown = filtered(search.isEmpty || fixedPage != nil ? lists.filter { page.includes($0.kind) } : lists)
         if page == .pinned { return Self.pinned(shown) }
         return sorted(page == .all ? Self.mixed(shown) : shown)
     }
@@ -345,7 +336,7 @@ struct ChatListView: View {
 
     /// Each Studio is named; the Projects and Chats pages are their own heading, except in a search.
     private func showsHeader(_ group: Companion.ChatGroup) -> Bool {
-        group.kind != .dot && group.id != "all" && (group.kind == .studio || page == .all || sort == .tag || (!search.isEmpty && fixedPage == nil))
+        group.id != "all" && (group.kind == .studio || page == .all || sort == .tag || (!search.isEmpty && fixedPage == nil))
     }
 
     private func waiting(on page: Page) -> Int {
@@ -580,7 +571,7 @@ struct ChatListView: View {
     private var connectionItems: some View {
         if let connection = store.connection { Text("Connected to \(connection.macName)") }
         Button { showingActivity = true } label: { Label("Activity", systemImage: "clock") }
-        #if canImport(RoyalVNCKit) && !GOLEM_APP
+        #if canImport(RoyalVNCKit)
         Button { store.showingMacScreen = true } label: { Label("Mac Screen", systemImage: "display") }
         #endif
         Button { showingUsage = true } label: { Label("Usage", systemImage: "chart.bar.xaxis") }
@@ -731,8 +722,7 @@ private struct ChatRow: View {
                     Group {
                         if chat.worktreeBranch != nil {
                             Image(systemName: "arrow.triangle.branch").frame(width: 16, height: 16)
-                        } else if chat.isDot == true { Image(systemName:"sparkles").frame(width:16,height:16) }
-                        else {
+                        } else {
                             Image((Backend(rawValue: chat.backend) ?? .claude).iconName)
                                 .resizable().scaledToFit().frame(width: 16, height: 16)
                                 .foregroundStyle(MobileConversationStyle.accent(for: chat.backend))

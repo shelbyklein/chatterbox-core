@@ -57,7 +57,6 @@ final class ChatToolbarBridge {
     // What changes the toolbar's set of items. These are the same for most switches, so the
     // items themselves are kept; only a different kind of chat adds or removes one.
     var hasChat: Bool { session != nil }
-    var isDot: Bool { session?.isDot == true }
     var isClaude: Bool { session?.record.backend == .claude }
 }
 
@@ -79,25 +78,10 @@ struct ChatToolbarContent: ToolbarContent {
 
     var body: some ToolbarContent {
         if bridge.hasChat {
-            if bridge.isDot { ToolbarItem { ToneSlot(bridge: bridge) } }
-            #if !GOLEM_APP
-            if bridge.isDot {
-                ToolbarItem { PlaceSlot(bridge: bridge) }
-                ToolbarItem { RepoSlot(bridge: bridge) }
-            }
-            #endif
-            if bridge.isDot {
-                ToolbarItem { GolemSlot(bridge: bridge) }
-            }
-            #if !GOLEM_APP
             if bridge.isClaude {
                 ToolbarItem { RemoteSlot(bridge: bridge) }
             }
-            #endif
-            if bridge.isDot { ToolbarItem { ImagesSlot(bridge: bridge) } }
-            #if !GOLEM_APP
             ToolbarItem { TerminalSlot(bridge: bridge) }
-            #endif
         }
     }
 }
@@ -257,13 +241,6 @@ struct SessionImages: View {
     }
 }
 
-struct ToneSlot: View {
-    let bridge: ChatToolbarBridge
-    var body: some View {
-        if let session = bridge.session { ToneMenu(session: session) }
-    }
-}
-
 /// The project folder, or the Studio the chat is in.
 struct PlaceSlot: View {
     let bridge: ChatToolbarBridge
@@ -341,28 +318,6 @@ struct RepoSlot: View {
     }
 }
 
-struct GolemSlot: View {
-    let bridge: ChatToolbarBridge
-    @Environment(AppModel.self) private var model
-    @AppStorage("golemActivityExpanded") private var golemPanelOpen = false
-
-    var body: some View {
-        if let session = bridge.session, session.isDot {
-            HStack(spacing: 8) {
-                Button { withAnimation(.smooth(duration: 0.25)) { golemPanelOpen.toggle() } } label: {
-                    Image(systemName: "sidebar.right")
-                }
-                .help(golemPanelOpen ? "Hide \(session.title)\u{2019}s activity, decisions and schedule" : "Show \(session.title)\u{2019}s activity, decisions and schedule")
-                .accessibilityLabel("\(session.title) Panel")
-                Button { model.showingDot = true } label: { ToolbarLabel("Mini", systemImage: "pip") }
-                    .help("Keep \(session.title) above other apps (⌘J)")
-                Button { model.editingDotMemory = true } label: { ToolbarLabel("Memory", systemImage: "brain") }
-                    .help("What Dot remembers about you and your work (MEMORY.md)")
-            }
-        }
-    }
-}
-
 /// Remote Control: whether this chat can be opened on claude.ai and in the Claude app.
 struct RemoteSlot: View {
     let bridge: ChatToolbarBridge
@@ -392,14 +347,6 @@ struct RemoteSlot: View {
                   ? "Remote Control is on: this session is on claude.ai and in the Claude app."
                   : "Remote Control: open this session on claude.ai or in the Claude app")
         }
-    }
-}
-
-struct ImagesSlot: View {
-    let bridge: ChatToolbarBridge
-    var body: some View {
-        Button { bridge.showImages() } label: { Image(systemName: "photo.on.rectangle.angled") }
-            .help("Every image made in this session").accessibilityLabel("Images")
     }
 }
 

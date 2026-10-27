@@ -21,47 +21,5 @@ enum MobileConversationStyle {
                 : UIColor(red: 0.62, green: 0.28, blue: 0.11, alpha: 1)
         })
     }
-
-    struct Group: Identifiable {
-        var items: [Companion.Item]
-        var isSteps: Bool
-        var id: UUID { items[0].id }
-    }
-
-    /// Keep progress notes visible, but fold consecutive technical rows in Golem's conversation.
-    static func groups(_ items: [Companion.Item], conversation: Bool) -> [Group] {
-        var result: [Group] = []
-        for item in items {
-            let steps = conversation && [.tool, .thought, .shell].contains(item.kind)
-            if steps, result.last?.isSteps == true {
-                result[result.count - 1].items.append(item)
-            } else {
-                result.append(Group(items: [item], isSteps: steps))
-            }
-        }
-        return result
-    }
 }
 
-/// Parsed Markdown blocks, rather than splitting on blank lines: a list, table or code fence
-/// stays intact even when it contains paragraph spacing. Paragraphs each get their own bubble.
-struct MobileReplyBubbles: View {
-    let text: String
-    let messageID: UUID
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            ForEach(Array(MarkdownText.blocks(text).enumerated()), id: \.offset) { index, block in
-                MarkdownBlockText(block: block, source: text)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(Color(uiColor: .secondarySystemBackground),
-                                in: RoundedRectangle(cornerRadius: 20))
-                    .accessibilityElement(children: .contain)
-                    .accessibilityIdentifier("reply-bubble-\(messageID)-\(index)")
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.trailing, 32)
-    }
-}

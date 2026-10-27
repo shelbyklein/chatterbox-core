@@ -26,7 +26,6 @@ enum Tools {
     }
 
     static func label(name: String, input: JSON?) -> String {
-        if name.hasPrefix("mcp__chatterbox__") { return dotLabel(String(name.dropFirst("mcp__chatterbox__".count)), input: input) }
         let file = input?["file_path"]?.string ?? input?["notebook_path"]?.string ?? input?["path"]?.string
         let fileName = file.map { ($0 as NSString).lastPathComponent }
         switch name {
@@ -89,20 +88,6 @@ enum Tools {
     private static func short(_ text: String, _ limit: Int = 80) -> String {
         let oneLine = text.replacingOccurrences(of: "\n", with: " ")
         return oneLine.count > limit ? String(oneLine.prefix(limit - 1)) + "\u{2026}" : oneLine
-    }
-
-    /// Dot's Chatterbox tools, in words: "Messaging “SDHQ”".
-    private static func dotLabel(_ tool: String, input: JSON?) -> String {
-        let chat = input?["chat"]?.string.map { " \u{201C}\($0)\u{201D}" } ?? ""
-        switch tool {
-        case "list_chats": return "Looking over your sessions"
-        case "read_chat": return "Reading" + (chat.isEmpty ? " a session" : chat)
-        case "send_message": return "Messaging" + (chat.isEmpty ? " a session" : chat)
-        case "start_chat": return "Starting a session" + (input?["studio"]?.string.map { " in \u{201C}\($0)\u{201D}" } ?? "")
-        case "wait_for_reply": return "Waiting on" + (chat.isEmpty ? " a session" : chat)
-        case "stop_chat": return "Stopping" + (chat.isEmpty ? " a session" : chat)
-        default: return "Using Chatterbox"
-        }
     }
 }
 

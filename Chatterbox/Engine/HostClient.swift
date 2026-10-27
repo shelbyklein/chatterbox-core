@@ -141,7 +141,7 @@ final class HostClient {
     }
 
     /// The host ships inside the app as its own small app (Contents/Helpers), so macOS's
-    /// Privacy settings can list it; older bundles (and Golem) keep it in Contents/MacOS.
+    /// Privacy settings can list it; older bundles keep it in Contents/MacOS.
     /// Tests point at theirs with `CHATTERBOX_HOST_BINARY`.
     static var hostBinary: URL? {
         // A service set up before the host moved may still name the old place; skip it then.

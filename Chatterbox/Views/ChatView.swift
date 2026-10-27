@@ -29,7 +29,7 @@ struct ChatView: View {
 
     /// Text and files waiting for this session's message box (see ComposerInsertion).
     private func takeInsertion() {
-        guard let insertion = model.composerInsertion, insertion.session == session.id, !session.isDot else { return }
+        guard let insertion = model.composerInsertion, insertion.session == session.id else { return }
         model.composerInsertion = nil
         attachments += insertion.attachments.filter { !attachments.contains($0) }
         let text = insertion.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -45,48 +45,22 @@ struct ChatView: View {
         _draft = State(initialValue: session.draft)
         _attachments = State(initialValue: session.draftAttachments)
     }
-    /// The right panel's widths: a page preview, Issues, or Golem's activity.
+    /// The right panel's widths: a page preview or Issues.
     private var inspectorSize: InspectorSize {
         preview != nil ? InspectorSize(minimum: 360, ideal: 620, maximum: 1400)
-            : session.isDot && !issuesPanel.isOpen ? InspectorSize(minimum: 260, ideal: 320, maximum: 460)
             : InspectorSize(minimum: 300, ideal: 380, maximum: 640)
     }
-    private var inspectorOpen: Bool { issuesPanel.isOpen || preview != nil || (session.isDot && golemPanelOpen) }
+    private var inspectorOpen: Bool { issuesPanel.isOpen || preview != nil }
     private func closeInspector() {
         issuesPanel.isOpen = false; preview = nil
-        if session.isDot { golemPanelOpen = false }
     }
     @ViewBuilder private var inspectorContent: some View {
         if let preview {
             WebPaneView(page: preview) { self.preview = nil }
-        } else if issuesPanel.isOpen || !session.isDot {
-            IssuesPanel(session: session, panel: issuesPanel)
         } else {
-            #if GOLEM_APP
-            GolemSidePanel(session: session, showsAvatar: false)
-            #else
-            EmptyView()
-            #endif
+            IssuesPanel(session: session, panel: issuesPanel)
         }
     }
-    #if GOLEM_APP
-    private var floatingGolem: some View {
-        Group {
-            if GolemAvatar.shared.hasAnimations && !model.showingDot { GolemAnimated(mood: GolemAvatar.mood(of: session)) }
-            else { GolemHead(size: 40) }
-        }
-        .frame(width: 120, height: 120)
-        .overlay {
-            FloatingGolemHitTarget(label: golemPanelOpen ? "Hide Golem activity" : "Show Golem activity") {
-                golemPanelOpen.toggle()
-            }
-        }
-        .help(golemPanelOpen ? "Hide activity, decisions and schedule" : "Show activity, decisions and schedule")
-    }
-
-    #else
-    private var floatingGolem:some View {EmptyView()}
-    #endif
     private var chatContent: some View {
         VStack(spacing: 0) {
             if session.record.archivedAt != nil { archivedBanner }
@@ -98,7 +72,7 @@ struct ChatView: View {
             transcript
                 // Under the banners above (a sidequest's, an archived chat's), never over them.
                 .overlay(alignment: .topTrailing) {
-                    if !compact && tileContext == nil && !session.isDot {
+                    if !compact && tileContext == nil {
                         GeometryReader { geometry in
                             VStack(alignment: .trailing, spacing: 8) {
                                 // A column of buttons down the right edge.
@@ -115,7 +89,7 @@ struct ChatView: View {
                                     if !session.isSidequest {
                                         NewSidechatControl(parent: session, iconOnly: true)
                                         SidequestButton(session: session)
-                                        if !session.isDot { PCErrandButton(session: session) }
+                                        PCErrandButton(session: session)
                                     }
                                 }
                                 ChatPins(chat: session.record.id, agentName: session.record.backend == .codex ? "Codex" : "Claude",
@@ -127,7 +101,7 @@ struct ChatView: View {
                     }
                 }
                 .overlay(alignment: .bottomTrailing) {
-                    if !compact && tileContext == nil && !session.isDot && !session.isSidequest {
+                    if !compact && tileContext == nil && !session.isSidequest {
                         GeometryReader { geometry in
                             SidequestWindows(parent: session, maxHeight: geometry.size.height - 32)
                                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
@@ -145,8 +119,8 @@ struct ChatView: View {
     }
 
 
-    /// Pinned messages show only in the full chat view, not tiles, compact windows or Dot.
-    private var showsPins: Bool { !compact && tileContext == nil && !session.isDot }
+    /// Pinned messages show only in the full chat view, not tiles or compact windows.
+    private var showsPins: Bool { !compact && tileContext == nil }
     /// A pin that was clicked: the transcript goes to its message.
     @State private var pinJump: UUID?
     /// The message a pin just went to, highlighted for a moment.
@@ -175,8 +149,6 @@ struct ChatView: View {
     private let commands = ChatCommands.shared
     /// The Issues panel on the right (see IssuesPanel.swift).
     @State private var issuesPanel = IssuesPanelState()
-    /// Golem's chat: the column with his activity, decisions and schedule.
-    @AppStorage("golemActivityExpanded") private var golemPanelOpen = false
     /// A page or file from the chat, open in the browser panel on the right.
     @State private var preview: WebPage?
     @State private var previewLink: PreviewLink?
@@ -212,7 +184,6 @@ struct ChatView: View {
             if sidebar != nil || standaloneWindow || mainWindow {
                 ChatColumns(sidebar: sidebar, chat: AnyView(chatContent),
                     inspector: inspectorOpen ? AnyView(inspectorContent) : nil,
-                    floatingGolem: session.isDot ? AnyView(floatingGolem) : nil,
                     inspectorMinimum: inspectorSize.minimum, inspectorIdeal: inspectorSize.ideal, inspectorMaximum: inspectorSize.maximum,
                     closeInspector: closeInspector)
             } else if tileContext != nil {
@@ -227,14 +198,10 @@ struct ChatView: View {
         .modifier(ChatWindowTitle(title: session.title, embedded: tileContext != nil || windowToolbar != nil))
         .onAppear {
             if retainedTranscript == nil { model.retainTranscript(session); retainedTranscript = session.id }
-            if standaloneWindow && session.isDot { golemPanelOpen = true }
             becameShown()
         }
         // The window sizes its sidebar around this chat's right panel (see ChatColumns).
         .preference(key: MainInspectorKey.self, value: mainWindow && inspectorOpen ? inspectorSize : nil)
-        .onChange(of: model.showingDot) { _, miniVisible in
-            if standaloneWindow && session.isDot && !miniVisible { golemPanelOpen = true }
-        }
         .onChange(of: session.id) { _, id in
             if let retainedTranscript { model.releaseTranscript(retainedTranscript) }
             model.retainTranscript(session); retainedTranscript = id
@@ -316,9 +283,6 @@ struct ChatView: View {
         .onChange(of: tileActive) { _, active in if !active { composerFocused = false } }
         .onChange(of: composerFocused) { _, focused in if focused { tileContext?.activate() } }
         .onChange(of: draft) { _, text in session.draft = text }
-        #if GOLEM_APP
-        .modifier(GolemVoiceDraftSync(session: session, draft: $draft, attachments: $attachments))
-        #endif
         .onChange(of: attachments) { _, files in session.draftAttachments = files }
         // Feedback (and anything else) can drop text and files into this message box.
         .onChange(of: model.composerInsertion) { _, _ in takeInsertion() }
@@ -474,18 +438,6 @@ struct ChatView: View {
                     // The rows take the chat's width; the widest one can't widen the column.
                     FlexibleWidth {
                     Group {
-                    if session.isDot {
-                        VStack(spacing: 0) {
-                            #if GOLEM_APP
-                            DotConversation(session: session, initialRows: isMainChat ? Self.firstRows : 80, showsInlineAvatar: !isMainChat && !standaloneWindow)
-                            #else
-                            Text("Open this conversation in Golem.")
-                            #endif
-                            // The transcript's bottom margin is this marker, so scrolling to it reaches the very end
-                            // (and the view stays pinned there as the typing dots and replies arrive).
-                            Color.clear.frame(height: compact ? 12 : 20).id("bottom")
-                        }
-                    } else {
                     let page = findWindow.map(windowPage) ?? transcriptPage(rows: shownRowCount)
                     let agents = page.agents
                     // A bounded eager stack keeps WebKit views and hit regions in the same
@@ -565,9 +517,8 @@ struct ChatView: View {
                             TypingIndicator()
                         }
                         // The transcript's bottom margin is this marker, so scrolling to it reaches the very end
-                            // (and the view stays pinned there as the typing dots and replies arrive).
-                            Color.clear.frame(height: compact ? 12 : 20).id("bottom")
-                    }
+                        // (and the view stays pinned there as the typing dots and replies arrive).
+                        Color.clear.frame(height: compact ? 12 : 20).id("bottom")
                     }
                     }
                     .padding(.horizontal, compact ? 14 : 24)
@@ -590,7 +541,7 @@ struct ChatView: View {
                 guard !Task.isCancelled else { return }
                 proxy.scrollTo("bottom", anchor: .bottom)
                 Diagnostics.signposts.emitEvent("Chat shown")
-                if !session.isDot { keepBottom(proxy) }
+                keepBottom(proxy)
             }
             .onChange(of: session.isRunning) { _, running in
                 if !running { stopStatus = nil; requestingStop = false }
@@ -912,40 +863,20 @@ struct ChatView: View {
 
     private var composerRow: some View {
         HStack(alignment: .bottom, spacing: 10) {
-            if session.isDot {
-                // Golem's chat reads like a conversation: a round +, like iMessage.
-                Menu {
-                    Button("Attach Files\u{2026}", action: chooseFiles)
-                    Button("Paste Image") {
-                        if let files = Attachments.fromPasteboard() { attachments += files }
-                    }
-                } label: {
-                    Image(systemName: "plus").font(.system(size: 15, weight: .semibold))
-                        .frame(width: 32, height: 32)
-                        .background(Circle().fill(Color.primary.opacity(0.1)))
-                        .contentShape(Circle())
-                }
-                .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
-                .foregroundStyle(.secondary)
-                .padding(.bottom, 2)
-                .help("Attach files or images. You can also paste or drag them in.")
-                .accessibilityLabel("Attach")
-            } else {
-                Button(action: chooseFiles) {
-                    Image(systemName: "paperclip").font(.system(size: 17))
-                        .frame(height: 36)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .help("Attach files or images. You can also paste or drag them in.")
-                .accessibilityLabel("Attach Files")
+            Button(action: chooseFiles) {
+                Image(systemName: "paperclip").font(.system(size: 17))
+                    .frame(height: 36)
             }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Attach files or images. You can also paste or drag them in.")
+            .accessibilityLabel("Attach Files")
 
             // Grows with the message to just under half the chat, then scrolls. Return sends;
             // Shift-Return starts a new line. ⌘↩ while the agent works stops it and sends now.
             ComposerBox(text: $draft,
                         placeholder: session.isRunning ? "Add something while it works\u{2026}"
-                            : nextSteps.first.map { "\($0)  \u{21E5}" } ?? "Message \(session.isDot ? session.title : session.record.backend.label)",
+                            : nextSteps.first.map { "\($0)  \u{21E5}" } ?? "Message \(session.record.backend.label)",
                         isFocused: $composerFocused,
                         maxHeight: max(8 * 20, chatHeight * 0.45),
                         onKey: { key, modifiers in
@@ -970,12 +901,11 @@ struct ChatView: View {
                         onSubmit: submit)
                 .onChange(of: draft) { commandIndex = 0 }
                 .padding(.vertical, 9)
-                .padding(.horizontal, session.isDot ? 14 : 12)
-                .background(RoundedRectangle(cornerRadius: session.isDot ? 17 : 12, style: session.isDot ? .circular : .continuous).fill(.background))
-                .overlay(RoundedRectangle(cornerRadius: session.isDot ? 17 : 12, style: session.isDot ? .circular : .continuous)
-                    .strokeBorder(session.isDot ? Color.primary.opacity(composerFocused ? 0.3 : 0.18)
-                                  : appearance.style.agentColor(for: session).opacity(composerFocused ? 0.8 : 0.45),
-                                  lineWidth: session.isDot ? 1 : (composerFocused ? 1.5 : 1)))
+                .padding(.horizontal, 12)
+                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.background))
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(appearance.style.agentColor(for: session).opacity(composerFocused ? 0.8 : 0.45),
+                                  lineWidth: composerFocused ? 1.5 : 1))
                 .animation(.easeOut(duration: 0.15), value: session.record.backend)
 
             Button(action: startDictation) {
@@ -986,17 +916,6 @@ struct ChatView: View {
             .foregroundStyle(.secondary)
             .help("Dictate with Apple Dictation (or press Fn twice)")
             .accessibilityLabel("Dictate")
-
-            if session.isDot {
-                // Only what a conversation needs: how full the context is, and the cog.
-                UsageMeter(compact: true, session: session, color: appearance.style.agentColor(for: session))
-                    .fixedSize()
-                    .frame(height: 36)
-                ChatSettingsCog(session: session, modelRequest: commands.modelPopoverRequests,
-                                modeRequest: commands.modePopoverRequests,
-                                handlesKeyboardRequest: { handlesKeyboard })
-                    .padding(.bottom, 3)
-            }
 
             if session.isRunning, let started = session.record.turnStartedAt {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -1186,8 +1105,7 @@ struct ChatView: View {
     /// The current model or preset this chat uses, under the message box.
     @ViewBuilder
     private var modelStatus: some View {
-        // Golem's chat keeps these behind its cog.
-        if session.isDot { EmptyView() } else if compact { compactModelStatus } else { fullModelStatus }
+        if compact { compactModelStatus } else { fullModelStatus }
     }
 
     private var currentModelPicker: some View {
@@ -1304,9 +1222,7 @@ private struct EmptyChatView: View {
             Text("What's on your mind?")
                 .font(.title2.weight(.semibold))
 
-            if !session.isDot {
-                AgentSwitch(selection: session.record.backend, onSelect: session.setBackend)
-            }
+            AgentSwitch(selection: session.record.backend, onSelect: session.setBackend)
 
             if session.record.boundFolder == nil, session.record.backend == .codex, let codex = session.record.codex {
                 Button {
@@ -1773,24 +1689,6 @@ private final class EarlierCount {
     var key = ""
     var value: Int?
 }
-
-#if GOLEM_APP
-/// Keep local typing responsive while accepting external voice edits and send clearing.
-private struct GolemVoiceDraftSync: ViewModifier {
-    let session: ChatSession
-    @Binding var draft: String
-    @Binding var attachments: [Attachment]
-    func body(content: Content) -> some View {
-        content
-            .onChange(of: session.draft) { old, text in
-                if session.isDot, draft == old, draft != text { draft = text }
-            }
-            .onChange(of: session.draftAttachments) { old, files in
-                if session.isDot, attachments == old, attachments != files { attachments = files }
-            }
-    }
-}
-#endif
 
 /// Permissions and context share the left edge; the model control stays right.
 /// Wrap the model onto a second row if the two sides cannot fit together.

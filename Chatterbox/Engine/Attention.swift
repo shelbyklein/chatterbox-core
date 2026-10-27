@@ -46,51 +46,37 @@ final class Attention: NSObject, UNUserNotificationCenterDelegate {
             }
         })
         for session in model.sessions { wasRunning[session.id] = session.isRunning; notified.formUnion(pendingItems(session).map(\.id)) }
-        // The first time, everything so far counts as read.
-        if dotSeenItem == nil, let dot = model.dot { markDotSeen(dot) }
         refreshBadge()
     }
 
-    /// The buttons notifications offer: Allow and Deny on approvals, and the email watch's
-    /// (again after Dot is renamed, since one is named for it).
+    /// The buttons notifications offer: Allow and Deny on approvals.
     func registerCategories() {
         guard Bundle.main.bundleIdentifier != nil else { return }
         let allow = UNNotificationAction(identifier: "allow", title: "Allow")
         let deny = UNNotificationAction(identifier: "deny", title: "Deny", options: [.destructive])
         var categories:Set<UNNotificationCategory>=[UNNotificationCategory(identifier:Self.approvalCategory,actions:[allow,deny],intentIdentifiers:[])]
-        #if GOLEM_APP
-        categories.insert(EmailWatch.notificationCategory(name:model?.dotName ?? "Golem"))
-        #endif
         UNUserNotificationCenter.current().setNotificationCategories(categories)
     }
 
     /// You're watching a chat when Chatterbox is frontmost and that chat is open.
     func isWatching(_ session: ChatSession) -> Bool {
-        #if GOLEM_APP
-        if model?.showingDot == true {
-            let readingMini = model?.dotMiniWindow?.isReading == true
-            if session.isDot { return readingMini }
-            if readingMini { return false }
-        }
-        #endif
         return NSApp.isActive && model?.selectedID == session.id
             && model?.showingHome != true && model?.showingSettings != true
             && model?.showingAutomations != true && model?.showingCommandCenter != true
     }
 
     func markSeen(_ id: UUID?) {
-        if let id, let dot = model?.dot, dot.id == id { markDotSeen(dot) }
         guard let id, unread.remove(id) != nil else { return }
         refreshBadge()
     }
 
     func finishedChats(in model: AppModel) -> [ChatSession] {
-        model.sessions.filter { unread.contains($0.id) && !$0.isRunning && !$0.isDot && $0.record.archivedAt == nil }
+        model.sessions.filter { unread.contains($0.id) && !$0.isRunning && $0.record.archivedAt == nil }
             .sorted { $0.record.updatedAt == $1.record.updatedAt ? $0.id.uuidString < $1.id.uuidString : $0.record.updatedAt > $1.record.updatedAt }
     }
 
     func workingChats(in model: AppModel) -> [ChatSession] {
-        model.sessions.filter { $0.isRunning && !$0.isDot && $0.record.archivedAt == nil }
+        model.sessions.filter { $0.isRunning && $0.record.archivedAt == nil }
             .sorted { $0.record.updatedAt == $1.record.updatedAt ? $0.id.uuidString < $1.id.uuidString : $0.record.updatedAt > $1.record.updatedAt }
     }
 
@@ -108,7 +94,7 @@ final class Attention: NSObject, UNUserNotificationCenterDelegate {
     /// A session counts once even if it has both an unread reply and a pending question.
     func viewCounts(in model: AppModel) -> ViewCounts {
         var counts = ViewCounts()
-        for session in model.sessions where !session.isDot && session.record.archivedAt == nil {
+        for session in model.sessions where session.record.archivedAt == nil {
             guard needsAttention(session) else { continue }
             if session.record.studioID != nil { counts.studios += 1 }
             else if session.record.projectFolder != nil { counts.projects += 1 }
@@ -121,7 +107,7 @@ final class Attention: NSObject, UNUserNotificationCenterDelegate {
     /// working or with an unseen reply: a quick way back to what you're in the middle of.
     func recentChats(in model: AppModel, hours: Double = 12) -> [ChatSession] {
         let since = Date().addingTimeInterval(-hours * 3600)
-        return model.sessions.filter { $0.lastActivity >= since && !$0.isRunning && !$0.isDot && $0.record.archivedAt == nil && !unread.contains($0.id) }
+        return model.sessions.filter { $0.lastActivity >= since && !$0.isRunning && $0.record.archivedAt == nil && !unread.contains($0.id) }
             .sorted { $0.lastActivity > $1.lastActivity }
     }
 
@@ -150,41 +136,6 @@ final class Attention: NSObject, UNUserNotificationCenterDelegate {
         markSeen(session.id)
     }
 
-    // MARK: - Dot's unread messages
-
-    /// The last of Dot's rows you've seen, kept across launches.
-    private(set) var dotSeenItem: UUID? = AppPreferences.defaults.string(forKey: "dotSeenItem").flatMap(UUID.init(uuidString:))
-
-    private func markDotSeen(_ dot: ChatSession) {
-        guard let last = dot.items.last?.id, last != dotSeenItem else { return }
-        dotSeenItem = last
-        AppPreferences.defaults.set(last.uuidString, forKey: "dotSeenItem")
-    }
-
-    /// Dot's replies since you last looked, one per reply (a check-in with nothing to say
-    /// leaves none). Before you've ever opened it, nothing counts as new.
-    private func unreadDotReplies(_ dot: ChatSession) -> [DisplayItem] {
-        guard let seen = dotSeenItem else { return [] }
-        let start = dot.items.firstIndex(where: { $0.id == seen }).map { $0 + 1 } ?? dot.items.count
-        var replies: [DisplayItem] = []
-        var latestInTurn: DisplayItem?
-        for item in dot.items[start...] {
-            if item.kind == .user {
-                if let latestInTurn { replies.append(latestInTurn) }
-                latestInTurn = nil
-            } else if item.kind == .assistant, item.phase == .final, !item.text.isEmpty {
-                latestInTurn = item
-            }
-        }
-        if let latestInTurn, !dot.isRunning { replies.append(latestInTurn) }
-        return replies
-    }
-
-    func dotUnreadCount(_ dot: ChatSession) -> Int { unreadDotReplies(dot).count }
-
-    /// The newest unread reply's text, for the sidebar.
-    func dotLatestUnread(_ dot: ChatSession) -> String? { unreadDotReplies(dot).last?.text }
-
     /// Chats waiting on you or with news, for the Dock badge. Archived chats don't count:
     /// sidequests archive themselves once they've reported back.
     var attentionCount: Int {
@@ -197,14 +148,8 @@ final class Attention: NSObject, UNUserNotificationCenterDelegate {
 
     /// Called on every change to a chat: notices new requests and finished turns.
     func update(_ session: ChatSession, model: AppModel, updatesBadge: Bool = true) {
-        #if GOLEM_APP
-        if RuntimeClient.usesDaemon,!session.isDot{return}
-        #endif
         if self.model == nil { start(model: model) }
         let watching = isWatching(session)
-        #if GOLEM_APP
-        if !RuntimeClient.usesDaemon {DotActivity.shared.noticeWaiting(in: session)}
-        #endif
 
         for item in pendingItems(session) where !notified.contains(item.id) {
             notified.insert(item.id)
@@ -216,11 +161,8 @@ final class Attention: NSObject, UNUserNotificationCenterDelegate {
         let running = session.isRunning
         let finished = wasRunning[session.id] == true && !running
         wasRunning[session.id] = running
-        if session.isDot, watching { markDotSeen(session) }
         if finished, session.skipFinishedAlert {
-            // Dot's check-in sent its own alert, or had nothing to say.
             session.skipFinishedAlert = false
-            if session.isDot, !watching, dotUnreadCount(session) > 0 { unread.insert(session.id) }
         } else if finished {
             let reply = session.listSummary?.reply ?? session.items.last { $0.kind == .assistant && $0.phase == .final }?.text ?? "Reply finished."
             if !RuntimeClient.usesDaemon {MobilePush.shared.post(title: title(for: session), body: reply, chat: session.id, kind: "replies")}
@@ -303,16 +245,8 @@ final class Attention: NSObject, UNUserNotificationCenterDelegate {
         let sessionID = (info["session"] as? String).flatMap(UUID.init(uuidString:))
         let itemID = (info["item"] as? String).flatMap(UUID.init(uuidString:))
         let action = response.actionIdentifier
-        let email = info["email"] as? String
-        let typed = (response as? UNTextInputNotificationResponse)?.userText
         Task { @MainActor in
             defer { completionHandler() }
-            #if GOLEM_APP
-            if let email {
-                EmailWatch.shared.handle(action: action, emailJSON: email, typed: typed)
-                return
-            }
-            #endif
             guard let model = self.model, let sessionID, let session = model.sessions.first(where: { $0.id == sessionID }) else { return }
             switch action {
             case "allow", "deny":

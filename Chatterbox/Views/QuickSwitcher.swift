@@ -132,13 +132,10 @@ struct QuickSwitcher: View {
         HStack(spacing: 10) {
             switch entry {
             case .chat(let session):
-                Group {
-                    if session.isDot { Image(systemName:"sparkles").frame(width:16,height:16) }
-                    else { Image(session.record.backend.iconName).resizable().scaledToFit().frame(width: 16, height: 16) }
-                }
-                .foregroundStyle(.secondary)
-                .frame(width: 18)
-                .accessibilityLabel(session.record.backend.label)
+                Image(session.record.backend.iconName).resizable().scaledToFit().frame(width: 16, height: 16)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 18)
+                    .accessibilityLabel(session.record.backend.label)
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text(session.record.projectFolder != nil ? session.projectName : session.title).lineLimit(1)

@@ -87,7 +87,6 @@ struct ProxyQuotaToolbarButton: View {
     @State private var showing = false
     private var route: String? {
         guard let session = bridge.session else { return nil }
-        if session.isDot { return "Golem · Direct connection" }
         if session.record.backend == .claude {
             return EasyCLIProxy.shared.claudeOn ? "Claude · Proxy enabled (direct fallback if unavailable)" : "Claude · Direct connection"
         }

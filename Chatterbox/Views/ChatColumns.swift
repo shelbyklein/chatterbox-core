@@ -6,7 +6,6 @@ struct ChatColumns: View {
     var sidebar: AnyView?
     var chat: AnyView
     var inspector: AnyView? = nil
-    var floatingGolem: AnyView? = nil
     var inspectorMinimum: CGFloat = 260
     var inspectorIdeal: CGFloat = 320
     var inspectorMaximum: CGFloat = 460
@@ -18,7 +17,6 @@ struct ChatColumns: View {
     /// The sidebar can't be hidden; only a window too narrow for it shows it as a slide-over.
     private let sidebarOpen = true
     @AppStorage("mainSidebarWidth") private var sidebarWidth = 260.0
-    @AppStorage("golemInspectorWidth") private var golemWidth = 0.0
     @AppStorage("issuesInspectorWidth") private var issuesWidth = 0.0
     @AppStorage("previewInspectorWidth") private var previewWidth = 0.0
     private var rightMinimum: CGFloat { inspectorReserve?.minimum ?? inspectorMinimum }
@@ -26,11 +24,9 @@ struct ChatColumns: View {
     private var rightMaximum: CGFloat { inspectorReserve?.maximum ?? inspectorMaximum }
     private var hasRight: Bool { inspector != nil || inspectorReserve != nil }
     private var inspectorWidth: Double {
-        get { rightMinimum == 360 ? previewWidth : (rightMinimum == 300 ? issuesWidth : golemWidth) }
+        get { rightMinimum == 360 ? previewWidth : issuesWidth }
         nonmutating set {
-            if rightMinimum == 360 { previewWidth = newValue }
-            else if rightMinimum == 300 { issuesWidth = newValue }
-            else { golemWidth = newValue }
+            if rightMinimum == 360 { previewWidth = newValue } else { issuesWidth = newValue }
         }
     }
     @AppStorage(Theme.backgroundKey) private var themeBackground = "standard"
@@ -74,13 +70,6 @@ struct ChatColumns: View {
                         .shadow(radius: 10)
                         .overlay(alignment: .topTrailing) { closeButton(action: closeInspector).padding(8) }
                         .offset(x: max(0, width - min(max(inspectorMinimum, rightWidth), width - 32)))
-                }
-                if let floatingGolem {
-                    let anchorWidth = min(max(260, golemWidth > 0 ? golemWidth : 320), width - 32)
-                    floatingGolem.frame(width: 120, height: 120)
-                        .background(ColumnProbe(role: "floating-golem"))
-                        .offset(x: width - anchorWidth / 2 - 60, y: 18)
-                        .zIndex(2)
                 }
             }
             .frame(width: width, height: geometry.size.height, alignment: .topLeading)
@@ -143,23 +132,4 @@ struct ColumnProbe: NSViewRepresentable {
     func makeNSView(context: Context) -> Probe { let view = Probe(); view.role = role; return view }
     func updateNSView(_ view: Probe, context: Context) { view.role = role }
     final class Probe: NSView { var role = ""; override func hitTest(_ point: NSPoint) -> NSView? { nil } }
-}
-
-/// A native hit region remains aligned while the underlying transcript reflows.
-struct FloatingGolemHitTarget: NSViewRepresentable {
-    var label: String
-    var action: () -> Void
-    func makeNSView(context: Context) -> HitView { HitView() }
-    func updateNSView(_ view: HitView, context: Context) {
-        view.action = action
-        view.setAccessibilityElement(true)
-        view.setAccessibilityRole(.button)
-        view.setAccessibilityLabel(label)
-    }
-    final class HitView: NSView {
-        var action: (() -> Void)?
-        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-        override func mouseDown(with event: NSEvent) { action?() }
-        override func accessibilityPerformPress() -> Bool { action?(); return true }
-    }
 }

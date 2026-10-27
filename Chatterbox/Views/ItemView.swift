@@ -51,8 +51,8 @@ struct ItemView: View {
             .padding(.vertical, 4)
             .help("Open the sidequest")
         } else if item.automatic == true {
-            // A check-in Chatterbox sent Dot: its label, not the instructions behind it.
-            Label(item.detail ?? "Check-in", systemImage: "clock.arrow.circlepath")
+            // A message Chatterbox sent on its own: its label, not the instructions behind it.
+            Label(item.detail ?? "Sent automatically", systemImage: "clock.arrow.circlepath")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity)
@@ -623,33 +623,17 @@ private struct QuestionCard: View {
 
     private var questions: [AgentQuestion] { item.questions ?? [] }
 
-    /// Opens with Golem's suggestion already picked, if he made one.
     init(item: DisplayItem, agent: Backend, submit: @escaping ([String: [String]]?) -> Void) {
         self.item = item
         self.agent = agent
         self.submit = submit
-        let seeded = Self.seed(item)
-        _picks = State(initialValue: seeded.picks)
-        _other = State(initialValue: seeded.other)
-    }
-
-    /// Golem's suggestion as card state: options he named are picked, anything else is typed.
-    private static func seed(_ item: DisplayItem) -> (picks: [String: Set<String>], other: [String: String]) {
-        var picks: [String: Set<String>] = [:], other: [String: String] = [:]
-        for question in item.questions ?? [] {
-            guard let values = item.suggested?[question.id] else { continue }
-            let labels = Set(question.options.map(\.label))
-            picks[question.id] = Set(values.filter(labels.contains))
-            let typed = values.filter { !labels.contains($0) }
-            if !typed.isEmpty { other[question.id] = typed.joined(separator: ", ") }
-        }
-        return (picks, other)
+        _picks = State(initialValue: [:])
+        _other = State(initialValue: [:])
     }
 
     var body: some View {
         if item.approvalState == .pending, questions.indices.contains(index) {
             asking(questions[index])
-                .task(id: item.suggested) { seedSuggestion() }
                 .padding(14)
                 .frame(maxWidth: fillsWidth ? .infinity : 560, alignment: .leading)
                 .background(RoundedRectangle(cornerRadius: 12).fill(Color.highlight.opacity(0.07)))
@@ -669,7 +653,6 @@ private struct QuestionCard: View {
                     Text("\(index + 1) of \(questions.count)").font(.caption).foregroundStyle(.secondary)
                 }
             }
-            if let suggested = item.suggested { suggestion(suggested) }
             Text(question.question).font(.body.weight(.medium)).fixedSize(horizontal: false, vertical: true)
             if question.multiSelect {
                 Text("Choose any that apply").font(.caption).foregroundStyle(.secondary)
@@ -705,47 +688,6 @@ private struct QuestionCard: View {
             .controlSize(.small)
         }
         .id(question.id)
-    }
-
-    /// Golem's suggested answers: who, what, why, and one button to send exactly that.
-    private func suggestion(_ suggested: [String: [String]]) -> some View {
-        let name = item.suggestedBy ?? "Golem"
-        let picked = questions.compactMap { question in
-            suggested[question.id].map { (questions.count > 1 ? question.header + ": " : "") + $0.joined(separator: ", ") }
-        }
-        return HStack(alignment: .top, spacing: 10) {
-            Image(systemName:"sparkles").frame(width:20,height:20)
-            VStack(alignment: .leading, spacing: 3) {
-                Text("\(name) suggests \(picked.joined(separator: " \u{00B7} "))")
-                    .font(.callout.weight(.semibold))
-                    .fixedSize(horizontal: false, vertical: true)
-                if let reason = item.suggestedReason, !reason.isEmpty {
-                    Text(reason).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            Spacer(minLength: 8)
-            Button("Send \(name)\u{2019}s Answer") { submit(suggestedAnswers) }
-                .buttonStyle(HighlightButtonStyle())
-                .controlSize(.small)
-                .help("Sends exactly what \(name) picked. Or choose something else below.")
-        }
-        .padding(10)
-        .background(RoundedRectangle(cornerRadius: 9).fill(Color.highlight.opacity(0.10)))
-    }
-
-    /// The suggestion for every question on the card, so one tap answers them all.
-    private var suggestedAnswers: [String: [String]] {
-        Dictionary(uniqueKeysWithValues: questions.compactMap { question in item.suggested?[question.id].map { (question.id, $0) } })
-    }
-
-    /// Picks Golem's suggestion on the card (options he named, the rest as typed text), unless
-    /// you've already started choosing.
-    private func seedSuggestion() {
-        let seeded = Self.seed(item)
-        for question in questions where picks[question.id, default: []].isEmpty && (other[question.id] ?? "").isEmpty {
-            if let set = seeded.picks[question.id] { picks[question.id] = set }
-            if let typed = seeded.other[question.id] { other[question.id] = typed }
-        }
     }
 
     private func optionRow(_ option: AgentQuestion.Option, number: Int, question: AgentQuestion) -> some View {

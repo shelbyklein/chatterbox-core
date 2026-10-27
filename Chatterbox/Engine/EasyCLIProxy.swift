@@ -6,9 +6,6 @@ import Observation
 /// Codex chats, or both through it (Settings). It reads the proxy's own config for the
 /// address and access key, so nothing is copied or stored here, and falls back to the
 /// direct connection whenever the proxy isn't answering.
-///
-/// The assistant (Dot) and the email watch always connect directly: through the proxy,
-/// Claude loses its claude.ai connectors and Codex its ChatGPT apps (Gmail among them).
 @MainActor
 @Observable
 final class EasyCLIProxy {
@@ -127,7 +124,7 @@ final class EasyCLIProxy {
     }
 
     /// Whether Codex is signed in to ChatGPT (not just a key), which the direct connection
-    /// needs. Only then are the assistant and the email watch pinned to it.
+    /// needs.
     static var codexHasChatGPTSignIn: Bool {
         let file = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/auth.json")
         guard let data = try? Data(contentsOf: file),

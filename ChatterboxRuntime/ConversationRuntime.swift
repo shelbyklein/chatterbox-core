@@ -44,8 +44,6 @@ struct RuntimeState: Codable {
     var commands: [String: CommandReceipt] = [:]
     var revisions: [String:Int] = [:]
     var draftByChat: [String: RuntimeDraft] = [:]
-    var assistantNotes: [JSON]? = []
-    var integrationEnabled = true
 }
 struct RuntimeDraft: Codable { var text: String; var attachments: [Attachment] }
 struct CommandReceipt: Codable {
@@ -203,23 +201,6 @@ struct CommandReceipt: Codable {
         }
     }
     func session(_ id: UUID) -> ChatSession? { sessions.first { $0.id == id } }
-    var assistant: ChatSession? { sessions.first { $0.isDot } }
-    @discardableResult func ensureAssistant() throws -> ChatSession {
-        if let assistant { return assistant }
-        var r=ConversationRecord(model:"default",effort:"",personality:.friendly)
-        r.title="Golem";r.isDot=true
-        let d=AppPreferences.defaults
-        if d.string(forKey:"dotDefaultBackend") == Backend.codex.rawValue {
-            r.activeBackend = .codex
-            r.codex=CodexSettings(model:d.string(forKey:"dotDefaultModel") ?? "gpt-6.1-sol",folder:RuntimePaths.assistantFolder,canEdit:false,mode:PermissionModes.defaultCodex)
-        }
-        if d.string(forKey: "dotDefaultBackend") == Backend.claude.rawValue {
-            r.activeBackend = .claude
-            r.model = d.string(forKey: "dotDefaultModel") ?? "haiku"
-            r.effort = ""
-        }
-        return try insert(r)
-    }
     @discardableResult func insert(_ record: ConversationRecord) throws -> ChatSession {
         guard session(record.id) == nil else { throw RuntimeFailure("Conversation already exists") }
         var record = record
@@ -403,15 +384,6 @@ struct CommandReceipt: Codable {
             state.commands[id]?.state="delivery_uncertain";try? persistState();throw error
         }
     }
-    func recordAssistantNote(title:String,detail:String?,chat:UUID?) throws {
-        var notes=state.assistantNotes ?? []
-        notes.append(["id":.string(UUID().uuidString),"title":.string(title),"detail":detail.map(JSON.string) ?? .null,"chatID":chat.map{.string($0.uuidString)} ?? .null])
-        state.assistantNotes=Array(notes.suffix(400));try persistState()
-    }
-    func ackAssistantNotes(_ ids:Set<String>) throws {
-        state.assistantNotes=(state.assistantNotes ?? []).filter{!ids.contains($0["id"]?.string ?? "")}
-        try persistState()
-    }
     func updateStudios(_ studios:[Studio]) throws {
         try encoder.encode(studios).write(to:root.appendingPathComponent("Studios.json"),options:.atomic)
         self.studios=studios
@@ -422,15 +394,6 @@ struct CommandReceipt: Codable {
         let event=RuntimeEvent(sequence:state.sequence,revision:0,kind:"runtime.configuration")
         state.events.append(event)
         if state.events.count>4096{state.events.removeFirst(state.events.count-4096)}
-        onEvent?(event)
-    }
-    func setIntegrationEnabled(_ enabled:Bool) throws {
-        state.integrationEnabled=enabled
-        state.sequence += 1
-        let event=RuntimeEvent(sequence:state.sequence,revision:0,kind:"integration.changed")
-        state.events.append(event)
-        if state.events.count>4096{state.events.removeFirst(state.events.count-4096)}
-        try persistState()
         onEvent?(event)
     }
     private func file(_ id: UUID) -> URL { root.appendingPathComponent("Conversations/\(id.uuidString).json") }

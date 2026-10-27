@@ -24,7 +24,6 @@ enum Companion {
     struct PairRequest: Codable {
         var code: String
         var deviceName: String
-        var product:String? = nil
     }
 
     /// Where the Mac can be reached right now (its addresses change, and Tailscale may have
@@ -112,7 +111,7 @@ enum Companion {
     }
 
     struct ChatGroup: Codable, Identifiable {
-        enum Kind: String, Codable { case dot, projects, studio, chats }
+        enum Kind: String, Codable { case projects, studio, chats }
         var id: String
         var kind: Kind
         var title: String
@@ -136,9 +135,6 @@ enum Companion {
         var updatedAt: Date
         /// A project's own pins.
         var pins: [Pin]? = nil
-        /// The assistant's own chat, and how many of its replies you haven't read.
-        var isDot: Bool? = nil
-        var unread: Int? = nil
         /// A worktree of the project listed just before it: its branch, shown nested under it.
         var worktreeBranch: String? = nil
         /// A temporary independent conversation, listed under this parent when available.
@@ -163,15 +159,6 @@ enum Companion {
         var brief: String? = nil
         /// Pinned on the Mac (Pin to Top): its place among the pins, first is 0.
         var pinnedRank: Int? = nil
-    }
-
-    /// The assistant's animations and head image, to play on the phone too.
-    struct AvatarList: Codable {
-        struct File: Codable, Hashable {
-            var name: String
-            var modified: Date
-        }
-        var files: [File]
     }
 
     /// One chat, with its recent transcript.
@@ -218,7 +205,7 @@ enum Companion {
         var presets: [PresetOption]
         var fastMode: Bool? = nil
         /// Open-weight models on the PC, run by the chat's agent; nil where they can't be picked
-        /// (Golem, or an older Mac).
+        /// (an older Mac).
         var openModels: [ModelOption]? = nil
         /// The open model in use; nil: the agent's own.
         var openModel: String? = nil
@@ -366,9 +353,6 @@ enum Companion {
         /// Question rows: what the agent asked, and the answers once sent.
         var questions: [Question]? = nil
         var answers: [String: [String]]? = nil
-        /// Pending question rows: answers Golem suggests, and why. Sent only by the user.
-        var suggested: [String: [String]]? = nil
-        var suggestedReason: String? = nil
         /// Approval detail (the command, or the plan) and `!` command output.
         var detail: String? = nil
         /// A plan's steps.
@@ -424,19 +408,6 @@ enum Companion {
         var answers: [String: [String]]?
     }
 
-    /// From Golem's tools on the Mac: answers he suggests for a question card.
-    struct SuggestionRequest: Codable {
-        var answers: [String: [String]]
-        var reason: String
-    }
-
-    /// From Golem's tools on the Mac: a decision for his journal.
-    struct DecisionNote: Codable {
-        var summary: String
-        var why: String?
-        var chat: String?
-    }
-
     struct File: Codable, Identifiable, Hashable {
         var id: UUID
         var name: String
@@ -454,8 +425,6 @@ enum Companion {
         /// Stop the agent and send this right away ("Send Now"), rather than adding it to
         /// the reply in progress.
         var now: Bool? = nil
-        /// Sent by Dot, which then follows the chat and reports back when it's done.
-        var fromDot: Bool? = nil
     }
 
     struct Upload: Codable {

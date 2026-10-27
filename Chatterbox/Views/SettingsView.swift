@@ -28,7 +28,7 @@ struct SettingsView: View {
 
     /// Settings' pages, listed down the left of the window.
     enum Page: String, CaseIterable, Identifiable {
-        case notifications, pins, models, newChats, behavior, golem, appearance, instructions, secrets, tools, plugins, iPhone, proxy, diagnostics, agents
+        case notifications, pins, models, newChats, behavior, appearance, instructions, secrets, tools, plugins, iPhone, proxy, diagnostics, agents
         var id: String { rawValue }
         var title: String {
             switch self {
@@ -37,7 +37,6 @@ struct SettingsView: View {
             case .models: "Models"
             case .newChats: "New Sessions"
             case .behavior: "Behavior"
-            case .golem: "Golem"
             case .appearance: "Appearance"
             case .instructions: "Instructions"
             case .secrets: "Secrets"
@@ -56,7 +55,6 @@ struct SettingsView: View {
             case .models: "cpu"
             case .newChats: "square.and.pencil"
             case .behavior: "switch.2"
-            case .golem: "circle.circle"
             case .appearance: "textformat.size"
             case .instructions: "text.book.closed"
             case .secrets: "key"
@@ -70,11 +68,7 @@ struct SettingsView: View {
         }
         /// Grouped in the list: everyday settings, then integrations, then the technical ones.
         static var groups: [(String?, [Page])] {
-            #if GOLEM_APP
-            let everyday: [Page] = [.notifications, .models, .newChats, .behavior, .golem, .appearance, .instructions]
-            #else
             let everyday: [Page] = [.notifications, .models, .newChats, .behavior, .appearance, .instructions]
-            #endif
             return [(nil, everyday), ("Connections", [.secrets, .tools, .plugins, .iPhone]), ("Advanced", [.proxy, .agents, .diagnostics])]
         }
     }
@@ -130,12 +124,6 @@ struct SettingsView: View {
         case .models: modelsPane
         case .newChats: newChatsPane
         case .behavior: behaviorPane
-        case .golem:
-            #if GOLEM_APP
-            Form { DotActivitySettings() }.formStyle(WideFormStyle()).frame(maxWidth: .infinity)
-            #else
-            EmptyView()
-            #endif
         case .appearance: AppearanceSettingsView()
         case .instructions: InstructionsSettingsView()
         case .secrets: SecretsSettingsView()
@@ -231,7 +219,7 @@ struct SettingsView: View {
                     .help("An icon at the top right of the screen that shows when a chat waits on you or has a new reply, and lists your chats.")
                 Toggle("Keep this Mac awake while Chatterbox is open", isOn: $keepAwake)
                     .onChange(of: keepAwake) { KeepAwake.shared.apply() }
-                    .help("So your phone can reach it, and agents, check-ins, and the email watch keep running. The display still sleeps; closing a laptop's lid still puts it to sleep.")
+                    .help("So your phone can reach it, and agents and automations keep running. The display still sleeps; closing a laptop's lid still puts it to sleep.")
             } footer: {
                 Text(keepRepliesRunning
                      ? "A reply in progress finishes in the background and is waiting when you reopen Chatterbox, along with any question it asked."
@@ -255,9 +243,7 @@ struct SettingsView: View {
 
     private var diagnosticsPane: some View {
         Form {
-            #if !GOLEM_APP
             BackgroundServiceSection()
-            #endif
             DiagnosticsSection()
         }
         .formStyle(WideFormStyle())
@@ -792,121 +778,6 @@ func openForEditing(_ path: String) {
     }
 }
 
-/// Settings → General: Dot checking in on its own, and watching for chats that need you.
-#if GOLEM_APP
-private struct DotActivitySettings: View {
-    @Environment(AppModel.self) private var model
-    @AppStorage(DotActivity.checkInsKey) private var checkIns = true
-    @AppStorage(DotActivity.watchWaitingKey) private var watchWaiting = true
-    @AppStorage(EmailWatch.enabledKey) private var emailWatch = true
-    @AppStorage(DotActivity.summarizeFinishedKey) private var summarizeFinished = true
-    @State private var times = DotActivity.times
-
-    var body: some View {
-        Section {
-            Toggle("Check in on its own, weekdays", isOn: $checkIns)
-            if checkIns {
-                ForEach(times.indices, id: \.self) { index in
-                    DatePicker(index == 0 ? "First check-in" : "Then at", selection: Binding(
-                        get: { Self.date(times[index]) },
-                        set: { times[index] = Self.minutes($0); DotActivity.times = times }
-                    ), displayedComponents: .hourAndMinute)
-                }
-                HStack {
-                    if times.count < 4 {
-                        Button("Add a Time") { times.append(min((times.last ?? 15 * 60) + 120, 23 * 60)); DotActivity.times = times }
-                    }
-                    if times.count > 1 {
-                        Button("Remove Last") { times.removeLast(); DotActivity.times = times }
-                    }
-                    Spacer()
-                    Button("Check In Now") { DotActivity.shared.checkInNow() }
-                }
-            }
-            Toggle("\(model.dotName) summarizes finished work", isOn: $summarizeFinished)
-            Toggle("\(model.dotName) briefs you when a session is waiting on you", isOn: $watchWaiting)
-        } header: {
-            Text(model.dotName)
-        } footer: {
-            Text("At each check-in, \(model.dotName) looks over your email, USA Archery in ClickUp, and your sessions, and sends you a short briefing only when something needs you; otherwise it leaves a single quiet line. It runs while Chatterbox is open on a Mac that's awake, catching up within three hours if the Mac was asleep.")
-                .font(.caption).foregroundStyle(.secondary)
-        }
-        emailSection
-        miniSection
-    }
-
-    @AppStorage("golemBubbleTextSize") private var bubbleTextSize = 14.0
-    @AppStorage("golemBubbleStyle") private var bubbleStyle = "solid"
-    @AppStorage("golemBubbleShow") private var bubbleShow = true
-    @AppStorage(GolemMiniWindow.sizeKey) private var miniSize = 1.0
-
-    @ViewBuilder private var miniSection: some View {
-        Section {
-            Picker("Size on screen", selection: Binding(get: { miniSize }, set: { value in
-                miniSize = value
-                model.dotMiniWindow?.setScale(CGFloat(value))
-            })) {
-                ForEach(GolemMiniWindow.sizes, id: \.label) { Text($0.label).tag(Double($0.scale)) }
-            }
-            GolemMiniBackdropSettings()
-            Toggle("Show his reply bubble", isOn: $bubbleShow)
-            if bubbleShow {
-                Picker("Bubble", selection: $bubbleStyle) {
-                    Text("Solid").tag("solid")
-                    Text("Glass").tag("glass")
-                    Text("Tinted").tag("tinted")
-                }
-                .pickerStyle(.segmented)
-                LabeledContent("Bubble text") {
-                    HStack {
-                        Slider(value: $bubbleTextSize, in: 11...20, step: 1).frame(width: 200)
-                        Text("\(Int(bubbleTextSize)) pt").monospacedDigit().foregroundStyle(.secondary).frame(width: 44, alignment: .trailing)
-                    }
-                }
-            }
-        } header: {
-            Text("\(model.dotName) Mini")
-        } footer: {
-            Text("The floating \(model.dotName) (⌘J). Right-click him for these too.").font(.caption).foregroundStyle(.secondary)
-        }
-    }
-
-    @ViewBuilder private var emailSection: some View {
-        let watch = EmailWatch.shared
-        Section {
-            Toggle("Watch your email", isOn: $emailWatch)
-            if emailWatch {
-                HStack {
-                    if watch.isSweeping {
-                        ProgressView().controlSize(.small)
-                        Text("Sweeping\u{2026}").foregroundStyle(.secondary)
-                    } else if let problem = watch.problem {
-                        Label(problem, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).lineLimit(2)
-                    } else if let last = watch.lastSweep {
-                        Text("Last swept \(last.formatted(.relative(presentation: .named)))").foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button("Send Test") { watch.sendTest() }
-                    Button("Sweep Now") { watch.sweepNow() }.disabled(watch.isSweeping)
-                }
-            }
-        } footer: {
-            Text("Every 15 minutes from 9 to 5, and every 30 the rest of the time, GPT-6-Luna reads the mail that arrived since the last sweep in your Gmail accounts, by the rules in \(model.dotName)'s memory. Each email that needs you comes as a notification with why it matters and a suggested next step, with Draft Reply, Tell \(model.dotName)\u{2026}, and Open. It only reads mail; nothing is sent without you.")
-                .font(.caption).foregroundStyle(.secondary)
-        }
-    }
-
-    private static func date(_ minutes: Int) -> Date {
-        Calendar.current.date(bySettingHour: minutes / 60, minute: minutes % 60, second: 0, of: Date()) ?? Date()
-    }
-
-    private static func minutes(_ date: Date) -> Int {
-        Calendar.current.component(.hour, from: date) * 60 + Calendar.current.component(.minute, from: date)
-    }
-}
-
-#endif
-
 /// Uses the shared idle-safe job; status survives closing Settings or reopening the app.
 struct BackgroundServiceSection: View {
     var restart = BackgroundServiceRestart.shared
@@ -992,7 +863,7 @@ private struct DiagnosticsSection: View {
 }
 
 /// EasyCLIProxyAPI: send Claude and Codex chats through the local proxy that pools your
-/// accounts. The assistant and the email watch always connect directly.
+/// accounts.
 private struct ProxySection: View {
     @AppStorage(EasyCLIProxy.claudeKey) private var claude = false
     @AppStorage(EasyCLIProxy.codexKey) private var codex = false
@@ -1019,7 +890,7 @@ private struct ProxySection: View {
         } header: {
             Text("EasyCLIProxyAPI")
         } footer: {
-            Text("Spreads sessions across the accounts you've signed in to EasyCLIProxyAPI. Through it, Claude can't use your claude.ai connectors and Codex can't use ChatGPT apps like Gmail, so \(model.dotName) and the email watch always connect directly. Claude's MCP tools still load on demand (tool search stays on). Takes effect with each session's next message; if the proxy stops answering, sessions connect directly.")
+            Text("Spreads sessions across the accounts you've signed in to EasyCLIProxyAPI. Through it, Claude can't use your claude.ai connectors and Codex can't use ChatGPT apps like Gmail. Claude's MCP tools still load on demand (tool search stays on). Takes effect with each session's next message; if the proxy stops answering, sessions connect directly.")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .task { await proxy.refresh() }
@@ -1031,7 +902,7 @@ private struct ProxySection: View {
     private func restartClaudeChats() {
         Task {
             await proxy.refresh()
-            for session in model.sessions where !session.isDot && session.record.backend == .claude {
+            for session in model.sessions where session.record.backend == .claude {
                 session.restartClaudeForNewTools()
             }
         }

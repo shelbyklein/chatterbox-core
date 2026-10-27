@@ -4,11 +4,11 @@ import Security
 import CryptoKit
 
 /// Only signed user-facing apps can obtain approval/answer capabilities.
-/// Other same-user peers receive the agent role and can suggest but never approve.
+/// Other same-user peers receive the agent role and can never approve.
 enum RuntimePeerIdentity {
     static func permitsUIRole(_ role:String,fd:Int32,root:URL)->Bool {
         #if DEBUG
-        if ProcessInfo.processInfo.environment["CHATTERBOX_TEST_TRUST_UI"]=="1",root.path.hasPrefix("/tmp/golem-"){return true}
+        if ProcessInfo.processInfo.environment["CHATTERBOX_TEST_TRUST_UI"]=="1",root.path.hasPrefix("/tmp/chatterbox-test-"){return true}
         #endif
         var pid:pid_t=0;var size=socklen_t(MemoryLayout<pid_t>.size)
         guard getsockopt(fd,SOL_LOCAL,LOCAL_PEERPID,&pid,&size)==0 else{return false}
@@ -17,11 +17,11 @@ enum RuntimePeerIdentity {
               SecCodeCopyStaticCode(code,[],&staticCode)==errSecSuccess,let staticCode,
               SecCodeCopySigningInformation(staticCode,SecCSFlags(rawValue:kSecCSSigningInformation),&info)==errSecSuccess,let data=info as? [String:Any],
               let id=data[kSecCodeInfoIdentifier as String] as? String else{return false}
-        return (role=="ui" && id=="com.shelbyklein.Chatterbox") || (role=="golem-ui" && id=="com.shelbyklein.Golem")
+        return role=="ui" && id=="com.shelbyklein.Chatterbox"
     }
     static func trustedUI(_ fd:Int32, root:URL,allowDaemon:Bool=false) -> Bool {
         #if DEBUG
-        if ProcessInfo.processInfo.environment["CHATTERBOX_TEST_TRUST_UI"] == "1",root.path.hasPrefix("/tmp/golem-") {return true}
+        if ProcessInfo.processInfo.environment["CHATTERBOX_TEST_TRUST_UI"] == "1",root.path.hasPrefix("/tmp/chatterbox-test-") {return true}
         #endif
         var pid:pid_t=0;var size=socklen_t(MemoryLayout<pid_t>.size)
         guard getsockopt(fd,SOL_LOCAL,LOCAL_PEERPID,&pid,&size)==0 else {return false}
@@ -36,7 +36,7 @@ enum RuntimePeerIdentity {
         guard validity==errSecSuccess,extraction==errSecSuccess,signing==errSecSuccess,
               let data=info as? [String:Any],let id=data[kSecCodeInfoIdentifier as String] as? String,
               let team=data[kSecCodeInfoTeamIdentifier as String] as? String,team=="9F3MKVW9C5" else {return false}
-        return ["com.shelbyklein.Chatterbox","com.shelbyklein.Golem"].contains(id) || (allowDaemon && id=="com.shelbyklein.Chatterbox.Daemon")
+        return id=="com.shelbyklein.Chatterbox" || (allowDaemon && id=="com.shelbyklein.Chatterbox.Daemon")
     }
 }
 

@@ -130,7 +130,7 @@ struct MobileNewReplies: View {
         }, limit: 3)
     }
     private var working: [Companion.ChatSummary] {
-        chats.filter { $0.isRunning && $0.isDot != true && !MobileActivityDismissals.shared.hides($0, activity: activity) }
+        chats.filter { $0.isRunning && !MobileActivityDismissals.shared.hides($0, activity: activity) }
     }
 
     var body: some View {

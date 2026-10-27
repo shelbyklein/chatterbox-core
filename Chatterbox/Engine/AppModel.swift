@@ -54,7 +54,6 @@ final class AppModel {
     @ObservationIgnored private var lastInView: [String: String] = AppPreferences.defaults.dictionary(forKey: "lastSessionInView") as? [String: String] ?? [:]
 
     private func rememberSession(_ session: ChatSession) {
-        guard !session.isDot else { return }
         lastInView[Self.view(of: session).rawValue] = session.id.uuidString
         AppPreferences.defaults.set(lastInView, forKey: "lastSessionInView")
     }
@@ -70,7 +69,7 @@ final class AppModel {
     func showView(_ view: MainView) {
         showingSettings = false; showingCommandCenter = false; showingAutomations = false
         let candidates = activeSessions.filter { session in
-            !session.isDot && Self.view(of: session) == view &&
+            Self.view(of: session) == view &&
             (view != .studios || activeStudios.contains(where: { $0.id == session.record.studioID }))
         }
         let last = lastInView[view.rawValue].flatMap(UUID.init(uuidString:))
@@ -102,35 +101,12 @@ final class AppModel {
     var feedbackShot: Attachment?
     var composerInsertion: ComposerInsertion?
     var showingSettings = false { didSet { if showingSettings { showingHome = false; showingCommandCenter = false; showingAutomations = false } } }
-    /// The independent, always-on-top Golem mini window (⌘J).
-    var showingDot = false {
-        didSet {
-            guard showingDot != oldValue else { return }
-            #if GOLEM_APP
-            AppPreferences.defaults.set(showingDot, forKey: GolemMiniWindow.visibleKey)
-            if showingDot {
-                mainChatWindow?.orderOut(nil)
-                if dotMiniWindow == nil { dotMiniWindow = GolemMiniWindow(model: self) }
-                dotMiniWindow?.show()
-            } else {
-                dotMiniWindow?.hide()
-            }
-            #else
-            if showingDot {GolemIntegration.shared.open();showingDot=false}
-            #endif
-        }
-    }
-    #if GOLEM_APP
-    @ObservationIgnored private(set) var dotMiniWindow: GolemMiniWindow?
-    #endif
     @ObservationIgnored weak var mainChatWindow: NSWindow?
     @ObservationIgnored var revealMainChatWindow: (() -> Void)?
     /// Sidebar toolbar/keyboard requests, consumed by the single column container.
     var sidebarToggleRequest = 0
     /// Section navigation reveals the sidebar in narrow windows, without toggling it shut.
     var sidebarRevealRequest = 0
-    /// Dot's memory, open for editing.
-    var editingDotMemory = false
     /// The Add Pin sheet, when open.
     var pinSheet: PinSheetRequest?
     /// Websites open inside Chatterbox, each in its own project's (or Studio's, or chat's)
@@ -167,7 +143,7 @@ final class AppModel {
     func isPinnedThread(_ session: ChatSession) -> Bool { pinnedThreadIDs.contains(session.id) }
     /// Top-level threads only: a worktree or Sidechat stays under its parent.
     func canPinThread(_ session: ChatSession) -> Bool {
-        session.record.worktreeOf == nil && session.record.sidechatOf == nil && !session.isDot
+        session.record.worktreeOf == nil && session.record.sidechatOf == nil
     }
     /// The pins the service has (the phone may have changed them while the app was closed).
     func reloadPinnedThreads() {
@@ -188,7 +164,7 @@ final class AppModel {
     /// Projects (by recent activity, staleness, or name), then each open Studio's chats, then other chats by most recent: the
     /// sidebar's order, which Next and Previous Chat follow.
     var sidebarProjects: [ChatSession] {
-        let projects = activeSessions.filter { $0.record.projectFolder != nil && $0.record.worktreeOf == nil && !$0.isDot }
+        let projects = activeSessions.filter { $0.record.projectFolder != nil && $0.record.worktreeOf == nil }
         return ordered(projects, by: ProjectSort.current, name: \.projectName)
     }
     /// Threads in a sort's order; ties go by name.
@@ -225,7 +201,7 @@ final class AppModel {
     var sidebarChats: [ChatSession] {
         let studioIDs = Set(activeStudios.map(\.id))
         let chats = activeSessions.filter { session in
-            session.record.projectFolder == nil && !session.isDot && !hasVisibleSidechatParent(session) && !(session.record.studioID.map(studioIDs.contains) ?? false)
+            session.record.projectFolder == nil && !hasVisibleSidechatParent(session) && !(session.record.studioID.map(studioIDs.contains) ?? false)
         }
         return ordered(chats, by: ProjectSort.currentForChats, name: \.title)
     }
@@ -254,7 +230,7 @@ final class AppModel {
 
     func hasVisibleSidechatParent(_ chat: ChatSession) -> Bool {
         guard let parent = chat.record.sidechatOf else { return false }
-        return activeSessions.contains { $0.id == parent && !$0.isDot }
+        return activeSessions.contains { $0.id == parent }
     }
 
     func sidechats(of parent: ChatSession) -> [ChatSession] {
@@ -395,11 +371,7 @@ final class AppModel {
             restoreNavigationCache()
             sessionLoadStatus = sessions.isEmpty ? "Connecting to background service…" : "Updating sessions…"
             RuntimeClient.shared.onEvent = { [weak self] event in self?.runtimeEvent(event) }
-            #if GOLEM_APP
-            RuntimeClient.shared.start(role:"golem-ui")
-            #else
             RuntimeClient.shared.start()
-            #endif
             NotificationCenter.default.addObserver(forName:NSApplication.willTerminateNotification,object:nil,queue:.main){[weak self] _ in MainActor.assumeIsolated{self?.applicationWillTerminate()}}
             return
         }
@@ -425,47 +397,22 @@ final class AppModel {
         }
         PinStore.shared.showPage = { [weak self] url in self?.openPage(url) }
         CompanionServer.shared.model = self
-        CompanionServer.shared.startAgentListener()
-        // Dot needs to know at once whether its computer is up, so its next session has the
-        // browser tools without anyone opening the Computer panel first.
         if CompanionServer.shared.isEnabled { CompanionServer.shared.start() }
         // Chats look their Studio up when they talk to their agent.
         ChatSession.studioLookup = { [weak self] id in self?.studio(id) }
         RuntimeHooks.note = { Diagnostics.note($0) }
         RuntimeHooks.clearSuggestions = { NextSteps.shared.clear($0) }
         RuntimeHooks.turnEnded = { session in
-            #if GOLEM_APP
-            if !session.isDot, DotActivity.shared.chatFinished(session, watching: Attention.shared.isWatching(session)) { session.skipFinishedAlert = true }
-            if session.isDot { DotActivity.shared.dotTurnEnded(session) }
-            #endif
             NextSteps.shared.turnEnded(session, commands: session.availableSlashCommands)
             if let parent = session.record.sidequestOf {
                 DispatchQueue.main.async { [weak self] in session.sidequestTurnEnded(parent: self?.sessions.first { $0.id == parent }) }
             }
-            if session.automaticTurn {
-                session.automaticTurn = false
-                #if GOLEM_APP
-                if session.isDot, DotActivity.shared.finishedAutomaticTurn(session) { session.skipFinishedAlert = true }
-                #endif
-            }
+            if session.automaticTurn { session.automaticTurn = false }
         }
-        #if GOLEM_APP
-        RuntimeHooks.answered = { GolemJournal.shared.answered($1, suggested: $2, with: $3, in: $0) }
-        RuntimeHooks.suggested = { GolemJournal.shared.suggested($1, in: $0) }
-        GolemAvatar.shared.refreshIfStale()
-        #endif
         load()
         KeepAwake.shared.apply()
-        if dot?.record.claudeHost?.running != true, dot?.record.codexHost?.running != true {
-            applyRequestedDotDefault()
-        }
         if activeSessions.isEmpty { newChat() } else { selectedID = activeSessions.first?.id }
         Task { await resumeBackgroundReplies() }
-        #if GOLEM_APP
-        if AppPreferences.defaults.bool(forKey: GolemMiniWindow.visibleKey) {
-            Task { @MainActor [weak self] in self?.showingDot = true }
-        }
-        #endif
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.applicationWillTerminate() }
         }
@@ -475,7 +422,7 @@ final class AppModel {
     private func applicationWillTerminate() {
         Diagnostics.shared.stop()
         if RuntimeClient.usesDaemon {
-            if !Self.keepRepliesRunning {for session in sessions where !session.isDot && session.isRunning {session.interrupt()}}
+            if !Self.keepRepliesRunning {for session in sessions where session.isRunning {session.interrupt()}}
             return
         }
         for session in sessions { session.killShellJobs() }
@@ -517,7 +464,7 @@ final class AppModel {
     private func makeNewChat(backend: Backend?) -> ChatSession {
         let defaults = AppPreferences.defaults
         let backend = backend ?? Backend(rawValue: defaults.string(forKey: "defaultBackend") ?? "") ?? .claude
-        if let empty = sessions.first(where: { !$0.hasMessages && !$0.isRunning && $0.record.projectFolder == nil && $0.record.studioID == nil && $0.record.archivedAt == nil && !$0.isDot && !carriesUserIntent($0.record) }) {
+        if let empty = sessions.first(where: { !$0.hasMessages && !$0.isRunning && $0.record.projectFolder == nil && $0.record.studioID == nil && $0.record.archivedAt == nil && !carriesUserIntent($0.record) }) {
             empty.setBackend(backend)
             selectedID = empty.id
             return empty
@@ -765,9 +712,6 @@ final class AppModel {
         }
         session.onChange = { [weak self] session in
             self?.scheduleSave(session, soon: true)
-            if session.isDot, !session.isRunning, AppPreferences.defaults.bool(forKey: "dotApplyDefault") {
-                DispatchQueue.main.async { [weak self] in self?.applyRequestedDotDefault() }
-            }
         }
         session.onStreamed = { [weak self] session in self?.scheduleSave(session, soon: false) }
         return session
@@ -817,7 +761,6 @@ final class AppModel {
             scheduleSave(session, soon: true)
         }
         for codex in CodexAppServer.all { codex.resume(processes) }
-        applyRequestedDotDefault()
         // Logs of ended processes no chat points at anymore. Running ones are left alone: the
         // host lets an agent go once it's idle with no app attached.
         var known = Set(sessions.compactMap { $0.claudeProcess?.hostID })
@@ -875,7 +818,7 @@ final class AppModel {
 
     private func save(_ session: ChatSession) {
         Attention.shared.update(session, model: self)
-        guard !session.items.isEmpty || session.isDot || carriesUserIntent(session.record) else { return }
+        guard !session.items.isEmpty || carriesUserIntent(session.record) else { return }
         session.prepareForSave()
         do {
             let encoder = JSONEncoder()
@@ -950,11 +893,7 @@ final class AppModel {
     @ObservationIgnored private var navigationSave: Task<Void, Never>?
 
     private var navigationFile: URL {
-        #if GOLEM_APP
-        directory.deletingLastPathComponent().appendingPathComponent("golem-navigation.json")
-        #else
         directory.deletingLastPathComponent().appendingPathComponent("mac-navigation.json")
-        #endif
     }
     private struct NavigationCache: Codable { var schema = 1; var states: [RuntimeChatState]; var studios: [Studio] }
 
@@ -995,7 +934,7 @@ final class AppModel {
         guard selectedID == nil || !sessions.contains(where: { $0.id == selectedID }) else { return }
         let saved = AppPreferences.defaults.string(forKey: "macLastOpenSession").flatMap(UUID.init(uuidString:))
         let session = saved.flatMap { id in sessions.first { $0.id == id && $0.record.archivedAt == nil } }
-            ?? activeSessions.first { !$0.isDot }
+            ?? activeSessions.first
         let home = showingHome; selectedID = session?.id; showingHome = home
     }
 
@@ -1068,9 +1007,6 @@ final class AppModel {
     }
 
     private func applyProjection(_ state: RuntimeChatState, updateAttention: Bool = true) {
-        #if !GOLEM_APP
-        guard state.record.isDot != true else { return }
-        #endif
         let id = state.record.id
         if let revision = projectionRevisions[id], state.revision < revision { return }
         if state.summaryOnly == true, projectionRevisions[id] == state.revision,
@@ -1214,21 +1150,9 @@ final class AppModel {
         }
     }
     private func runtimeEvent(_ event:RuntimeEvent) {
-        #if GOLEM_APP
-        if event.kind=="integration.changed" {
-            Task {
-                if let health=try? await RuntimeClient.shared.request("health"),health["integrationEnabled"]?.bool==false {
-                    sessions.removeAll();showingDot=false
-                } else {runtimeEvent(RuntimeEvent(sequence:event.sequence,revision:0,kind:"runtime.resync"))}
-            }
-            return
-        }
-        #endif
-        #if !GOLEM_APP
         if event.kind=="pin.open",let raw=event.payload,let pin=try? raw.decode(Pin.self){PinStore.shared.open(pin);return}
         // Pinned or unpinned on the phone: the service sends the new list.
         if event.kind=="pins.changed",let ids=event.payload?.array {pinnedThreadIDs=ids.compactMap{$0.string.flatMap(UUID.init(uuidString:))};return}
-        #endif
         if event.kind == "runtime.resync" { projectionRevisions.removeAll() }
         if event.kind=="runtime.resync" || event.kind=="runtime.configuration" || event.kind=="chat.created" || event.kind=="chat.deleted" {
             requestResync()

@@ -26,10 +26,6 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         /// title, which pushed the view buttons toward the middle.
         static let title = NSToolbarItem.Identifier("chatterbox.title")
         static let pins = NSToolbarItem.Identifier("chatterbox.pins")
-        static let tone = NSToolbarItem.Identifier("chatterbox.tone")
-        static let place = NSToolbarItem.Identifier("chatterbox.place")
-        static let repo = NSToolbarItem.Identifier("chatterbox.repo")
-        static let golem = NSToolbarItem.Identifier("chatterbox.golem")
         static let remote = NSToolbarItem.Identifier("chatterbox.remote")
         static let images = NSToolbarItem.Identifier("chatterbox.images")
         static let usage = NSToolbarItem.Identifier("chatterbox.usage")
@@ -37,13 +33,11 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         static let finished = NSToolbarItem.Identifier("chatterbox.finished")
         static let automations = NSToolbarItem.Identifier("chatterbox.automations")
         static let feedback = NSToolbarItem.Identifier("chatterbox.feedback")
-        /// The views on the left (chat, Studios, Command Center); the open chat's details in the
-        /// middle, its image library included (in the place item, so it shares their pill); usage and the terminal; Settings last.
+        /// The views on the left (chat, Studios, Command Center); usage and the terminal; Settings last.
         /// New chats start from the sidebar, the Studios page and Cmd-N, not the toolbar.
         static let all: [NSToolbarItem.Identifier] = [title, views, .flexibleSpace,
-                                                       tone, place, repo, golem, .flexibleSpace,
                                                        automations, usage, terminal, finished, feedback, .space, settings, newChat]
-        static let chat: [NSToolbarItem.Identifier] = [tone, place, repo, golem, usage, images, terminal]
+        static let chat: [NSToolbarItem.Identifier] = [usage, images, terminal]
     }
 
     private let model: AppModel
@@ -207,25 +201,8 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         let selected = model.showingSettings ? ID.settings : model.showingAutomations ? ID.automations : nil
         if toolbar.selectedItemIdentifier != selected { toolbar.selectedItemIdentifier = selected }
 
-        // A chat's own items show only with a chat, and only those that apply to it.
-        let repo = session.flatMap { s in GitStatusStore.shared.status(for: s.record.projectFolder)?.remote(preferring: s.record.gitRemote)?.repo }
-        let shown: [NSToolbarItem.Identifier: Bool] = [
-            ID.tone: session?.isDot == true, ID.place: session?.isDot == true, ID.repo: session?.isDot == true && repo != nil,
-            ID.golem: session?.isDot == true,
-        ]
-        for (id, visible) in shown { setVisible(id, visible) }
         // Global actions keep their place even when there is no single chat to act on.
         items[ID.terminal]?.isEnabled = session != nil
-    }
-
-    private func setVisible(_ id: NSToolbarItem.Identifier, _ visible: Bool) {
-        guard let item = items[id] else { return }
-        if #available(macOS 15.0, *) {
-            if item.isHidden == visible { item.isHidden = !visible }
-        } else {
-            item.isEnabled = visible
-            item.view?.isHidden = !visible
-        }
     }
 
     // MARK: - NSToolbarDelegate
@@ -272,16 +249,6 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
             item = button(id, "plus", "New Chat", "Start a new chat (⌘N)", #selector(startNewChat))
         case ID.pins:
             item = hosted(id, "Global Pins", GlobalPinsToolbar())
-        case ID.tone:
-            item = hosted(id, "Tone", ToneSlot(bridge: bridge))
-        case ID.place:
-            // The image library rides in the same item: a toolbar item holding only a button
-            // gets a pill of its own, apart from the chat's other details.
-            item = hosted(id, "Project", HStack(spacing: 8) { PlaceSlot(bridge: bridge); ImagesSlot(bridge: bridge) })
-        case ID.repo:
-            item = hosted(id, "Repository", RepoSlot(bridge: bridge))
-        case ID.golem:
-            item = hosted(id, "Golem", GolemSlot(bridge: bridge))
         case ID.remote:
             item = hosted(id, "Remote Control", RemoteSlot(bridge: bridge))
         case ID.usage:

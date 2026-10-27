@@ -120,7 +120,7 @@ struct ModelPopover: View {
                     Picker("Provider", selection: $provider) {
                         Text("Claude").tag(ModelProvider.claude)
                         Text("Codex").tag(ModelProvider.codex)
-                        if !session.isDot { Text("Open models").tag(ModelProvider.open) }
+                        Text("Open models").tag(ModelProvider.open)
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
@@ -297,26 +297,24 @@ struct ModelPopover: View {
     /// Where this chat's agent runs. Switching starts a new session there, caught up on the chat.
     @ViewBuilder
     private var runOnSection: some View {
-        if !session.isDot {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text("Run on").font(.callout.weight(.medium))
-                    Spacer()
-                    Picker("Run on", selection: Binding(get: { session.record.runOn ?? "" }, set: { session.setRunOn($0.isEmpty ? nil : $0) })) {
-                        Text("This Mac").tag("")
-                        Text(RemoteMachine.pc.name).tag("pc")
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .fixedSize()
-                    .disabled(session.isRunning || (session.record.runOn == nil && PCModels.shared.reachable == false))
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("Run on").font(.callout.weight(.medium))
+                Spacer()
+                Picker("Run on", selection: Binding(get: { session.record.runOn ?? "" }, set: { session.setRunOn($0.isEmpty ? nil : $0) })) {
+                    Text("This Mac").tag("")
+                    Text(RemoteMachine.pc.name).tag("pc")
                 }
-                if PCModels.shared.reachable == false {
-                    Text("\(RemoteMachine.pc.name) isn't reachable right now.").font(.caption).foregroundStyle(.secondary)
-                } else if session.record.runOn != nil {
-                    Text("Works in its own folder on the PC; new files are copied to ~/Chatterbox/PC.")
-                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+                .disabled(session.isRunning || (session.record.runOn == nil && PCModels.shared.reachable == false))
+            }
+            if PCModels.shared.reachable == false {
+                Text("\(RemoteMachine.pc.name) isn't reachable right now.").font(.caption).foregroundStyle(.secondary)
+            } else if session.record.runOn != nil {
+                Text("Works in its own folder on the PC; new files are copied to ~/Chatterbox/PC.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -324,29 +322,27 @@ struct ModelPopover: View {
     // MARK: - Connection
 
     /// Direct through ChatGPT (hosted tools like image generation) or through EasyCLIProxy,
-    /// for this chat only. Golem always connects directly when he can.
+    /// for this chat only.
     @ViewBuilder
     private var connectionSection: some View {
-        if !session.isDot {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text("Connection").font(.callout.weight(.medium))
-                    Spacer()
-                    Picker("Connection", selection: Binding(get: { session.codexRoute?.rawValue ?? "" },
-                                                            set: { session.setCodexRoute(CodexRoute(rawValue: $0)) })) {
-                        Text("Default").tag("")
-                        Text(CodexRoute.direct.title).tag(CodexRoute.direct.rawValue)
-                            .disabled(session.runMachine == nil && !EasyCLIProxy.codexHasChatGPTSignIn)
-                        Text(CodexRoute.proxy.title).tag(CodexRoute.proxy.rawValue)
-                    }
-                    .labelsHidden()
-                    .fixedSize()
-                    .disabled(session.isRunning)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("Connection").font(.callout.weight(.medium))
+                Spacer()
+                Picker("Connection", selection: Binding(get: { session.codexRoute?.rawValue ?? "" },
+                                                        set: { session.setCodexRoute(CodexRoute(rawValue: $0)) })) {
+                    Text("Default").tag("")
+                    Text(CodexRoute.direct.title).tag(CodexRoute.direct.rawValue)
+                        .disabled(session.runMachine == nil && !EasyCLIProxy.codexHasChatGPTSignIn)
+                    Text(CodexRoute.proxy.title).tag(CodexRoute.proxy.rawValue)
                 }
-                Text(session.codexConnection.summary + (session.codexRoute != nil ? " Switching keeps this conversation." : ""))
-                    .font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                .labelsHidden()
+                .fixedSize()
+                .disabled(session.isRunning)
             }
+            Text(session.codexConnection.summary + (session.codexRoute != nil ? " Switching keeps this conversation." : ""))
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

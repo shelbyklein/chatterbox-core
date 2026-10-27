@@ -22,7 +22,8 @@ final class CompanionServer {
         var pairedAt = Date()
         var lastSeen: Date?
         var push: Companion.PushRegistration? = nil
-        var product:String? = nil
+        /// Which app paired, on pairings saved by older versions. Only Chatterbox's are kept.
+        var product: String? = nil
     }
 
     static let enabledKey = "companionEnabled"
@@ -34,26 +35,25 @@ final class CompanionServer {
     /// The code a phone enters to pair. A new one comes after each pairing and after
     /// too many wrong tries.
     private(set) var pairingCode = CompanionServer.newCode()
-    private(set) var golemPairingCode=CompanionServer.newCode()
 
     @ObservationIgnored weak var model: AppModel?
     @ObservationIgnored private var listener: NWListener?
-    /// Agents on this Mac (Dot, through chatterbox-mcp) connect here: loopback only, with
-    /// a key made fresh at each launch and kept in a file only you can read.
-    @ObservationIgnored private var agentListener: NWListener?
-    @ObservationIgnored private var agentToken = ""
     @ObservationIgnored private var failedPairings = 0
     @ObservationIgnored private let mutations = CompanionMutationLedger()
-    private var currentProduct="chatterbox"
 
     private init() {
         if let data = AppPreferences.defaults.data(forKey: Self.devicesKey),
            let saved = try? JSONDecoder().decode([Device].self, from: data) {
-            devices = saved
+            devices = Self.chatterboxDevices(saved)
         }
     }
 
     var isEnabled: Bool { AppPreferences.defaults.bool(forKey: Self.enabledKey) }
+
+    /// Pairings another app made in older versions are dropped.
+    static func chatterboxDevices(_ saved: [Device]) -> [Device] {
+        saved.filter { ($0.product ?? "chatterbox") == "chatterbox" }
+    }
 
     #if !CHATTERBOX_HEADLESS
     func refreshProjection() async {
@@ -62,7 +62,6 @@ final class CompanionServer {
             let status=try await RuntimeClient.shared.request("companionStatus")
             isRunning=status["running"]?.bool ?? false;problem=status["problem"]?.string
             pairingCode=status["pairingCode"]?.string ?? ""
-            golemPairingCode=status["golemPairingCode"]?.string ?? ""
             devices=try status["devices"]?.decode([Device].self) ?? []
             AppPreferences.defaults.set(status["enabled"]?.bool ?? false,forKey:Self.enabledKey)
         }catch{problem=error.localizedDescription;isRunning=false}
@@ -105,42 +104,6 @@ final class CompanionServer {
             self.listener = listener
         } catch {
             problem = "Couldn't start: \(error.localizedDescription)"
-        }
-    }
-
-    static var agentPort: UInt16 {
-        ProcessInfo.processInfo.environment["CHATTERBOX_AGENT_PORT"].flatMap(UInt16.init) ?? 47_320
-    }
-
-    static var agentTokenFile: URL {
-        if let dir = ProcessInfo.processInfo.environment["CHATTERBOX_DATA_DIR"], !dir.isEmpty {
-            return URL(fileURLWithPath: dir).appendingPathComponent("agent-token")
-        }
-        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Chatterbox/agent-token")
-    }
-
-    /// Starts the local connection for agents. Runs whether or not the iPhone app is on.
-    func startAgentListener() {
-        guard agentListener == nil else { return }
-        var bytes = [UInt8](repeating: 0, count: 32)
-        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
-        agentToken = bytes.map { String(format: "%02x", $0) }.joined()
-        let file = Self.agentTokenFile
-        try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-        FileManager.default.createFile(atPath: file.path, contents: Data(agentToken.utf8), attributes: [.posixPermissions: 0o600])
-        do {
-            let parameters = NWParameters.tcp
-            parameters.allowLocalEndpointReuse = true
-            parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: Self.agentPort)!)
-            let listener = try NWListener(using: parameters)
-            listener.newConnectionHandler = { [weak self] connection in
-                Task { @MainActor in self?.accept(connection, local: true) }
-            }
-            listener.start(queue: .main)
-            agentListener = listener
-        } catch {
-            NSLog("Chatterbox: couldn't start the agent connection: \(error)")
         }
     }
 
@@ -205,17 +168,17 @@ final class CompanionServer {
         }
     }
 
-    private func accept(_ connection: NWConnection, local: Bool = false) {
-        guard local ? Self.isLoopback(connection.endpoint) : Self.isAllowed(connection.endpoint) else {
+    private func accept(_ connection: NWConnection) {
+        guard Self.isAllowed(connection.endpoint) else {
             connection.cancel()
             return
         }
         connection.start(queue: .main)
-        receive(on: connection, buffer: Data(), local: local)
+        receive(on: connection, buffer: Data())
     }
 
     /// Reads one request (headers, then a body up to its Content-Length), answers it, and closes.
-    private func receive(on connection: NWConnection, buffer: Data, local: Bool) {
+    private func receive(on connection: NWConnection, buffer: Data) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { [weak self] data, _, isComplete, error in
             Task { @MainActor in
                 guard let self else { return connection.cancel() }
@@ -224,7 +187,7 @@ final class CompanionServer {
                 if buffer.count > Companion.maxRequestBytes || error != nil { return connection.cancel() }
                 switch HTTPRequest.parse(buffer) {
                 case .request(let request):
-                    let response = await self.respondAsync(to: request, local: local)
+                    let response = await self.respondAsync(to: request)
                     if let file = response.fileURL {
                         HTTPFileTransfer(connection: connection, url: file, contentType: response.contentType).start()
                     } else {
@@ -236,7 +199,7 @@ final class CompanionServer {
                 case .incomplete where isComplete:
                     connection.cancel()
                 case .incomplete:
-                    self.receive(on: connection, buffer: buffer, local: local)
+                    self.receive(on: connection, buffer: buffer)
                 }
             }
         }
@@ -244,14 +207,9 @@ final class CompanionServer {
 
     // MARK: - Routes
 
-    func respondAsync(to request:HTTPRequest,local:Bool) async -> HTTPResponse {
+    func respondAsync(to request:HTTPRequest) async -> HTTPResponse {
         if request.method == "GET", request.path == "/v1/project-folders" {
-            guard !local else { return .error(403, "Only the paired Chatterbox app can browse folders here.") }
-            guard let device = authorize(request) else { return .error(401, "Pair this device again.") }
-            guard (device.product ?? "chatterbox") == "chatterbox",
-                  (request.headers["x-chatterbox-product"] ?? "chatterbox") == "chatterbox" else {
-                return .error(403, "This action belongs to Chatterbox.")
-            }
+            guard authorize(request) != nil else { return .error(401, "Pair this device again.") }
             let path = request.query["path"]
             return await Task.detached(priority: .userInitiated) {
                 do { return HTTPResponse.json(try ChatPromotion.folders(at: path)) }
@@ -261,16 +219,10 @@ final class CompanionServer {
         let restartParts = request.path.split(separator: "/").map(String.init)
         if request.method == "POST", restartParts.count == 4,
            restartParts[0] == "v1", restartParts[1] == "chats", restartParts[3] == "restart" {
-            guard !local else { return .error(403, "Only a paired mobile app can restart a thread here.") }
             guard let device = authorize(request) else { return .error(401, "Pair this device again.") }
-            let product = request.headers["x-chatterbox-product"] ?? "chatterbox"
-            guard (device.product ?? "chatterbox") == product else { return .error(403, "This pairing belongs to another app.") }
-            guard let model, let id = UUID(uuidString: restartParts[2]), let target = model.sessions.first(where: { $0.id == id && $0.isDot == (product == "golem") }) else {
+            guard let model, let id = UUID(uuidString: restartParts[2]), let target = model.sessions.first(where: { $0.id == id }) else {
                 return .error(404, "That session is gone.")
             }
-            #if CHATTERBOX_HEADLESS
-            if product == "golem", model.runtime.state.integrationEnabled != true { return .error(403, "Golem integration is disabled.") }
-            #endif
             var response = await mutations.respondAsync(device: device.id, request: request) {
                 guard !target.isRestartingThread, !target.awaitingHostResume else { return .error(409, "This thread is reconnecting. Try again shortly.") }
                 await target.restartThread()
@@ -282,28 +234,7 @@ final class CompanionServer {
             response.headers.merge(mutations.headers()) { _, new in new }
             return response
         }
-        #if CHATTERBOX_HEADLESS
-        let parts=request.path.split(separator:"/").map(String.init)
-        if parts.count==3,parts[0]=="v1",parts[1]=="golem",["health","control"].contains(parts[2]) {
-            guard !local,request.headers["x-chatterbox-product"]=="golem",let device=authorize(request),device.product=="golem" else{return .error(403,"Pair Golem to use its service controls.")}
-            guard model?.runtime.state.integrationEnabled==true else{return .error(403,"Golem integration is disabled.")}
-            let body:JSON
-            let operation:String
-            var identity=UUID().uuidString
-            if parts[2]=="health",request.method=="GET"{operation="health";body=[:]}
-            else if parts[2]=="control",request.method=="POST",let raw=try? JSON.parse(request.body),let op=raw["operation"]?.string,["pause","settings","checkIn","sweep","stop"].contains(op),let key=raw["id"]?.string,UUID(uuidString:key) != nil {
-                operation=op;body=raw["body"] ?? [:];identity="mobile-\(device.id)-\(key)"
-            }else{return .error(400,"Invalid Golem control request.")}
-            let client=RuntimeClient(socketName:"golem.sock");client.start()
-            defer{client.stop()}
-            let until=Date().addingTimeInterval(3)
-            while !client.connected,Date()<until{try? await Task.sleep(for:.milliseconds(50))}
-            guard client.connected else{return .error(503,"Golem’s service is stopped. Start it on your Mac.")}
-            do{return .json(try await client.request(operation,body:body,id:identity))}
-            catch{return .error(409,error.localizedDescription)}
-        }
-        #endif
-        let response = respond(to:request,local:local)
+        let response = respond(to:request)
         guard let source = response.thumbnailSource else { return response }
         let side = response.thumbnailSize
         let fallback = response.fallbackFile
@@ -334,41 +265,29 @@ final class CompanionServer {
 
     }
 
-    func respond(to request: HTTPRequest, local: Bool) -> HTTPResponse {
+    func respond(to request: HTTPRequest) -> HTTPResponse {
         var response: HTTPResponse
         let mutation = request.method != "GET" && request.method != "HEAD"
-        if !local, mutation, request.path != "/v1/pair", let device = authorize(request) {
+        if mutation, request.path != "/v1/pair", let device = authorize(request) {
             response = mutations.respond(device: device.id, request: request) {
-                route(request, local: local)
+                route(request)
             }
         } else {
-            response = route(request, local: local)
+            response = route(request)
         }
         response.headers.merge(mutations.headers()) { _, new in new }
         return response
     }
 
-    private func route(_ request: HTTPRequest, local: Bool) -> HTTPResponse {
-        currentProduct=local ? "agent":(request.headers["x-chatterbox-product"] ?? "chatterbox")
+    private func route(_ request: HTTPRequest) -> HTTPResponse {
         let parts = request.path.split(separator: "/").map(String.init)
         guard parts.first == "v1" else { return .error(404, "Not found") }
-        if local {
-            #if CHATTERBOX_HEADLESS
-            if model?.runtime.state.integrationEnabled==false{return .error(403,"Golem integration is disabled.")}
-            #endif
-            // Agents on this Mac: the launch's key, nothing else.
-            guard let token = request.headers[Companion.tokenHeader.lowercased()], !agentToken.isEmpty, token == agentToken else {
-                return .error(401, "Chatterbox's agent key doesn't match. Is Chatterbox running?")
-            }
-        } else {
-            if request.method == "POST", parts == ["v1", "pair"] { return pair(request) }
-            guard let device = authorize(request) else { return .error(401, "This iPhone isn't paired. Pair it again in the app.") }
-            guard (device.product ?? "chatterbox")==currentProduct else{return .error(403,"This pairing belongs to another app.")}
-            if let index = devices.firstIndex(where: { $0.id == device.id }) {
-                devices[index].lastSeen = Date()
-            }
+        if request.method == "POST", parts == ["v1", "pair"] { return pair(request) }
+        guard let device = authorize(request) else { return .error(401, "This iPhone isn't paired. Pair it again in the app.") }
+        if let index = devices.firstIndex(where: { $0.id == device.id }) {
+            devices[index].lastSeen = Date()
         }
-        if !local, parts == ["v1", "push"], let device = authorize(request) {
+        if parts == ["v1", "push"] {
             if request.method == "DELETE" {
                 clearPush(device.id)
                 return .json(["ok": true])
@@ -385,46 +304,10 @@ final class CompanionServer {
             }
         }
         guard let model else { return .error(503, "Chatterbox is starting.") }
-        if !local,currentProduct=="golem" {
-            #if CHATTERBOX_HEADLESS
-            guard model.runtime.state.integrationEnabled else{return .error(403,"Golem integration is disabled.")}
-            #endif
-            guard parts.count>=2,["chats","avatar","golem","push","addresses"].contains(parts[1]),!(parts==["v1","chats"] && request.method=="POST") else{return .error(403,"This action belongs to Chatterbox.")}
-            #if CHATTERBOX_HEADLESS
-            if parts==["v1","chats"],request.method=="GET",model.dot==nil{_ = try? model.runtime.ensureAssistant()}
-            #endif
-        }
-        if parts == ["v1","golem","journal"],request.method=="GET",currentProduct=="golem" {
-            let file=URL(fileURLWithPath:RuntimePaths.assistantFolder).appendingPathComponent("journal.json")
-            return .json((try? Data(contentsOf:file)).flatMap{try? JSON.parse($0)} ?? [])
-        }
-        #if CHATTERBOX_HEADLESS
-        if parts == ["v1","golem","read"],request.method=="POST",currentProduct=="golem" {
-            guard let body=try? JSON.parse(request.body),let raw=body["itemID"]?.string,let id=UUID(uuidString:raw),let assistant=model.dot,
-                  let index=assistant.items.firstIndex(where:{$0.id==id}) else{return .error(400,"Unknown briefing item.")}
-            let seen=AppPreferences.defaults.string(forKey:"dotSeenItem").flatMap(UUID.init(uuidString:)).flatMap{seen in assistant.items.firstIndex(where:{$0.id==seen})} ?? -1
-            if index>seen {
-                do{try RuntimePreferences.update(["dotSeenItem":.string(raw)]);model.runtime.publishConfiguration();try model.runtime.flush()}
-                catch{return .error(503,"Could not save reading position.")}
-            }
-            return .json(["ok":true])
-        }
-        #endif
-        if parts == ["v1","golem","status"],request.method=="GET",currentProduct=="golem" {
-            let socket=RuntimePaths.data.appendingPathComponent("golem.sock")
-            if let fd=UnixSocket.connect(to:socket){close(fd);return .json(["available":true])}
-            return .json(["available":false])
-        }
-        if parts.count>=2,parts[1]=="avatar",currentProduct=="chatterbox" {return .error(403,"Avatar assets belong to Golem.")}
-
-        // Dot's computer, for Dot's own tools on this Mac.
-        if local, parts.count >= 2, parts[1] == "computer" {
-            return .error(410, "The Agent Computer VM feature has been removed.")
-        }
 
         switch (request.method, parts.count) {
         case ("GET", 2) where parts[1] == "chats":
-            return .json(CompanionMapper.chatList(model,product:currentProduct))
+            return .json(CompanionMapper.chatList(model))
         case ("GET", 3) where parts[1] == "chats":
             guard let session = session(parts[2]) else { return .error(404, "That session is gone.") }
             let since = request.query["since"].flatMap(Int.init)
@@ -432,8 +315,7 @@ final class CompanionServer {
             if let since, since == revision { return .json(Companion.Unchanged(revision: revision)) }
             return .json(CompanionMapper.detail(session, model: model))
         case ("DELETE", 3) where parts[1] == "chats":
-            guard !local, currentProduct == "chatterbox" else { return .error(403, "Only the paired Chatterbox app can delete a session here.") }
-            guard let session = session(parts[2]), !session.isDot else { return .error(404, "That session is gone.") }
+            guard let session = session(parts[2]) else { return .error(404, "That session is gone.") }
             #if CHATTERBOX_HEADLESS
             do { try model.runtime.remove(session.id) }
             catch { return .error(503, "Couldn't delete the chat. Try again after reconnecting.") }
@@ -457,7 +339,6 @@ final class CompanionServer {
                 return .error(400, "Nothing to send.")
             }
             if body.now == true { session.sendNow(body.text, attachments: images) } else { session.send(body.text, attachments: images) }
-            if local, body.fromDot == true, !session.isDot { session.record.dotFollowing = true }
             return .json(CompanionMapper.detail(session, model: model))
         case ("POST", 2) where parts[1] == "chats":
             let body = (try? Companion.decoder.decode(Companion.NewChatRequest.self, from: request.body)) ?? .init()
@@ -517,31 +398,29 @@ final class CompanionServer {
         case ("POST", 4) where parts[1] == "chats" && parts[3] == "rename":
             guard let session = session(parts[2]) else { return .error(404, "That session is gone.") }
             guard let body = try? Companion.decoder.decode(Companion.RenameRequest.self, from: request.body) else { return .error(400, "Bad name.") }
-            if session.isDot { model.renameDot(body.title) } else { session.setTitle(body.title) }
+            session.setTitle(body.title)
             return .json(CompanionMapper.detail(session, model: model))
         case ("GET", 2) where parts[1] == "displays":
             return .json(CompanionMapper.displays())
         case ("GET", 2) where parts[1] == "usage":
             return usageResponse(refresh: request.query["refresh"] == "1")
         case ("POST", 4) where parts[1] == "chats" && parts[3] == "pin":
-            guard let session = session(parts[2]), !session.isDot else { return .error(404, "That session is gone.") }
+            guard let session = session(parts[2]) else { return .error(404, "That session is gone.") }
             guard let body = try? Companion.decoder.decode(Companion.PinRequest.self, from: request.body) else { return .error(400, "Bad pin.") }
             model.setPinned(session, body.pinned)
             return .json(CompanionMapper.detail(session, model: model))
         case ("POST", 4) where parts[1] == "chats" && parts[3] == "brief":
-            guard let session = session(parts[2]), !session.isDot else { return .error(404, "That session is gone.") }
+            guard let session = session(parts[2]) else { return .error(404, "That session is gone.") }
             guard let body = try? Companion.decoder.decode(Companion.BriefRequest.self, from: request.body) else { return .error(400, "Bad brief.") }
             session.setBrief(body.brief)
             return .json(CompanionMapper.detail(session, model: model))
         case ("GET", 4) where parts[1] == "chats" && parts[3] == "organization":
-            guard !local, currentProduct == "chatterbox" else { return .error(403, "Only the paired Chatterbox app can promote sessions here.") }
             guard let session = session(parts[2]) else { return .error(404, "That session is gone.") }
             guard ChatPromotion.eligible(session) else { return .error(409, "Only ordinary, unarchived sessions can be promoted.") }
             return .json(Companion.PromotionOptions(currentFolder: session.workingFolder,
                 studios: model.activeStudios.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
                     .map { .init(id: $0.id, name: $0.name, folder: $0.folder) }))
         case ("POST", 4) where parts[1] == "chats" && parts[3] == "promote":
-            guard !local, currentProduct == "chatterbox" else { return .error(403, "Only the paired Chatterbox app can promote sessions here.") }
             guard let session = session(parts[2]) else { return .error(404, "That session is gone.") }
             guard let body = try? Companion.decoder.decode(Companion.PromotionRequest.self, from: request.body) else { return .error(400, "Choose a Studio or Project destination.") }
             #if CHATTERBOX_HEADLESS
@@ -558,8 +437,7 @@ final class CompanionServer {
             if let shown, shown != session.id, model.sessions.contains(where: { $0.id == shown }) { model.selectedID = shown }
             return .json(CompanionMapper.detail(session, model: model))
         case ("POST", 4) where parts[1] == "chats" && parts[3] == "sidequest":
-            guard !local, currentProduct == "chatterbox" else { return .error(403, "Only the paired Chatterbox app can start a sidequest here.") }
-            guard let session = session(parts[2]), !session.isDot, !session.isSidequest, session.record.archivedAt == nil else { return .error(404, "That session is gone.") }
+            guard let session = session(parts[2]), !session.isSidequest, session.record.archivedAt == nil else { return .error(404, "That session is gone.") }
             guard let body = try? Companion.decoder.decode(Companion.SidequestRequest.self, from: request.body),
                   !body.task.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .error(400, "Say what the sidequest should do.") }
             let shown = model.selectedID
@@ -594,28 +472,6 @@ final class CompanionServer {
             guard let session = session(parts[2]) else { return .error(404, "That session is gone.") }
             if session.canStop { session.interrupt() }
             return .json(CompanionMapper.detail(session, model: model))
-        // Approvals and answers are the user's alone: agents on this Mac (Golem) may only suggest.
-        case ("POST", 5) where local && parts[1] == "chats" && (parts[3] == "approvals" || parts[3] == "answers"):
-            return .error(403, "Only the user can answer approvals and questions. Use suggest_answer to propose an answer for them to send.")
-        case ("POST", 5) where local && parts[1] == "chats" && parts[3] == "suggestions":
-            guard let session = session(parts[2]), let itemID = UUID(uuidString: parts[4]) else { return .error(404, "That session is gone.") }
-            guard let body = try? Companion.decoder.decode(Companion.SuggestionRequest.self, from: request.body) else { return .error(400, "Bad suggestion.") }
-            do {
-                try session.suggestAnswers(itemID, answers: body.answers, reason: body.reason, by: model.dotName)
-            } catch let error as ChatSession.SuggestionError {
-                return .error(409, error.message)
-            } catch { return .error(400, "Bad suggestion.") }
-            return .json(CompanionMapper.detail(session, model: model))
-        case ("POST", 2) where local && parts[1] == "decisions":
-            guard let body = try? Companion.decoder.decode(Companion.DecisionNote.self, from: request.body),
-                  !body.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .error(400, "Nothing to record.") }
-            let chat = body.chat.flatMap { session($0) }
-            #if CHATTERBOX_HEADLESS
-            model.recordAssistantDecision(body.summary,detail:body.why,chat:chat)
-            #elseif GOLEM_APP
-            GolemJournal.shared.add(.decision, title: body.summary, detail: body.why, chat: chat)
-            #endif
-            return .json(["ok": true])
         case ("POST", 5) where parts[1] == "chats" && parts[3] == "approvals":
             guard let session = session(parts[2]), let itemID = UUID(uuidString: parts[4]) else { return .error(404, "That session is gone.") }
             guard let body = try? Companion.decoder.decode(Companion.DecisionRequest.self, from: request.body),
@@ -641,16 +497,6 @@ final class CompanionServer {
             return .json(CompanionMapper.detail(session, model: model))
         case ("GET", 2) where parts[1] == "addresses":
             return .json(Companion.Addresses(addresses: Self.addresses))
-        case ("GET", 2) where parts[1] == "avatar":
-            return .json(CompanionMapper.avatarList())
-        case ("GET", 3) where parts[1] == "avatar":
-            // Only a file listed in the Avatar folder, by its plain name.
-            guard let file = CompanionMapper.avatarList().files.first(where: { $0.name == parts[2] }),
-                  let data = try? Data(contentsOf: URL(fileURLWithPath: RuntimePaths.assistantFolder).appendingPathComponent("Avatar").appendingPathComponent(file.name)) else {
-                return .error(404, "No such animation.")
-            }
-            let type = file.name.hasSuffix(".png") ? "image/png" : file.name.hasSuffix(".json") ? "application/json" : "video/quicktime"
-            return HTTPResponse(status: 200, contentType: type, body: data)
         case ("GET", 5) where parts[1] == "chats" && parts[3] == "thumbnail":
             guard let session = session(parts[2]), let id = UUID(uuidString: parts[4]),
                   let url = session.latestThumbnailURL(), ChatSession.mediaID(url.path) == id else {
@@ -721,7 +567,7 @@ final class CompanionServer {
 
     private func session(_ id: String) -> ChatSession? {
         guard let uuid = UUID(uuidString: id) else { return nil }
-        return model?.sessions.first { $0.id == uuid && (currentProduct=="agent" || (($0.isDot)==(currentProduct=="golem"))) }
+        return model?.sessions.first { $0.id == uuid }
     }
 
     private func pair(_ request: HTTPRequest) -> HTTPResponse {
@@ -729,7 +575,7 @@ final class CompanionServer {
         guard let body = try? Companion.decoder.decode(Companion.PairRequest.self, from: request.body) else {
             return .error(400, "Bad request.")
         }
-        guard body.code.trimmingCharacters(in: .whitespaces) == (body.product=="golem" ? golemPairingCode:pairingCode) else {
+        guard body.code.trimmingCharacters(in: .whitespaces) == pairingCode else {
             failedPairings += 1
             if failedPairings >= 5 { newPairingCode() }
             return .error(403, "That code doesn't match. Check Chatterbox → Settings → iPhone.")
@@ -738,10 +584,9 @@ final class CompanionServer {
         _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
         let token = bytes.map { String(format: "%02x", $0) }.joined()
         let name = body.deviceName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard body.product==nil || body.product=="chatterbox" || body.product=="golem" else{return .error(400,"Unknown app.")}
-        devices.append(Device(name: name.isEmpty ? "iPhone" : String(name.prefix(60)), tokenHash: Self.hash(token),product:body.product))
+        devices.append(Device(name: name.isEmpty ? "iPhone" : String(name.prefix(60)), tokenHash: Self.hash(token)))
         saveDevices()
-        if body.product=="golem"{golemPairingCode=Self.newCode()}else{newPairingCode()}
+        newPairingCode()
         return .json(Companion.PairResponse(token: token, macName: Host.current().localizedName ?? "Mac", addresses: Self.addresses))
     }
 
@@ -773,15 +618,6 @@ final class CompanionServer {
 
     private static func hash(_ token: String) -> String {
         SHA256.hash(data: Data(token.utf8)).map { String(format: "%02x", $0) }.joined()
-    }
-
-    private static func isLoopback(_ endpoint: NWEndpoint) -> Bool {
-        guard case .hostPort(let host, _) = endpoint else { return false }
-        switch host {
-        case .ipv4(let address): return address.rawValue.first == 127
-        case .ipv6(let address): return address == .loopback
-        default: return false
-        }
     }
 
     /// Only this Mac, the home network, and Tailscale may connect.
@@ -820,11 +656,8 @@ final class CompanionServer {
 enum CompanionMapper {
     private static var lastCodexModelsTry = Date.distantPast
 
-    static func chatList(_ model: AppModel,product:String="agent") -> Companion.ChatList {
+    static func chatList(_ model: AppModel) -> Companion.ChatList {
         var groups: [Companion.ChatGroup] = []
-        // Dot first, as at the top of the sidebar.
-        if product != "chatterbox",let dot = model.dot { groups.append(.init(id: "dot", kind: .dot, title: model.dotName, chats: [summary(dot)])) }
-        if product=="golem" {return Companion.ChatList(revision:model.companionListRevision,groups:groups,pins:[])}
         let projects = model.sidebarProjects
         if !projects.isEmpty {
             // Each project followed by its worktrees, as nested under it in the sidebar.
@@ -841,7 +674,7 @@ enum CompanionMapper {
             .flatMap { [$0] + model.sidechats(of: $0) }
         if !chats.isEmpty { groups.append(.init(id: "chats", kind: .chats, title: "Chats", chats: chats.map(summary))) }
         var activity: [Companion.TurnCompletion] = []
-        for session in model.sessions where !session.isDot {
+        for session in model.sessions {
             activity.append(contentsOf: session.record.turnCompletions ?? [])
         }
         activity.sort { a, b in
@@ -857,16 +690,6 @@ enum CompanionMapper {
               target: pin.kind == .website ? (PinStore.normalizedURL(pin.target)?.absoluteString ?? pin.target) : pin.target)
     }
 
-    /// The animations (.mov), the live rig (golem.json and its .png stones) and head image in
-    /// the assistant's Avatar folder.
-    static func avatarList() -> Companion.AvatarList {
-        let entries = (try? FileManager.default.contentsOfDirectory(at: URL(fileURLWithPath: RuntimePaths.assistantFolder).appendingPathComponent("Avatar"), includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
-        return .init(files: entries.filter { ["mov", "png", "json"].contains($0.pathExtension.lowercased()) }.map { url in
-            .init(name: url.lastPathComponent,
-                  modified: (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast)
-        }.sorted { $0.name < $1.name })
-    }
-
     static func summary(_ session: ChatSession) -> Companion.ChatSummary {
         let isProject = session.record.projectFolder != nil
         let activity = activity(session)
@@ -878,8 +701,6 @@ enum CompanionMapper {
                      isWaitingOnYou: session.isWaitingOnYou,
                      updatedAt: session.record.updatedAt,
                      pins: nil,
-                     isDot: session.isDot ? true : nil,
-                     unread: session.isDot ? Attention.shared.dotUnreadCount(session) : nil,
                      worktreeBranch: session.record.worktreeOf != nil ? (session.record.worktreeBranch ?? session.projectName) : nil,
                      sidechatOf: session.record.sidechatOf,
                      sidequestOf: session.record.sidequestOf, sidequestTask: session.record.sidequestTask,
@@ -970,8 +791,8 @@ enum CompanionMapper {
                                       efforts: entry.model.efforts, defaultEffort: entry.model.defaultEffort)
             }
         // The PC's list, as the Mac's picker loads it (at most once a minute).
-        if !session.isDot { Task { await PCModels.shared.refresh() } }
-        let open = session.isDot ? nil : PCModels.shared.models.map {
+        Task { await PCModels.shared.refresh() }
+        let open = PCModels.shared.models.map {
             Companion.ModelOption(id: $0, name: $0, detail: $0 == PCModels.recommended ? "On \(RemoteMachine.pc.name); fits its graphics card, fastest" : "On \(RemoteMachine.pc.name)",
                                   efforts: [], defaultEffort: nil)
         }
@@ -1091,9 +912,9 @@ enum CompanionMapper {
     }
 
     private static func plainItem(_ item: DisplayItem) -> Companion.Item {
-        // Dot's check-ins read as a small line on the phone too.
+        // Rows Chatterbox sent on its own read as a small line on the phone too.
         if item.kind == .user, item.automatic == true {
-            return .init(id: item.id, kind: .notice, text: item.detail ?? "Check-in", isStreaming: false, isCommentary: false,
+            return .init(id: item.id, kind: .notice, text: item.detail ?? "From Chatterbox", isStreaming: false, isCommentary: false,
                          toolState: nil, isPending: false, attachments: [], isQueued: false)
         }
         var text = item.text
@@ -1121,8 +942,6 @@ enum CompanionMapper {
                                multiSelect: q.multiSelect, isSecret: q.isSecret)
                      },
                      answers: item.answers,
-                     suggested: item.approvalState == .pending ? item.suggested : nil,
-                     suggestedReason: item.approvalState == .pending ? item.suggestedReason : nil,
                      detail: item.kind == .approval || item.kind == .shell ? item.detail.map { String($0.suffix(20_000)) } : nil,
                      planSteps: item.kind == .plan ? item.planSteps.map { .init(step: $0.step, status: $0.status) } : nil,
                      workedSeconds: item.workedSeconds)

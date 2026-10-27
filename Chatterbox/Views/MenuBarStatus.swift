@@ -8,7 +8,7 @@ struct MenuBarLabel: View {
     let model: AppModel
 
     var body: some View {
-        let waiting = model.activeSessions.contains { $0.isWaitingOnYou && !$0.isDot }
+        let waiting = model.activeSessions.contains { $0.isWaitingOnYou }
         let replies = !Attention.shared.finishedChats(in: model).isEmpty
         let working = !Attention.shared.workingChats(in: model).isEmpty
         Image(systemName: waiting ? "exclamationmark.bubble.fill"
@@ -25,7 +25,7 @@ struct MenuBarPanel: View {
     private let appearance = ReaderStyleSettings()
 
     var body: some View {
-        let waiting = model.activeSessions.filter { $0.isWaitingOnYou && !$0.isDot }
+        let waiting = model.activeSessions.filter { $0.isWaitingOnYou }
         let replies = Attention.shared.finishedChats(in: model).filter { !$0.isWaitingOnYou }
         let working = Attention.shared.workingChats(in: model).filter { !$0.isWaitingOnYou }
         let recent = Array(Attention.shared.recentChats(in: model).filter { !$0.isWaitingOnYou && $0.hasMessages }.prefix(5))

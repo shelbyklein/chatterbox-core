@@ -1,4 +1,4 @@
-#if canImport(RoyalVNCKit) && !GOLEM_APP
+#if canImport(RoyalVNCKit)
 import Network
 import RoyalVNCKit
 import Security

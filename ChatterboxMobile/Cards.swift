@@ -76,34 +76,15 @@ struct QuestionsCard: View {
     let item: Companion.Item
     let questions: [Companion.Question]
     let answer: ([String: [String]]?) -> Void
-    @State private var picked: [String: Set<String>]
-    @State private var other: [String: String]
+    @State private var picked: [String: Set<String>] = [:]
+    @State private var other: [String: String] = [:]
 
     private var isPending: Bool { item.isPending }
 
-    /// Opens with Golem's suggestion picked, if he made one: options he named are selected,
-    /// anything else goes in the "Other" field.
     init(item: Companion.Item, questions: [Companion.Question], answer: @escaping ([String: [String]]?) -> Void) {
         self.item = item
         self.questions = questions
         self.answer = answer
-        var picked: [String: Set<String>] = [:], other: [String: String] = [:]
-        for question in questions {
-            guard let values = item.suggested?[question.id] else { continue }
-            let labels = Set(question.options.map(\.label))
-            picked[question.id] = Set(values.filter(labels.contains))
-            let typed = values.filter { !labels.contains($0) }
-            if !typed.isEmpty { other[question.id] = typed.joined(separator: ", ") }
-        }
-        _picked = State(initialValue: picked)
-        _other = State(initialValue: other)
-    }
-
-    /// Golem's suggestion for every question on the card, sent as is with one tap.
-    private var suggestion: [String: [String]]? {
-        guard isPending, let suggested = item.suggested else { return nil }
-        let answers = suggested.filter { id, _ in questions.contains { $0.id == id } }
-        return answers.isEmpty ? nil : answers
     }
 
     var body: some View {
@@ -111,23 +92,6 @@ struct QuestionsCard: View {
             Label(isPending ? "Questions for you" : "Answered", systemImage: isPending ? "questionmark.bubble.fill" : "checkmark.bubble")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(isPending ? .yellow : .secondary)
-            if let suggestion {
-                VStack(alignment: .leading, spacing: 8) {
-                    Label {
-                        Text("Golem suggests " + questions.compactMap { suggestion[$0.id]?.joined(separator: ", ") }.joined(separator: " \u{00B7} "))
-                            .font(.callout.weight(.semibold))
-                    } icon: { Image(systemName: "sparkles") }
-                    if let reason = item.suggestedReason, !reason.isEmpty {
-                        Text(reason).font(.caption).foregroundStyle(.secondary)
-                    }
-                    Button("Send Golem\u{2019}s Answer") { answer(suggestion) }
-                        .buttonStyle(.borderedProminent)
-                }
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(RoundedRectangle(cornerRadius: 12).fill(Color.yellow.opacity(0.10)))
-                .accessibilityElement(children: .contain)
-            }
             ForEach(questions) { question in
                 VStack(alignment: .leading, spacing: 8) {
                     if !question.header.isEmpty {

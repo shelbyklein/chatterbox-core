@@ -110,9 +110,8 @@ enum ToolScopes {
         try encoder.encode(kept).write(to: file, options: .atomic)
     }
 
-    /// The levels a chat draws from, Chatterbox-wide first. Golem keeps its own tools.
+    /// The levels a chat draws from, Chatterbox-wide first.
     @MainActor static func scopes(for session: ChatSession) -> [ToolScope] {
-        guard !session.isDot else { return [] }
         if session.record.studioID != nil { return [.chatterbox, .studios] }
         if let folder = projectFolder(of: session) { return [.chatterbox, .project(folder)] }
         return [.chatterbox]
