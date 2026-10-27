@@ -1,6 +1,7 @@
 import ImageIO
 import UniformTypeIdentifiers
 import CryptoKit
+import CoreGraphics
 import Foundation
 import Network
 import Observation
@@ -518,6 +519,8 @@ final class CompanionServer {
             guard let body = try? Companion.decoder.decode(Companion.RenameRequest.self, from: request.body) else { return .error(400, "Bad name.") }
             if session.isDot { model.renameDot(body.title) } else { session.setTitle(body.title) }
             return .json(CompanionMapper.detail(session, model: model))
+        case ("GET", 2) where parts[1] == "displays":
+            return .json(CompanionMapper.displays())
         case ("GET", 2) where parts[1] == "usage":
             return usageResponse(refresh: request.query["refresh"] == "1")
         case ("POST", 4) where parts[1] == "chats" && parts[3] == "pin":
@@ -988,6 +991,20 @@ enum CompanionMapper {
 
     /// A chat that's never saved, set up as a new one would be, then with `picks` applied:
     /// the phone shows its options while you choose, before anything is created.
+    /// The Mac's displays, left to right, measured from the top left of their union.
+    static func displays() -> [Companion.MacDisplay] {
+        var count: UInt32 = 0
+        guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else { return [] }
+        var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        guard CGGetActiveDisplayList(count, &ids, &count) == .success else { return [] }
+        // Mirrored displays show the same picture: keep one of each set.
+        let frames = ids.prefix(Int(count)).filter { CGDisplayMirrorsDisplay($0) == kCGNullDirectDisplay }.map(CGDisplayBounds)
+        let union = frames.reduce(CGRect.null) { $0.union($1) }
+        return frames.sorted { ($0.minX, $0.minY) < ($1.minX, $1.minY) }.map {
+            .init(x: $0.minX - union.minX, y: $0.minY - union.minY, width: $0.width, height: $0.height)
+        }
+    }
+
     static func draftChat(_ picks: Companion.SettingsRequest, studio: Studio?) -> ChatSession {
         let defaults = AppPreferences.defaults
         var record = ConversationRecord(model: defaults.string(forKey: "defaultModel") ?? "default",

@@ -298,6 +298,11 @@ final class MobileStore {
         try await call("/v1/chats/\(chat.uuidString)/rename", method: "POST", body: try JSONEncoder().encode(Companion.RenameRequest(title: title)))
     }
 
+    /// The Mac's display layout, for Mac Screen; empty from a Mac that doesn't report it.
+    func macDisplays() async -> [Companion.MacDisplay] {
+        (try? await call("/v1/displays") as [Companion.MacDisplay]) ?? []
+    }
+
     /// Pin to Top (on the Mac too), or unpin; the list reloads with the new order.
     func setPinned(_ chat: UUID, _ pinned: Bool) async throws {
         let _: Companion.ChatDetail = try await call("/v1/chats/\(chat.uuidString)/pin", method: "POST", body: try JSONEncoder().encode(Companion.PinRequest(pinned: pinned)))

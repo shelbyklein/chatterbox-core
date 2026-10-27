@@ -298,6 +298,15 @@ enum Companion {
         var title: String
     }
 
+    /// One of the Mac's displays, in points, from the top left of them all; Mac Screen splits
+    /// Screen Sharing's one picture with these (Screen Sharing doesn't report its displays).
+    struct MacDisplay: Codable, Hashable {
+        var x: Double
+        var y: Double
+        var width: Double
+        var height: Double
+    }
+
     /// Pin to Top on the Mac, or not.
     struct PinRequest: Codable {
         var pinned: Bool

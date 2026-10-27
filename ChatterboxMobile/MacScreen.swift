@@ -63,6 +63,9 @@ final class MacScreenSession: NSObject {
         screens.indices.contains(screenIndex) ? screens[screenIndex] : CGRect(origin: .zero, size: screenSize)
     }
     @ObservationIgnored private var fullImage: CGImage?
+    /// The Mac's own display layout (points, from the companion API): Screen Sharing sends
+    /// every display as one picture and doesn't say where each one is.
+    var macDisplays: [CGRect] = [] { didSet { if let fullImage { show(fullImage, screens: []) } } }
     /// Where the Mac's pointer is (screen pixels), for the trackpad, and the pointer's look,
     /// which Screen Sharing leaves to the viewer to draw.
     private(set) var pointer = CGPoint(x: -1, y: -1)
@@ -215,7 +218,7 @@ final class MacScreenSession: NSObject {
         let bounds = CGRect(origin: .zero, size: screenSize)
         let found = screens.map { $0.intersection(bounds) }.filter { !$0.isEmpty }
             .sorted { ($0.minX, $0.minY) < ($1.minX, $1.minY) }
-        let displays = found.count > 1 ? found : []
+        let displays = found.count > 1 ? found : Self.split(bounds, by: macDisplays)
         if displays != self.screens {
             self.screens = displays
             if !displays.indices.contains(screenIndex) { screenIndex = 0 }
@@ -224,6 +227,18 @@ final class MacScreenSession: NSObject {
         crop(picture)
         if pointer.x < 0 || !visibleRect.contains(pointer) { pointer = CGPoint(x: visibleRect.midX, y: visibleRect.midY) }
         if state != .connected { state = .connected }
+    }
+
+    /// The Mac's displays in the picture's pixels: the layout scaled to the picture's size.
+    static func split(_ picture: CGRect, by layout: [CGRect]) -> [CGRect] {
+        guard layout.count > 1 else { return [] }
+        let union = layout.reduce(CGRect.null) { $0.union($1) }
+        guard union.width > 0, union.height > 0 else { return [] }
+        let sx = picture.width / union.width, sy = picture.height / union.height
+        return layout.map {
+            CGRect(x: ($0.minX - union.minX) * sx, y: ($0.minY - union.minY) * sy, width: $0.width * sx, height: $0.height * sy)
+                .integral.intersection(picture)
+        }.filter { !$0.isEmpty }.sorted { ($0.minX, $0.minY) < ($1.minX, $1.minY) }
     }
 
     /// The shown display's part of the picture (cropping shares the pixels; no copy).
@@ -348,6 +363,8 @@ extension MacScreenSession: VNCConnectionDelegate {
 /// Full screen: the Mac's screen, controls on top, sign-in when needed.
 struct MacScreenView: View {
     let hosts: [String]
+    /// The Mac's display layout, asked of the Mac (Screen Sharing doesn't say).
+    var displays: () async -> [Companion.MacDisplay] = { [] }
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @State private var session = MacScreenSession()
@@ -397,11 +414,16 @@ struct MacScreenView: View {
         .onAppear {
             #if DEBUG
             if ProcessInfo.processInfo.environment["CHATTERBOX_TEST_MAC_SCREEN"] != nil {
-                session.showForTesting(MacScreenView.testPicture(), screens: MacScreenView.testDisplays)
+                // As Screen Sharing does: one picture, no displays reported (the layout comes from the Mac).
+                session.showForTesting(MacScreenView.testPicture())
                 return
             }
             #endif
             session.connect(to: hosts)
+        }
+        .task {
+            let layout = await displays()
+            session.macDisplays = layout.map { CGRect(x: $0.x, y: $0.y, width: $0.width, height: $0.height) }
         }
         .onDisappear { session.disconnect() }
         .onChange(of: scenePhase) { _, phase in
@@ -455,7 +477,7 @@ struct MacScreenView: View {
 
     #if DEBUG
     /// Stand-in Mac displays for layout tests: two, side by side, as Screen Sharing sends them.
-    static let testDisplays = [CGRect(x: 0, y: 0, width: 1800, height: 1169), CGRect(x: 1800, y: 0, width: 1512, height: 982)]
+    private static let testDisplays = [CGRect(x: 0, y: 0, width: 1800, height: 1169), CGRect(x: 1800, y: 0, width: 1512, height: 982)]
 
     static func testPicture() -> UIImage {
         let size = CGSize(width: 3312, height: 1169)
@@ -857,6 +879,8 @@ final class MacKeyboardView: UIView {
         let code: VNCKeyCode
         let width: CGFloat
         var isModifier = false
+        /// The mouse button, at the pointer: held down while the key is.
+        var isClick = false
     }
 
     private static func letters(_ text: String) -> [Key] {
@@ -871,9 +895,10 @@ final class MacKeyboardView: UIView {
         [Key(label: "caps", code: VNCKeyCode(0xffe5), width: 1.75)] + letters("asdfghjkl;'") + [Key(label: "return", code: .return, width: 1.75)],
         [Key(label: "shift", code: .shift, width: 2.25, isModifier: true)] + letters("zxcvbnm,./") + [Key(label: "shift", code: .rightShift, width: 2.25, isModifier: true)],
         [Key(label: "control", code: .control, width: 1.25, isModifier: true), Key(label: "option", code: .optionForARD, width: 1.25, isModifier: true),
-         Key(label: "⌘", code: .commandForARD, width: 1.5, isModifier: true), Key(label: "", code: .space, width: 5),
+         Key(label: "⌘", code: .commandForARD, width: 1.5, isModifier: true), Key(label: "", code: .space, width: 4),
          Key(label: "⌘", code: .rightCommandForARD, width: 1.5, isModifier: true), Key(label: "option", code: .rightOptionForARD, width: 1.25, isModifier: true),
-         Key(label: "←", code: .leftArrow, width: 1), Key(label: "↑", code: .upArrow, width: 1), Key(label: "↓", code: .downArrow, width: 1), Key(label: "→", code: .rightArrow, width: 1)],
+         Key(label: "←", code: .leftArrow, width: 1), Key(label: "↑", code: .upArrow, width: 1), Key(label: "↓", code: .downArrow, width: 1), Key(label: "→", code: .rightArrow, width: 1),
+         Key(label: "click", code: .space, width: 1.5, isClick: true)],
     ]
 
     private var keyViews: [(key: Key, view: UILabel)] = []
@@ -896,7 +921,8 @@ final class MacKeyboardView: UIView {
                 label.layer.cornerRadius = 5
                 label.layer.masksToBounds = true
                 label.isAccessibilityElement = true
-                label.accessibilityLabel = key.label.isEmpty ? "space" : key.label
+                label.accessibilityLabel = key.isClick ? "Click" : key.label.isEmpty ? "space" : key.label
+                if key.isClick { label.backgroundColor = UIColor(white: 0.32, alpha: 1) }
                 label.accessibilityTraits = .keyboardKey
                 addSubview(label)
                 keyViews.append((key, label))
@@ -933,7 +959,7 @@ final class MacKeyboardView: UIView {
         for touch in touches {
             guard let index = keyIndex(at: touch.location(in: self)) else { continue }
             held[ObjectIdentifier(touch)] = index
-            session?.keyDown(keyViews[index].key.code)
+            if keyViews[index].key.isClick { session?.pressPointer() } else { session?.keyDown(keyViews[index].key.code) }
             keyViews[index].view.backgroundColor = UIColor(white: 0.45, alpha: 1)
             UIImpactFeedbackGenerator(style: .light).impactOccurred(intensity: 0.5)
         }
@@ -945,8 +971,9 @@ final class MacKeyboardView: UIView {
     private func lift(_ touches: Set<UITouch>) {
         for touch in touches {
             guard let index = held.removeValue(forKey: ObjectIdentifier(touch)) else { continue }
-            session?.keyUp(keyViews[index].key.code)
-            keyViews[index].view.backgroundColor = UIColor(white: 0.22, alpha: 1)
+            let key = keyViews[index].key
+            if key.isClick { session?.releasePointer() } else { session?.keyUp(key.code) }
+            keyViews[index].view.backgroundColor = UIColor(white: key.isClick ? 0.32 : 0.22, alpha: 1)
         }
     }
 }
