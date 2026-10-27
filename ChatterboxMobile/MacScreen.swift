@@ -137,7 +137,10 @@ final class MacScreenSession: NSObject {
         attempts += 1
         step = "Signing in\u{2026}"
         let settings = VNCConnection.Settings(isDebugLoggingEnabled: false, hostname: host, port: 5900, isShared: true,
-                                              isScalingEnabled: false, useDisplayLink: false, inputMode: .none,
+                                              isScalingEnabled: false, useDisplayLink: false,
+                                              // Not .none: RoyalVNC drops every mouse and key event then (the
+                                              // other modes only change Mac-side shortcut handling).
+                                              inputMode: .forwardKeyboardShortcutsEvenIfInUseLocally,
                                               isClipboardRedirectionEnabled: false,
                                               colorDepth: quality == .sharp ? .depth24Bit : .depth16Bit, frameEncodings: .default)
         let connection = VNCConnection(settings: settings)
