@@ -881,16 +881,24 @@ final class MacKeyboardView: UIView {
         var isModifier = false
         /// The mouse button, at the pointer: held down while the key is.
         var isClick = false
+        /// What the key shows while Shift is held ("!" on the 1 key).
+        var shifted: String? = nil
     }
 
+    /// US layout: each key's character with Shift.
+    private static let shiftedSymbols: [Character: String] = [
+        "`": "~", "1": "!", "2": "@", "3": "#", "4": "$", "5": "%", "6": "^", "7": "&", "8": "*", "9": "(", "0": ")",
+        "-": "_", "=": "+", "[": "{", "]": "}", "\\": "|", ";": ":", "'": "\"", ",": "<", ".": ">", "/": "?",
+    ]
+
     private static func letters(_ text: String) -> [Key] {
-        text.map { Key(label: String($0).uppercased(), code: VNCKeyCode(asciiCharacter: $0.asciiValue ?? 32), width: 1) }
+        text.map { Key(label: String($0).uppercased(), code: VNCKeyCode(asciiCharacter: $0.asciiValue ?? 32), width: 1, shifted: shiftedSymbols[$0]) }
     }
 
     private static let rows: [[Key]] = [
         [Key(label: "esc", code: .escape, width: 1.5)]
             + [VNCKeyCode.f1, .f2, .f3, .f4, .f5, .f6, .f7, .f8, .f9, .f10, .f11, .f12].enumerated().map { Key(label: "F\($0.offset + 1)", code: $0.element, width: 1) },
-        letters("`1234567890-=").map { Key(label: $0.label, code: $0.code, width: 1) } + [Key(label: "delete", code: .delete, width: 1.5)],
+        letters("`1234567890-=") + [Key(label: "delete", code: .delete, width: 1.5)],
         [Key(label: "tab", code: .tab, width: 1.5)] + letters("qwertyuiop[]\\"),
         [Key(label: "caps", code: VNCKeyCode(0xffe5), width: 1.75)] + letters("asdfghjkl;'") + [Key(label: "return", code: .return, width: 1.75)],
         [Key(label: "shift", code: .shift, width: 2.25, isModifier: true)] + letters("zxcvbnm,./") + [Key(label: "shift", code: .rightShift, width: 2.25, isModifier: true)],
@@ -951,6 +959,17 @@ final class MacKeyboardView: UIView {
         }
     }
 
+    private static func isShift(_ key: Key) -> Bool { key.code == .shift || key.code == .rightShift }
+
+    /// The symbols each key types while a Shift is held, its own character otherwise.
+    private func showShifted() {
+        let shifted = held.values.contains { Self.isShift(keyViews[$0].key) }
+        for (key, view) in keyViews where key.shifted != nil {
+            view.text = shifted ? key.shifted : key.label
+            view.accessibilityLabel = view.text
+        }
+    }
+
     private func keyIndex(at point: CGPoint) -> Int? {
         keyViews.firstIndex { $0.view.frame.insetBy(dx: -2, dy: -2).contains(point) }
     }
@@ -960,6 +979,7 @@ final class MacKeyboardView: UIView {
             guard let index = keyIndex(at: touch.location(in: self)) else { continue }
             held[ObjectIdentifier(touch)] = index
             if keyViews[index].key.isClick { session?.pressPointer() } else { session?.keyDown(keyViews[index].key.code) }
+            if Self.isShift(keyViews[index].key) { showShifted() }
             keyViews[index].view.backgroundColor = UIColor(white: 0.45, alpha: 1)
             UIImpactFeedbackGenerator(style: .light).impactOccurred(intensity: 0.5)
         }
@@ -973,6 +993,7 @@ final class MacKeyboardView: UIView {
             guard let index = held.removeValue(forKey: ObjectIdentifier(touch)) else { continue }
             let key = keyViews[index].key
             if key.isClick { session?.releasePointer() } else { session?.keyUp(key.code) }
+            if Self.isShift(key) { showShifted() }
             keyViews[index].view.backgroundColor = UIColor(white: key.isClick ? 0.32 : 0.22, alpha: 1)
         }
     }
