@@ -911,10 +911,11 @@ final class MacKeyboardView: UIView {
     ]
 
     private var keyViews: [(key: Key, view: UILabel)] = []
-    /// Which key each finger is on.
+    /// Which key each finger is on, and the code it sent (so its key-up matches).
     private var held: [ObjectIdentifier: Int] = [:]
-    /// Caps Lock as this keyboard last set it: Screen Sharing doesn't say the Mac's own state,
-    /// so it starts off and each press of caps flips it.
+    private var sent: [ObjectIdentifier: VNCKeyCode] = [:]
+    /// Caps Lock, kept on this keyboard: it capitalizes the letters this keyboard sends rather
+    /// than toggling the Mac's own, whose state Screen Sharing doesn't report.
     private var capsLock = false
     private let capsLight = UIView()
     private static let capsCode = VNCKeyCode(0xffe5)
@@ -989,6 +990,15 @@ final class MacKeyboardView: UIView {
         keyViews.first { $0.key.code == Self.capsCode }?.view.accessibilityValue = capsLock ? "on" : "off"
     }
 
+    /// The code for what a key types now: its shifted character with Shift held (letters also
+    /// with Caps Lock), else its own.
+    private func typed(_ key: Key) -> VNCKeyCode {
+        guard let shifted = key.shifted, shifted.count == 1, let ascii = shifted.first?.asciiValue else { return key.code }
+        let shiftHeld = held.values.contains { Self.isShift(keyViews[$0].key) }
+        let letter = key.label.first?.isLetter == true
+        return shiftHeld || (letter && capsLock) ? VNCKeyCode(asciiCharacter: ascii) : key.code
+    }
+
     private func keyIndex(at point: CGPoint) -> Int? {
         keyViews.firstIndex { $0.view.frame.insetBy(dx: -2, dy: -2).contains(point) }
     }
@@ -997,8 +1007,18 @@ final class MacKeyboardView: UIView {
         for touch in touches {
             guard let index = keyIndex(at: touch.location(in: self)) else { continue }
             held[ObjectIdentifier(touch)] = index
-            if keyViews[index].key.isClick { session?.pressPointer() } else { session?.keyDown(keyViews[index].key.code) }
-            if keyViews[index].key.code == Self.capsCode { capsLock.toggle() }
+            let key = keyViews[index].key
+            if key.isClick {
+                session?.pressPointer()
+            } else if key.code == Self.capsCode {
+                capsLock.toggle()
+            } else {
+                // Screen Sharing types the character it's sent, whatever Shift is doing (as
+                // RoyalVNC's own keyboard does): Shift+1 goes as "!", Shift+A as "A".
+                let code = typed(key)
+                sent[ObjectIdentifier(touch)] = code
+                session?.keyDown(code)
+            }
             if Self.isShift(keyViews[index].key) || keyViews[index].key.code == Self.capsCode { showShifted() }
             keyViews[index].view.backgroundColor = UIColor(white: 0.45, alpha: 1)
             UIImpactFeedbackGenerator(style: .light).impactOccurred(intensity: 0.5)
@@ -1012,7 +1032,8 @@ final class MacKeyboardView: UIView {
         for touch in touches {
             guard let index = held.removeValue(forKey: ObjectIdentifier(touch)) else { continue }
             let key = keyViews[index].key
-            if key.isClick { session?.releasePointer() } else { session?.keyUp(key.code) }
+            if key.isClick { session?.releasePointer() }
+            else if let code = sent.removeValue(forKey: ObjectIdentifier(touch)) { session?.keyUp(code) }
             if Self.isShift(key) { showShifted() }
             keyViews[index].view.backgroundColor = UIColor(white: key.isClick ? 0.32 : 0.22, alpha: 1)
         }
