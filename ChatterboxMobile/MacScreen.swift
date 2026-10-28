@@ -892,7 +892,8 @@ final class MacKeyboardView: UIView {
     ]
 
     private static func letters(_ text: String) -> [Key] {
-        text.map { Key(label: String($0).uppercased(), code: VNCKeyCode(asciiCharacter: $0.asciiValue ?? 32), width: 1, shifted: shiftedSymbols[$0]) }
+        text.map { Key(label: String($0), code: VNCKeyCode(asciiCharacter: $0.asciiValue ?? 32), width: 1,
+                       shifted: $0.isLetter ? String($0).uppercased() : shiftedSymbols[$0]) }
     }
 
     private static let rows: [[Key]] = [
@@ -912,6 +913,11 @@ final class MacKeyboardView: UIView {
     private var keyViews: [(key: Key, view: UILabel)] = []
     /// Which key each finger is on.
     private var held: [ObjectIdentifier: Int] = [:]
+    /// Caps Lock as this keyboard last set it: Screen Sharing doesn't say the Mac's own state,
+    /// so it starts off and each press of caps flips it.
+    private var capsLock = false
+    private let capsLight = UIView()
+    private static let capsCode = VNCKeyCode(0xffe5)
 
     init(session: MacScreenSession) {
         self.session = session
@@ -934,6 +940,14 @@ final class MacKeyboardView: UIView {
                 label.accessibilityTraits = .keyboardKey
                 addSubview(label)
                 keyViews.append((key, label))
+                if key.code == Self.capsCode {
+                    // The light a Mac keyboard has on its caps lock key.
+                    capsLight.backgroundColor = .systemGreen
+                    capsLight.layer.cornerRadius = 2.5
+                    capsLight.isHidden = true
+                    label.addSubview(capsLight)
+                    label.accessibilityValue = "off"
+                }
             }
         }
     }
@@ -953,6 +967,7 @@ final class MacKeyboardView: UIView {
                 let width = unit * key.width
                 keyViews[index].view.frame = CGRect(x: x, y: y, width: width, height: rowHeight)
                 keyViews[index].view.font = .systemFont(ofSize: min(rowHeight * 0.4, 15), weight: .medium)
+                if key.code == Self.capsCode { capsLight.frame = CGRect(x: 6, y: 6, width: 5, height: 5) }
                 x += width + gap
                 index += 1
             }
@@ -961,13 +976,17 @@ final class MacKeyboardView: UIView {
 
     private static func isShift(_ key: Key) -> Bool { key.code == .shift || key.code == .rightShift }
 
-    /// The symbols each key types while a Shift is held, its own character otherwise.
+    /// What each key types now: letters in capitals with Shift or Caps Lock, symbols ("!" on
+    /// the 1) with Shift; and the caps light.
     private func showShifted() {
         let shifted = held.values.contains { Self.isShift(keyViews[$0].key) }
         for (key, view) in keyViews where key.shifted != nil {
-            view.text = shifted ? key.shifted : key.label
+            let letter = key.label.first?.isLetter == true
+            view.text = (letter ? shifted || capsLock : shifted) ? key.shifted : key.label
             view.accessibilityLabel = view.text
         }
+        capsLight.isHidden = !capsLock
+        keyViews.first { $0.key.code == Self.capsCode }?.view.accessibilityValue = capsLock ? "on" : "off"
     }
 
     private func keyIndex(at point: CGPoint) -> Int? {
@@ -979,7 +998,8 @@ final class MacKeyboardView: UIView {
             guard let index = keyIndex(at: touch.location(in: self)) else { continue }
             held[ObjectIdentifier(touch)] = index
             if keyViews[index].key.isClick { session?.pressPointer() } else { session?.keyDown(keyViews[index].key.code) }
-            if Self.isShift(keyViews[index].key) { showShifted() }
+            if keyViews[index].key.code == Self.capsCode { capsLock.toggle() }
+            if Self.isShift(keyViews[index].key) || keyViews[index].key.code == Self.capsCode { showShifted() }
             keyViews[index].view.backgroundColor = UIColor(white: 0.45, alpha: 1)
             UIImpactFeedbackGenerator(style: .light).impactOccurred(intensity: 0.5)
         }
