@@ -1149,8 +1149,23 @@ final class AppModel {
             return false
         }
     }
+    /// Claude's connector is signing in: Allow, on this Mac, before it can use Chatterbox.
+    private func askToAllowConnector(_ id: String, client: String) {
+        DispatchQueue.main.async {
+            NSApp.activate(ignoringOtherApps: true)
+            let alert = NSAlert()
+            alert.messageText = "Allow \(client) to use Chatterbox?"
+            alert.informativeText = "It will see your sessions and can send messages, start sessions, answer approvals and stop replies on this Mac, as the iPhone app can. Allow only if you just added the Chatterbox connector in Claude. You can remove it later in Settings, with your paired iPhones."
+            alert.addButton(withTitle: "Allow")
+            alert.addButton(withTitle: "Don't Allow")
+            let allow = alert.runModal() == .alertFirstButtonReturn
+            RuntimeClient.shared.command("connector", body: ["request": .string(id), "allow": .bool(allow)])
+        }
+    }
+
     private func runtimeEvent(_ event:RuntimeEvent) {
         if event.kind=="pin.open",let raw=event.payload,let pin=try? raw.decode(Pin.self){PinStore.shared.open(pin);return}
+        if event.kind=="connector.request",let id=event.payload?["id"]?.string,let client=event.payload?["client"]?.string{askToAllowConnector(id,client:client);return}
         // Pinned or unpinned on the phone: the service sends the new list.
         if event.kind=="pins.changed",let ids=event.payload?.array {pinnedThreadIDs=ids.compactMap{$0.string.flatMap(UUID.init(uuidString:))};return}
         if event.kind == "runtime.resync" { projectionRevisions.removeAll() }

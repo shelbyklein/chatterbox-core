@@ -590,6 +590,23 @@ final class CompanionServer {
         return .json(Companion.PairResponse(token: token, macName: Host.current().localizedName ?? "Mac", addresses: Self.addresses))
     }
 
+    /// A token for a connector (Claude, through ConnectorServer): paired like a phone, listed
+    /// with the phones in Settings, and removed the same way.
+    func issueToken(name: String) -> String {
+        var bytes = [UInt8](repeating: 0, count: 32)
+        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        let token = bytes.map { String(format: "%02x", $0) }.joined()
+        devices.append(Device(name: String(name.prefix(60)), tokenHash: Self.hash(token)))
+        saveDevices()
+        return token
+    }
+
+    func device(forToken token: String) -> Device? {
+        guard !token.isEmpty else { return nil }
+        let hash = Self.hash(token)
+        return devices.first { $0.tokenHash == hash }
+    }
+
     private func authorize(_ request: HTTPRequest) -> Device? {
         guard let token = request.headers[Companion.tokenHeader.lowercased()], !token.isEmpty else { return nil }
         let hash = Self.hash(token)
