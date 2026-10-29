@@ -6,7 +6,8 @@ import Foundation
 enum ConnectorTools {
     static let instructions = """
     Chatterbox runs Claude Code and Codex sessions on Shelby's Mac. Use list_sessions to see them \
-    (what's working, what's waiting on Shelby), read_session for a session's latest messages, \
+    (what's working, what's waiting on Shelby), list_places for the Studios and projects work goes \
+    in (new work always goes in the one it belongs to; ask Shelby when unsure), read_session for a session's latest messages, \
     send_message to reply in one, start_session for a new one, answer to approve, deny or answer \
     questions a session is waiting on, and stop_reply to stop one. read_session lists each \
     message's files: show_image shows a picture, share_file makes a download link (24 hours) \
@@ -23,8 +24,12 @@ enum ConnectorTools {
              required: ["session_id"]),
         tool("send_message", "Sends a message in a session, as Shelby typing it. While it's working, the message waits for the reply to finish.",
              ["session_id": prop("string", "From list_sessions"), "text": prop("string", "The message")], required: ["session_id", "text"]),
-        tool("start_session", "Starts a new session and sends its first message. Optionally in a Studio, by name, or on Codex.",
-             ["text": prop("string", "The first message"), "studio": prop("string", "A Studio's name (optional)"),
+        tool("list_places", "Where work can go: every Studio and project, with what belongs in each (its instructions or brief). Read before start_session.",
+             [:], required: []),
+        tool("start_session", "Starts a new session in a place from list_places and sends its first message. Work belongs in a Studio or project: pick the one that fits from what belongs there, and if none clearly fits, ask Shelby instead of guessing. A loose session (no place) needs loose_reason.",
+             ["text": prop("string", "The first message: the task, the files, and what done looks like"),
+              "place": prop("string", "A Studio's or project's name, from list_places"),
+              "loose_reason": prop("string", "Only without a place: why this belongs in no Studio or project"),
               "agent": prop("string", "claude (default) or codex", ["claude", "codex"]), "title": prop("string", "A name (optional)")],
              required: ["text"]),
         tool("answer", "Answers what a session is waiting on: an approval (approve, approve_for_session or deny) or its questions (question id to chosen labels).",
@@ -68,18 +73,27 @@ enum ConnectorTools {
         case "send_message":
             guard UUID(uuidString: session) != nil, !text("text").isEmpty else { return ("Give a session_id and the text.", true) }
             return await detailResult(request("POST", "/v1/chats/\(session)/messages", body: Companion.SendRequest(text: text("text")), token: token), "Sent.")
+        case "list_places":
+            guard case .ok(let list) = await request("GET", "/v1/chats", token: token, as: Companion.ChatList.self) else { return failure }
+            return (places(list), false)
         case "start_session":
             guard !text("text").isEmpty else { return ("Give the first message.", true) }
-            var studio: UUID?
-            if !text("studio").isEmpty {
+            // Work goes in its place: a Studio, or a project (as a Sidechat of it).
+            let name = text("place").isEmpty ? text("studio") : text("place")
+            var studio: UUID?, project: UUID?
+            if !name.isEmpty {
                 guard case .ok(let list) = await request("GET", "/v1/chats", token: token, as: Companion.ChatList.self) else { return failure }
-                let studios = list.groups.filter { $0.kind == .studio }
-                guard let match = studios.first(where: { $0.title.localizedCaseInsensitiveCompare(text("studio")) == .orderedSame }) else {
-                    return ("No Studio named \(text("studio")). Studios: \(studios.map(\.title).joined(separator: ", ")).", true)
+                if let match = list.groups.first(where: { $0.kind == .studio && $0.title.localizedCaseInsensitiveCompare(name) == .orderedSame }) {
+                    studio = match.studioID ?? UUID(uuidString: String(match.id.dropFirst("studio-".count)))
+                } else if let match = projects(list).first(where: { ($0.project ?? $0.title).localizedCaseInsensitiveCompare(name) == .orderedSame }) {
+                    project = match.id
+                } else {
+                    return ("No Studio or project named \(name). Places:\n\(places(list))", true)
                 }
-                studio = match.studioID ?? UUID(uuidString: String(match.id.dropFirst("studio-".count)))
+            } else if text("loose_reason").isEmpty {
+                return ("Give a place (a Studio or project from list_places). If none fits, ask Shelby where it goes; start it loose only with loose_reason.", true)
             }
-            let new = Companion.NewChatRequest(studio: studio, backend: text("agent").isEmpty ? nil : text("agent"),
+            let new = Companion.NewChatRequest(studio: studio, backend: text("agent").isEmpty ? nil : text("agent"), project: project,
                                                title: text("title").isEmpty ? nil : text("title"))
             guard case .ok(let detail) = await request("POST", "/v1/chats", body: new, token: token, as: Companion.ChatDetail.self) else { return failure }
             let sent = await request("POST", "/v1/chats/\(detail.summary.id.uuidString)/messages", body: Companion.SendRequest(text: text("text")), token: token)
@@ -173,6 +187,22 @@ enum ConnectorTools {
         if let efforts = current?.efforts, !efforts.isEmpty { lines.append("Efforts for \(current?.name ?? "this model"): \(efforts.joined(separator: ", "))") }
         if let fast = options.fastMode { lines.append("Fast mode: \(fast ? "on" : "off")") }
         return (lines.joined(separator: "\n"), false)
+    }
+
+    /// Projects' own sessions: not their Sidechats or worktrees.
+    private static func projects(_ list: Companion.ChatList) -> [Companion.ChatSummary] {
+        list.groups.filter { $0.kind == .projects }.flatMap(\.chats).filter { $0.sidechatOf == nil && $0.sidequestOf == nil && $0.worktreeBranch == nil }
+    }
+
+    private static func places(_ list: Companion.ChatList) -> String {
+        func clip(_ text: String?) -> String {
+            guard let text = text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return "" }
+            return " — " + String(text.replacingOccurrences(of: "\n", with: " ").prefix(300))
+        }
+        let studios = list.groups.filter { $0.kind == .studio }.map { "- Studio \($0.title)\(clip($0.instructions))" }
+        let projects = projects(list).map { "- Project \($0.project ?? $0.title)\(clip($0.brief ?? $0.subtitle))" }
+        let all = studios + projects
+        return all.isEmpty ? "No Studios or projects yet." : all.joined(separator: "\n")
     }
 
     // MARK: - Shaping answers
