@@ -8,8 +8,11 @@ enum ConnectorTools {
     Chatterbox runs Claude Code and Codex sessions on Shelby's Mac. Use list_sessions to see them \
     (what's working, what's waiting on Shelby), read_session for a session's latest messages, \
     send_message to reply in one, start_session for a new one, answer to approve, deny or answer \
-    questions a session is waiting on, and stop_reply to stop one. Sessions act on the Mac: \
-    before sending work, starting a session or approving anything, confirm with Shelby.
+    questions a session is waiting on, and stop_reply to stop one. read_session lists each \
+    message's files: show_image shows a picture, share_file makes a download link (24 hours) \
+    for any file. session_settings shows or changes a session's agent, model, effort and Fast \
+    mode. Sessions act on the Mac: before sending work, starting a session, approving anything \
+    or changing a model, confirm with Shelby.
     """
 
     static let list: [JSON] = [
@@ -31,7 +34,23 @@ enum ConnectorTools {
                           "additionalProperties": ["type": "array", "items": ["type": "string"]]]],
              required: ["session_id", "item_id"]),
         tool("stop_reply", "Stops the reply a session is working on.", ["session_id": prop("string", "From list_sessions")], required: ["session_id"]),
+        tool("show_image", "Shows a picture from a session (a render, a screenshot), to look at or show Shelby.",
+             ["session_id": prop("string", "From list_sessions"), "file_id": prop("string", "An image's id, from read_session"),
+              "size": prop("integer", "Longest side in pixels (default 1600, 400 to 2400)")], required: ["session_id", "file_id"]),
+        tool("share_file", "A download link for a file from a session (an image, PDF, document, zip), for Shelby. Anyone with the link can download it for 24 hours.",
+             ["session_id": prop("string", "From list_sessions"), "file_id": prop("string", "A file's id, from read_session")], required: ["session_id", "file_id"]),
+        tool("session_settings", "Shows a session's agent, model, effort and Fast mode and the choices; given any of them, changes them. Changes apply from the next message.",
+             ["session_id": prop("string", "From list_sessions"), "agent": prop("string", "claude or codex", ["claude", "codex"]),
+              "model": prop("string", "A model's name or id from the choices"), "effort": prop("string", "An effort level from the choices"),
+              "fast_mode": prop("boolean", "Fast mode on or off, where the model has it")], required: ["session_id"]),
     ]
+
+    /// The tool's answer as MCP content (text, or an image), and whether it failed.
+    static func content(_ name: String, arguments: JSON, token: String) async -> ([JSON], Bool) {
+        if name == "show_image" { return await image(arguments, token: token) }
+        let (text, failed) = await call(name, arguments: arguments, token: token)
+        return ([["type": "text", "text": .string(text)]], failed)
+    }
 
     static func call(_ name: String, arguments: JSON, token: String) async -> (String, Bool) {
         func text(_ key: String) -> String { arguments[key]?.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
@@ -77,9 +96,83 @@ enum ConnectorTools {
         case "stop_reply":
             guard UUID(uuidString: session) != nil else { return ("Give a session_id from list_sessions.", true) }
             return await detailResult(request("POST", "/v1/chats/\(session)/stop", body: [String: String](), token: token), "Stopped.")
+        case "share_file":
+            guard let id = UUID(uuidString: session), let file = UUID(uuidString: text("file_id")) else { return ("Give the session_id and file_id from read_session.", true) }
+            guard case .ok(let detail) = await request("GET", "/v1/chats/\(session)", token: token, as: Companion.ChatDetail.self) else { return ("That session is gone.", true) }
+            guard let found = detail.items.flatMap(\.attachments).first(where: { $0.id == file }) else { return ("No file with that id in the session's recent messages.", true) }
+            return ("\(found.name): \(ConnectorServer.shared.share(session: id, file: file, name: found.name, token: token))\nAnyone with the link can download it for 24 hours.", false)
+        case "session_settings":
+            guard UUID(uuidString: session) != nil else { return ("Give a session_id from list_sessions.", true) }
+            return await settings(session, arguments: arguments, token: token)
         default:
             return ("No tool named \(name).", true)
         }
+    }
+
+    // MARK: - Images and settings
+
+    private static func image(_ arguments: JSON, token: String) async -> ([JSON], Bool) {
+        let session = arguments["session_id"]?.string ?? "", file = arguments["file_id"]?.string ?? ""
+        func failed(_ text: String) -> ([JSON], Bool) { ([["type": "text", "text": .string(text)]], true) }
+        guard UUID(uuidString: session) != nil, UUID(uuidString: file) != nil else { return failed("Give the session_id and file_id from read_session.") }
+        let size = min(max(arguments["size"]?.int ?? 1600, 400), 2400)
+        var parts = URLComponents(); parts.path = "/v1/chats/\(session)/files/\(file)"
+        let request = HTTPRequest(method: "GET", path: parts.path, query: ["max": String(size)],
+                                  headers: [Companion.tokenHeader.lowercased(): token], body: Data())
+        let response = await CompanionServer.shared.respondAsync(to: request)
+        guard response.status == 200 else { return failed(message(response)) }
+        // Small enough already: the original comes as a file instead of resized bytes.
+        let data = response.fileURL.flatMap { try? Data(contentsOf: $0) } ?? response.body
+        guard response.contentType.hasPrefix("image/"), !data.isEmpty else { return failed("That file isn't a picture; use share_file for a link to it.") }
+        guard data.count <= 5_000_000 else { return failed("That picture is too large to show; try a smaller size, or share_file for a link.") }
+        return ([["type": "image", "data": .string(data.base64EncodedString()), "mimeType": .string(response.contentType)]], false)
+    }
+
+    /// Shows the settings and choices; with changes, applies them the way the phone does.
+    private static func settings(_ session: String, arguments: JSON, token: String) async -> (String, Bool) {
+        guard case .ok(var detail) = await request("GET", "/v1/chats/\(session)", token: token, as: Companion.ChatDetail.self),
+              var options = detail.options else { return ("That session is gone.", true) }
+        let agent = arguments["agent"]?.string?.lowercased(), modelName = arguments["model"]?.string, effort = arguments["effort"]?.string?.lowercased()
+        let fast = arguments["fast_mode"]?.bool
+        if agent != nil || modelName != nil || effort != nil || fast != nil {
+            let target = agent ?? options.backend
+            var change = Companion.SettingsRequest()
+            if target != options.backend { change.backend = target }
+            if let modelName {
+                let models = target == "codex" ? options.codexModels : options.claudeModels
+                guard let model = models.first(where: { $0.id.caseInsensitiveCompare(modelName) == .orderedSame || $0.name.caseInsensitiveCompare(modelName) == .orderedSame })
+                        ?? models.first(where: { $0.name.localizedCaseInsensitiveContains(modelName) }) else {
+                    return ("No \(target) model called \(modelName). Choices: \(models.map(\.name).joined(separator: ", ")).", true)
+                }
+                change.model = model.id
+            } else if change.backend != nil {
+                change.model = (target == "codex" ? options.codexModels : options.claudeModels).first?.id
+            }
+            let applied = await request("POST", "/v1/chats/\(session)/settings", body: change, token: token, as: Companion.ChatDetail.self)
+            guard case .ok(let updated) = applied else { if case .failed(let text) = applied { return (text, true) }; return failure }
+            detail = updated; options = updated.options ?? options
+            var follow = Companion.SettingsRequest()
+            if let effort {
+                let levels = (options.backend == "codex" ? options.codexModels : options.claudeModels).first { $0.id == options.model }?.efforts ?? []
+                guard levels.isEmpty || levels.contains(effort) else { return ("Model changed, but \(effort) isn't one of its efforts: \(levels.joined(separator: ", ")).", true) }
+                follow.effort = effort
+            }
+            if let fast { follow.fastMode = fast }
+            if follow.effort != nil || follow.fastMode != nil {
+                let second = await request("POST", "/v1/chats/\(session)/settings", body: follow, token: token, as: Companion.ChatDetail.self)
+                guard case .ok(let again) = second else { if case .failed(let text) = second { return (text, true) }; return failure }
+                detail = again; options = again.options ?? options
+            }
+            return ("Changed. Now: \(detail.settings)", false)
+        }
+        let models = options.backend == "codex" ? options.codexModels : options.claudeModels
+        let current = models.first { $0.id == options.model }
+        var lines = ["Now: \(detail.settings)", "Agent: \(options.backend)"]
+        lines.append("Claude models: \(options.claudeModels.map(\.name).joined(separator: ", "))")
+        lines.append("Codex models: \(options.codexModels.map(\.name).joined(separator: ", "))")
+        if let efforts = current?.efforts, !efforts.isEmpty { lines.append("Efforts for \(current?.name ?? "this model"): \(efforts.joined(separator: ", "))") }
+        if let fast = options.fastMode { lines.append("Fast mode: \(fast ? "on" : "off")") }
+        return (lines.joined(separator: "\n"), false)
     }
 
     // MARK: - Shaping answers
@@ -102,7 +195,7 @@ enum ConnectorTools {
     private static func transcript(_ detail: Companion.ChatDetail, last: Int) -> String {
         let summary = detail.summary
         var lines = ["\(summary.title) [\(summary.id.uuidString)] · \(detail.settings) · \(summary.isRunning ? "working" : summary.isWaitingOnYou ? "waiting on Shelby" : "idle")", ""]
-        let shown = detail.items.filter { [.user, .assistant, .approval, .questions, .notice].contains($0.kind) && !$0.isCommentary }
+        let shown = detail.items.filter { ([.user, .assistant, .approval, .questions, .notice].contains($0.kind) && !$0.isCommentary) || !$0.attachments.isEmpty }
         for item in shown.suffix(last) {
             switch item.kind {
             case .user: lines.append("Shelby: \(item.text)")
@@ -117,6 +210,9 @@ enum ConnectorTools {
                     lines.append("  \(q.id): \(q.question) Options: \(q.options.map(\.label).joined(separator: " | "))\(q.multiSelect ? " (several)" : "")")
                 }
             default: lines.append("Note: \(item.text)")
+            }
+            for file in item.attachments {
+                lines.append("  File [\(file.id.uuidString)] \(file.name)\(file.isImage ? " (image: show_image)" : "")")
             }
             lines.append("")
         }

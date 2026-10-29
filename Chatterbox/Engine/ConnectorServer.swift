@@ -34,6 +34,9 @@ final class ConnectorServer {
     private struct Pending { var client: Client; var redirect: String; var state: String?; var challenge: String; var created = Date(); var decision: Bool? }
     private struct Grant { var client: Client; var redirect: String; var challenge: String; var created = Date() }
     private var clients: [String: Client] = [:]
+    /// Files Claude shared as links: who may fetch them is whoever has the link, for a day.
+    private struct Share { var session: UUID; var file: UUID; var token: String; var created = Date() }
+    private var shares: [String: Share] = [:]
     private var pending: [UUID: Pending] = [:]
     private var codes: [String: Grant] = [:]
 
@@ -80,7 +83,11 @@ final class ConnectorServer {
                 switch HTTPRequest.parse(buffer) {
                 case .request(let request):
                     let response = await self.respond(to: request)
-                    connection.send(content: response.data, completion: .contentProcessed { _ in connection.cancel() })
+                    if let file = response.fileURL {
+                        HTTPFileTransfer(connection: connection, url: file, contentType: response.contentType).start()
+                    } else {
+                        connection.send(content: response.data, completion: .contentProcessed { _ in connection.cancel() })
+                    }
                 case .invalid:
                     connection.send(content: HTTPResponse.error(400, "Bad request.").data, completion: .contentProcessed { _ in connection.cancel() })
                 case .incomplete where isComplete: connection.cancel()
@@ -108,6 +115,7 @@ final class ConnectorServer {
         case ("GET", "/authorize/status"): return status(request)
         case ("POST", "/token"): return token(request)
         case ("POST", "/mcp"), ("POST", "/"): return await mcp(request)
+        case ("GET", let path) where path.hasPrefix("/share/"): return await shared(path)
         case ("GET", "/mcp"), ("DELETE", "/mcp"): return HTTPResponse(status: 405, contentType: "text/plain", body: Data("Method not allowed".utf8))
         default: return .error(404, "Not found")
         }
@@ -189,8 +197,30 @@ final class ConnectorServer {
         return .object(["access_token": .string(token), "token_type": .string("Bearer")])
     }
 
+    /// A link to a session's file, good for 24 hours (or until the service restarts).
+    func share(session: UUID, file: UUID, name: String, token: String) -> String {
+        let key = Self.random()
+        shares[key] = Share(session: session, file: file, token: token)
+        let safe = name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))) ?? "file"
+        return "\(Self.publicURL)/share/\(key)/\(safe)"
+    }
+
+    private func shared(_ path: String) async -> HTTPResponse {
+        let parts = path.split(separator: "/").map(String.init)
+        guard parts.count >= 2, let share = shares[parts[1]] else {
+            return .page(status: 404, title: "Link expired", message: "This file link has expired or doesn't exist. Ask Claude to share the file again.")
+        }
+        // Fetched as the connector that shared it: a removed connector's links stop working.
+        let request = HTTPRequest(method: "GET", path: "/v1/chats/\(share.session.uuidString)/files/\(share.file.uuidString)", query: [:],
+                                  headers: [Companion.tokenHeader.lowercased(): share.token], body: Data())
+        let response = await CompanionServer.shared.respondAsync(to: request)
+        guard response.status == 200 else { return .page(status: 404, title: "File gone", message: "That file isn't in the session any more.") }
+        return response
+    }
+
     private func expire() {
         let now = Date()
+        shares = shares.filter { now.timeIntervalSince($0.value.created) < 86_400 }
         pending = pending.filter { now.timeIntervalSince($0.value.created) < 300 }
         codes = codes.filter { now.timeIntervalSince($0.value.created) < 120 }
     }
@@ -221,8 +251,8 @@ final class ConnectorServer {
         case "tools/call":
             let name = message["params"]?["name"]?.string ?? ""
             let arguments = message["params"]?["arguments"] ?? [:]
-            let (text, failed) = await ConnectorTools.call(name, arguments: arguments, token: bearer)
-            return .rpc(id: id, result: ["content": .array([["type": "text", "text": .string(text)]]), "isError": .bool(failed)])
+            let (content, failed) = await ConnectorTools.content(name, arguments: arguments, token: bearer)
+            return .rpc(id: id, result: ["content": .array(content), "isError": .bool(failed)])
         default: return .rpc(id: id, error: (-32601, "Method not found"))
         }
     }
@@ -242,7 +272,7 @@ final class ConnectorServer {
         Data(SHA256.hash(data: Data(verifier.utf8))).base64EncodedString()
             .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
     }
-    private static func random() -> String {
+    static func random() -> String {
         var bytes = [UInt8](repeating: 0, count: 24)
         _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
         return bytes.map { String(format: "%02x", $0) }.joined()
