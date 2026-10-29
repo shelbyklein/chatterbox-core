@@ -617,6 +617,7 @@ struct ChatDetailView: View {
             if let detail, detail.turnStartedAt != nil || !(detail.backgroundTasks ?? []).isEmpty || detail.contextFraction != nil {
                 ChatStatusBar(detail: detail).padding(.horizontal, 4)
             }
+            MobilePlaceSuggestion(summary: summary, firstMessage: detail?.items.first { $0.kind == .user }?.text) { history.apply($0) }
             if !pendingImages.isEmpty { pendingTray }
             if let steps = detail?.nextSteps, !steps.isEmpty, !summary.isRunning, dismissedSteps != steps { nextStepsChips(steps) }
             if draft.hasPrefix("!") {
@@ -1051,3 +1052,54 @@ private struct MobileBriefEditor: View {
     }
 }
 
+
+/// A loose session whose first message fits one of the Studios: offer to move it there.
+struct MobilePlaceSuggestion: View {
+    let summary: Companion.ChatSummary
+    let firstMessage: String?
+    let moved: (Companion.ChatDetail) -> Void
+    @Environment(MobileStore.self) private var store
+    @State private var dismissed = false
+    @State private var moving = false
+    @State private var problem: String?
+
+    private var studio: Companion.ChatGroup? {
+        guard !dismissed, summary.canPromote == true, !PlaceSuggestion.isDismissed(summary.id), let firstMessage else { return nil }
+        let studios = (store.chatList?.groups ?? []).filter { $0.kind == .studio && $0.studioID != nil }
+        let places = studios.map { PlaceSuggestion.Place(id: $0.studioID!, name: $0.title, instructions: $0.instructions ?? "") }
+        return PlaceSuggestion.best(for: firstMessage, among: places).flatMap { best in studios.first { $0.studioID == best.id } }
+    }
+
+    var body: some View {
+        if let studio, let id = studio.studioID {
+            VStack(alignment: .leading, spacing: 8) {
+                Label { Text("This looks like **\(studio.title)** work.") } icon: { Image(systemName: "paintpalette") }
+                    .font(.subheadline)
+                HStack {
+                    Button(summary.isRunning ? "Move after this reply" : "Move to \(studio.title)") { move(to: id) }
+                        .buttonStyle(.borderedProminent).disabled(summary.isRunning || moving)
+                    Button("Not here") { PlaceSuggestion.dismiss(summary.id); dismissed = true }
+                        .buttonStyle(.bordered)
+                }
+                .controlSize(.small)
+                if let problem { Text(problem).font(.caption).foregroundStyle(.orange) }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("place-suggestion")
+        }
+    }
+
+    private func move(to studio: UUID) {
+        moving = true
+        Task {
+            do {
+                moved(try await store.promote(summary.id, using: .init(kind: .studio, studioID: studio)))
+                await store.loadChats()
+            } catch { problem = error.localizedDescription }
+            moving = false
+        }
+    }
+}
