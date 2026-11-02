@@ -34,6 +34,8 @@ enum DocumentLoader {
 
 struct DocumentViewer: View {
     let document: LocalDocument
+    /// Sends comments on a PDF to the session it came from; with it, the viewer offers Comment.
+    var send: ((_ text: String, _ attachments: [Attachment]) -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var text: String?
     @State private var pdf: PDFDocument?
@@ -46,6 +48,9 @@ struct DocumentViewer: View {
     /// (two side by side, like an open book) or "scroll" (one long column).
     @AppStorage("pdfLayout") private var pdfLayout = "pages"
     @State private var pages = PDFPager()
+    /// Commenting on the PDF, from the page that was showing (from 0).
+    @State private var commentPage: Int?
+    @State private var commentSent = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -65,6 +70,10 @@ struct DocumentViewer: View {
                 }
                 if let pdf, !pdf.isLocked, pdf.pageCount > 1 { pdfControls(pdf) }
                 HStack(spacing: 12) {
+                if send != nil, let pdf, !pdf.isLocked {
+                    Button { commentSent = false; commentPage = pages.page } label: { Label("Comment", systemImage: "text.bubble") }
+                        .help("Mark spots on this page, add a comment to each, and send them to the session")
+                }
                 Button { revision += 1 } label: { Image(systemName: "arrow.clockwise") }.help("Reload file")
                 Menu {
                     Button("Open in App") { NSWorkspace.shared.open(document.url) }
@@ -105,6 +114,18 @@ struct DocumentViewer: View {
         }
         .environment(\.chatFolder, document.url.deletingLastPathComponent().path)
         .task(id: "\(document.id)|\(revision)") { await load() }
+        // Sent: the comments are in the session, so the viewer closes too.
+        .sheet(isPresented: Binding(get: { commentPage != nil }, set: { if !$0 { commentPage = nil } }),
+               onDismiss: { if commentSent { dismiss() } }) {
+            if let pdf, let send {
+                let window = (NSApp.mainWindow ?? NSApp.keyWindow)?.contentLayoutRect.size ?? NSSize(width: 1200, height: 800)
+                ImageReviewView(pdf: .pdf(document.url), document: pdf, page: commentPage ?? 0) { text, files in
+                    commentSent = true
+                    send(text, files)
+                }
+                .frame(width: max(900, window.width - 40), height: max(600, window.height - 40))
+            }
+        }
     }
 
     /// Flip buttons and the page (or spread) you're on, then the layout.

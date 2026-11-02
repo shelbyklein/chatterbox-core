@@ -1,7 +1,18 @@
 import AppKit
+import PDFKit
 import SwiftUI
 
-/// Opens an image from the chat in the review window. Set by ChatView.
+extension Attachment {
+    /// A PDF, attached (kind .pdf) or one of the session's files shown by reference.
+    var isPDF: Bool { kind == .pdf || url.pathExtension.lowercased() == "pdf" }
+
+    /// A session's PDF on disk, to comment on and to send along with the comments.
+    static func pdf(_ url: URL) -> Attachment {
+        Attachment(name: url.lastPathComponent, path: url.path, mediaType: "application/pdf", kind: .pdf)
+    }
+}
+
+/// Opens an image (or a PDF, to comment on) from the chat in the review window. Set by ChatView.
 struct ImageReviewAction {
     var open: (Attachment) -> Void = { NSWorkspace.shared.open($0.url) }
 }
@@ -23,7 +34,10 @@ struct ImageMark: Identifiable {
     var id = UUID()
     var rect: CGRect
     var comment = ""
-    var isPoint: Bool { rect.width < 0.01 && rect.height < 0.01 }
+    var isPoint: Bool { ReviewNotes.isPoint(rect) }
+
+    /// The mark in words, for the message (`page` from 1, for a PDF).
+    func note(page: Int? = nil) -> ReviewNotes.Mark { ReviewNotes.Mark(page: page, rect: rect, comment: comment) }
 }
 
 /// Points are normalized to the image, independent of the review window's size.
@@ -46,8 +60,10 @@ enum ImageReviewTool: Hashable { case pen, notes }
 private enum ImageReviewEdit: Equatable { case stroke(UUID), mark(UUID) }
 
 /// Draw feedback on a copy of the image and send it, together with the original, to the chat.
+/// A PDF is commented on the same way, page by page: Previous and Next turn its pages, and
+/// Send covers every page with marks, as one marked-up copy each plus the PDF.
 struct ImageReviewView: View {
-    /// The image showing; Previous and Next move it through the chat's other images.
+    /// The image showing, or the PDF; Previous and Next move an image through the chat's others.
     @State private var attachment: Attachment
     /// The chat's images in order, for Previous and Next (empty: just this one).
     let gallery: [URL]
@@ -57,6 +73,11 @@ struct ImageReviewView: View {
     /// box (to finish there) rather than straight to a session, so nothing is required here.
     var feedback = false
 
+    /// The PDF under review, once read (or as handed over by the viewer, already unlocked).
+    @State private var pdf: PDFDocument?
+    /// The PDF page showing, from 0.
+    @State private var page = 0
+
     init(attachment: Attachment, gallery: [URL] = [], initialTool: ImageReviewTool = .pen, feedback: Bool = false,
          onSend: @escaping (_ text: String, _ attachments: [Attachment]) -> Void) {
         self.feedback = feedback
@@ -65,7 +86,18 @@ struct ImageReviewView: View {
         self.gallery = gallery
         self.onSend = onSend
     }
-    /// Marks and notes made on other images while browsing, kept until the sheet closes.
+
+    /// Comments on a PDF, opening at `page` (from 0). Pass the document when it's already open,
+    /// so a PDF unlocked in the viewer stays unlocked; otherwise it's read from the file.
+    init(pdf attachment: Attachment, document: PDFDocument? = nil, page: Int = 0, initialTool: ImageReviewTool = .notes,
+         onSend: @escaping (_ text: String, _ attachments: [Attachment]) -> Void) {
+        self.init(attachment: attachment, initialTool: initialTool, onSend: onSend)
+        _pdf = State(initialValue: document)
+        _page = State(initialValue: max(0, page))
+    }
+
+    /// Marks and notes made on other images (or PDF pages) while browsing, kept until the sheet
+    /// closes. A PDF's overall note is one for the whole document, not one per page.
     @State private var drafts: [String: (marks: [ImageMark], strokes: [ImageStroke], edits: [ImageReviewEdit], overall: String)] = [:]
     @Environment(\.dismiss) private var dismiss
 
@@ -92,45 +124,84 @@ struct ImageReviewView: View {
             sidebar.frame(width: 280)
         }
         .frame(minWidth: 900, minHeight: 600)
-        .task(id: attachment.path) { image = NSImage(contentsOf: attachment.url) }
+        .task(id: draftKey) { await load() }
+    }
+
+    /// The picture to mark up: the image file, or the PDF page drawn as one.
+    @MainActor private func load() async {
+        guard attachment.isPDF else { image = NSImage(contentsOf: attachment.url); return }
+        if pdf == nil {
+            let url = attachment.url
+            let data = await Task.detached(priority: .userInitiated) { try? Data(contentsOf: url) }.value
+            guard !Task.isCancelled else { return }
+            pdf = data.flatMap(PDFDocument.init(data:))
+        }
+        guard let pdf else { error = "This file isn't a readable PDF."; return }
+        guard !pdf.isLocked else { error = "This PDF is locked. Open it in the viewer, unlock it, then comment."; return }
+        guard pdf.pageCount > 0 else { error = "This PDF has no pages."; return }
+        // Past the end (the PDF got shorter): show its last page, which runs this again.
+        guard let shown = pdf.page(at: page), page < pdf.pageCount else { page = pdf.pageCount - 1; return }
+        image = Self.render(shown)
     }
 
     // MARK: - Browsing
 
-    private var position: Int? { gallery.firstIndex { $0.path == attachment.path } }
+    /// Where Previous and Next stand: the PDF page, or this image among the chat's.
+    private var position: Int? {
+        attachment.isPDF ? pdf.map { _ in page } : gallery.firstIndex { $0.path == attachment.path }
+    }
+    private var count: Int { attachment.isPDF ? pdf?.pageCount ?? 0 : gallery.count }
+    private var noun: String { attachment.isPDF ? "page" : "image" }
+    /// Each image, or each PDF page, keeps its own marks.
+    private var draftKey: String { attachment.isPDF ? Self.pageKey(page) : attachment.path }
+    private static func pageKey(_ page: Int) -> String { "page \(page)" }
 
-    /// Moves to the previous (-1) or next (+1) image in the chat, keeping each one's marks.
+    /// Moves to the previous (-1) or next (+1) image in the chat, or page of the PDF,
+    /// keeping each one's marks.
     private func step(_ offset: Int) {
-        guard let position, gallery.indices.contains(position + offset) else { return }
-        let url = gallery[position + offset]
-        drafts[attachment.path] = (marks, strokes, edits, overall)
-        let draft = drafts[url.path]
+        guard let position, (0..<count).contains(position + offset) else { return }
+        drafts[draftKey] = (marks, strokes, edits, overall)
+        if attachment.isPDF {
+            page = position + offset
+        } else {
+            let url = gallery[position + offset]
+            attachment = Attachment(name: url.lastPathComponent, path: url.path,
+                                    mediaType: "image/" + url.pathExtension.lowercased(), kind: .image)
+        }
+        let draft = drafts[draftKey]
         marks = draft?.marks ?? []
         strokes = draft?.strokes ?? []
         edits = draft?.edits ?? []
         activePoints = []
         dragRect = nil
-        overall = draft?.overall ?? ""
+        // A PDF has one overall note; each image has its own.
+        if !attachment.isPDF { overall = draft?.overall ?? "" }
         error = nil
         image = nil
-        attachment = Attachment(name: url.lastPathComponent, path: url.path,
-                                mediaType: "image/" + url.pathExtension.lowercased(), kind: .image)
+    }
+
+    /// The PDF's other pages with marks or drawing, from 1, which Send includes too.
+    private var otherMarkedPages: [Int] {
+        guard attachment.isPDF else { return [] }
+        return (0..<count).filter { index in
+            index != page && drafts[Self.pageKey(index)].map { !$0.marks.isEmpty || !$0.strokes.isEmpty } == true
+        }.map { $0 + 1 }
     }
 
     @ViewBuilder private var browseButtons: some View {
-        if let position, gallery.count > 1 {
+        if let position, count > 1 {
             HStack {
                 // ⌘[ and ⌘], not bare arrows: those move the cursor in the note fields.
-                browseButton("chevron.left", "Previous image (⌘[)", enabled: position > 0) { step(-1) }
+                browseButton("chevron.left", "Previous \(noun) (⌘[)", enabled: position > 0) { step(-1) }
                     .keyboardShortcut("[", modifiers: .command)
                 Spacer()
-                browseButton("chevron.right", "Next image (⌘])", enabled: position < gallery.count - 1) { step(1) }
+                browseButton("chevron.right", "Next \(noun) (⌘])", enabled: position < count - 1) { step(1) }
                     .keyboardShortcut("]", modifiers: .command)
             }
             .padding(.horizontal, 14)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay(alignment: .bottom) {
-                Text("\(position + 1) of \(gallery.count)")
+                Text(attachment.isPDF ? "Page \(position + 1) of \(count)" : "\(position + 1) of \(count)")
                     .font(.caption.monospacedDigit()).foregroundStyle(.white.opacity(0.85))
                     .padding(.horizontal, 10).padding(.vertical, 4)
                     .background(Capsule().fill(.black.opacity(0.55)))
@@ -233,6 +304,8 @@ struct ImageReviewView: View {
                             focusedMark = mark.id
                         }
                 )
+            } else if let error {
+                Text(error).foregroundStyle(.white.opacity(0.8)).frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -288,7 +361,7 @@ struct ImageReviewView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            Text(tool == .pen ? "Drag on the image to draw." : "Drag to mark an area, or click to mark a spot. Add a note for each mark.")
+            Text(tool == .pen ? "Drag on the \(noun) to draw." : "Drag to mark an area, or click to mark a spot. Add a note for each mark.")
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
                 Button(action: undo) { Label("Undo", systemImage: "arrow.uturn.backward") }
@@ -296,7 +369,7 @@ struct ImageReviewView: View {
                     .accessibilityLabel("Undo annotation")
                 Spacer()
                 Menu("More") {
-                    Button("Copy Image") { ImageClipboard.copy(attachment.url) }
+                    if !attachment.isPDF { Button("Copy Image") { ImageClipboard.copy(attachment.url) } }
                     Button("Open in Preview") { NSWorkspace.shared.open(attachment.url) }
                     Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([attachment.url]) }
                     Button("Clear Annotations") { marks.removeAll(); strokes.removeAll(); edits.removeAll() }
@@ -323,7 +396,13 @@ struct ImageReviewView: View {
                         }
                     }
                     if marks.isEmpty && strokes.isEmpty {
-                        Text("No annotations yet.").font(.callout).foregroundStyle(.tertiary)
+                        Text(attachment.isPDF ? "No comments on this page yet." : "No annotations yet.")
+                            .font(.callout).foregroundStyle(.tertiary)
+                    }
+                    let others = otherMarkedPages
+                    if !others.isEmpty {
+                        Text("Also marked: page\(others.count == 1 ? "" : "s") \(others.map(String.init).joined(separator: ", ")). Send includes every marked page.")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -340,7 +419,8 @@ struct ImageReviewView: View {
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button(feedback ? "Add to Chatterbox Session" : "Send to Session") { send() }
                     .keyboardShortcut(.return, modifiers: .command)
-                    .disabled(image == nil || (!feedback && marks.isEmpty && strokes.isEmpty && overall.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
+                    .disabled(image == nil || (!feedback && marks.isEmpty && strokes.isEmpty && otherMarkedPages.isEmpty
+                                               && overall.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
             }
         }
         .padding(16)
@@ -358,6 +438,7 @@ struct ImageReviewView: View {
 
     private func send() {
         guard let image else { return }
+        if attachment.isPDF, let pdf { return sendPDF(pdf, showing: image) }
         var attachments = [attachment]
         let hasAnnotations = !marks.isEmpty || !strokes.isEmpty
         if hasAnnotations {
@@ -368,31 +449,63 @@ struct ImageReviewView: View {
                 return
             }
         }
-        var lines: [String] = []
-        if hasAnnotations {
-            lines.append("Feedback on \(attachment.name). The first attached image is annotated; the second is the original.")
-            for (index, mark) in marks.enumerated() {
-                let note = mark.comment.trimmingCharacters(in: .whitespacesAndNewlines)
-                lines.append("\(index + 1). \(Self.describe(mark.rect)): \(note.isEmpty ? "(no note)" : note)")
-            }
-        }
-        let overallNote = overall.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !overallNote.isEmpty { lines.append(hasAnnotations ? "\nOverall: \(overallNote)" : overallNote) }
-        onSend(lines.joined(separator: "\n"), attachments)
+        onSend(message(marks.map { $0.note() }, drawn: hasAnnotations), attachments)
         dismiss()
     }
 
-    /// Where a mark sits, in words and percentages, so agents that can't see the drawing still know.
-    static func describe(_ rect: CGRect) -> String {
-        let cx = rect.midX, cy = rect.midY
-        let vertical = cy < 0.33 ? "top" : cy > 0.66 ? "bottom" : "middle"
-        let horizontal = cx < 0.33 ? "left" : cx > 0.66 ? "right" : "center"
-        let place = vertical == "middle" && horizontal == "center" ? "center" : "\(vertical) \(horizontal)"
-        let pct = { (v: CGFloat) in Int((v * 100).rounded()) }
-        if rect.width < 0.01 && rect.height < 0.01 {
-            return "spot at \(place) (x \(pct(rect.minX))%, y \(pct(rect.minY))%)"
+    /// One message for the whole PDF: a marked-up copy of each page with marks or drawing,
+    /// in page order, then the PDF itself.
+    private func sendPDF(_ pdf: PDFDocument, showing current: NSImage) {
+        drafts[draftKey] = (marks, strokes, edits, overall)
+        let stem = (attachment.name as NSString).deletingPathExtension
+        var notes: [ReviewNotes.Mark] = []
+        var pages: [Int] = []
+        var attachments: [Attachment] = []
+        for index in 0..<pdf.pageCount {
+            guard let draft = drafts[Self.pageKey(index)], !draft.marks.isEmpty || !draft.strokes.isEmpty,
+                  let picture = index == page ? current : pdf.page(at: index).map({ Self.render($0) }) else { continue }
+            do {
+                attachments.append(try Attachments.importImageData(Self.annotated(picture, marks: draft.marks, strokes: draft.strokes),
+                                                                   name: "Marked up \(stem) page \(index + 1)"))
+            } catch {
+                self.error = "Couldn't draw the marks on page \(index + 1): \(error.localizedDescription)"
+                return
+            }
+            pages.append(index + 1)
+            notes += draft.marks.map { $0.note(page: index + 1) }
         }
-        return "area at \(place) (x \(pct(rect.minX))–\(pct(rect.maxX))%, y \(pct(rect.minY))–\(pct(rect.maxY))%)"
+        attachments.append(attachment)
+        onSend(message(notes, drawn: !pages.isEmpty, attachedPages: pages), attachments)
+        dismiss()
+    }
+
+    /// The message, in ReviewNotes' words. ReviewNotes explains the marked-up copies only when
+    /// they carry numbered marks, so a drawing alone gets the same heading here.
+    private func message(_ notes: [ReviewNotes.Mark], drawn: Bool, attachedPages: [Int] = []) -> String {
+        ReviewNotes.message(file: attachment.name, marks: notes, overall: overall, attachedPages: attachedPages, drawn: drawn)
+    }
+
+    /// A PDF page as a picture 2000 pixels on its long side, white behind: what the review
+    /// shows, and what a page's marked-up copy is drawn on. Follows the page's rotation and crop.
+    static func render(_ page: PDFPage, longSide: CGFloat = 2000) -> NSImage {
+        let box = page.bounds(for: .cropBox)
+        let size = page.rotation % 180 == 0 ? box.size : CGSize(width: box.height, height: box.width)
+        let scale = longSide / max(size.width, size.height, 1)
+        let width = max(1, Int((size.width * scale).rounded())), height = max(1, Int((size.height * scale).rounded()))
+        guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return NSImage() }
+        context.setFillColor(.white)
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        context.scaleBy(x: CGFloat(width) / max(size.width, 1), y: CGFloat(height) / max(size.height, 1))
+        // drawWithBox handles the page's rotation and the crop box's origin by itself.
+        page.draw(with: .cropBox, to: context)
+        guard let picture = context.makeImage() else { return NSImage() }
+        // A bitmap rep, which reports its true pixels to annotated(); NSImage(cgImage:size:)
+        // reports them at the screen's scale, doubling the marked-up copy.
+        let image = NSImage(size: NSSize(width: width, height: height))
+        image.addRepresentation(NSBitmapImageRep(cgImage: picture))
+        return image
     }
 
     /// The image at full size with pen strokes and numbered marks drawn on it, as PNG data.

@@ -165,7 +165,8 @@ struct SessionFileGrid: View {
             loaded = true
         }
         .sheet(item: $viewing) { document in
-            DocumentViewer(document: document).frame(minWidth: 720, minHeight: 640)
+            DocumentViewer(document: document) { text, files in session.send(text, attachments: files) }
+                .frame(minWidth: 720, minHeight: 640)
         }
         .accessibilityLabel("Files in \(session.title), \(files.count)")
     }

@@ -501,6 +501,11 @@ private struct SentAttachments: View {
                 }
                 .buttonStyle(.plain)
                 .help("Open \(file.name)")
+                .contextMenu {
+                    if file.isPDF { Button("Comment on PDF…") { review.open(file) } }
+                    Button("Open") { openURL(file.url) }
+                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([file.url]) }
+                }
             }
         }
     }

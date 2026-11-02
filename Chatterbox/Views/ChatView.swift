@@ -297,19 +297,26 @@ struct ChatView: View {
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { chatHeight = $0 }
         .sheet(item: $viewingDocument) { document in
             let window = (NSApp.mainWindow ?? NSApp.keyWindow)?.contentLayoutRect.size ?? NSSize(width: 1200, height: 800)
-            DocumentViewer(document: document)
+            DocumentViewer(document: document) { text, files in session.send(text, attachments: files) }
                 .frame(width: max(600, window.width - 40), height: max(400, window.height - 40))
         }
         .sheet(isPresented: $showingImages) {
             ChatImageGallery(session: session, onOpen: { reviewing = $0 },
                              onAdd: { urls in add(urls.compactMap(importOrReport)); composerFocused = true })
         }
-        .sheet(item: $reviewing) { image in
+        .sheet(item: $reviewing) { file in
             // As big as the window allows, so the image or document gets the most room.
             let window = (NSApp.mainWindow ?? NSApp.keyWindow)?.contentLayoutRect.size ?? NSSize(width: 1200, height: 800)
-            // Previous and Next step through the chat's images, oldest to newest.
-            ImageReviewView(attachment: image, gallery: ChatImageGallery.collect(session).reversed().map(\.url)) { text, files in session.send(text, attachments: files) }
-                .frame(width: max(900, window.width - 40), height: max(600, window.height - 40))
+            Group {
+                // A PDF's Previous and Next turn its pages.
+                if file.isPDF {
+                    ImageReviewView(pdf: file) { text, files in session.send(text, attachments: files) }
+                } else {
+                    // Previous and Next step through the chat's images, oldest to newest.
+                    ImageReviewView(attachment: file, gallery: ChatImageGallery.collect(session).reversed().map(\.url)) { text, files in session.send(text, attachments: files) }
+                }
+            }
+            .frame(width: max(900, window.width - 40), height: max(600, window.height - 40))
         }
         .alert("That folder already has a session", isPresented: Binding(get: { projectConflict != nil }, set: { if !$0 { projectConflict = nil } }), presenting: projectConflict) { owner in
             Button("Open That Session") { model.selectedID = owner.id }
