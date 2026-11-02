@@ -30,6 +30,8 @@ struct MobilePDFButton: View {
 struct MobilePDFViewer: View {
     let file: Companion.File
     let chat: UUID
+    /// After Comment puts feedback in the session's message box (Saved PDFs opens the session).
+    var commented: () -> Void = {}
     @Environment(MobileStore.self) private var store
     @Environment(\.dismiss) private var dismiss
     @State private var entry: MobilePDFCache.Entry?
@@ -40,7 +42,12 @@ struct MobilePDFViewer: View {
     @State private var task: Task<Void, Never>?
     @State private var exporting = false
     @State private var sharing = false
-    @State private var pageLabel = ""
+    @State private var page = 0
+    @State private var pageCount = 0
+    /// The open document, once loaded (and unlocked), for Comment.
+    @State private var document: PDFDocument?
+    @State private var commenting: MobileReviewRequest?
+    private var pageLabel: String { pageCount > 0 ? "\(page + 1) of \(pageCount)" : "" }
 
     var body: some View {
         NavigationStack {
@@ -63,7 +70,8 @@ struct MobilePDFViewer: View {
                     }.padding()
                 }
                 if let entry {
-                    PDFReviewDocument(url: entry.url, revision: entry.savedAt) { pageLabel = $0 }
+                    PDFReviewDocument(url: entry.url, revision: entry.savedAt,
+                                      pageChanged: { page = $0; pageCount = $1 }, ready: { document = $0 })
                         .accessibilityIdentifier("pdfReviewSurface")
                 } else if !downloading && problem == nil {
                     ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -83,10 +91,26 @@ struct MobilePDFViewer: View {
                     Text(pageLabel).font(.caption).foregroundStyle(.secondary)
                     Spacer()
                     Button { sharing = true } label: { Label("Share", systemImage: "square.and.arrow.up") }.disabled(entry == nil)
+                    // Tap a spot or drag a box on the page showing, with a note for each.
+                    Button {
+                        if let document { commenting = MobileReviewRequest(source: .pdf(document, name: file.name, page: page)) }
+                    } label: { Label("Comment", systemImage: "text.bubble") }
+                        .labelStyle(.titleAndIcon)
+                        .disabled(document == nil)
                 }
             }
             .sheet(isPresented: $exporting) { if let entry { PDFExportPicker(url: entry.url) } }
             .sheet(isPresented: $sharing) { if let entry { PDFShareSheet(url: entry.url) } }
+            .fullScreenCover(item: $commenting) { request in
+                MobileReviewView(source: request.source) { result in
+                    // Into this session's message box, then back to the session to send it.
+                    store.composer(for: chat).add(result)
+                    commenting = nil
+                    task?.cancel()
+                    dismiss()
+                    commented()
+                }
+            }
             .task { load() }
             .onDisappear { task?.cancel() }
         }
@@ -120,7 +144,10 @@ struct MobilePDFViewer: View {
 private struct PDFReviewDocument: View {
     let url: URL
     let revision: Date
-    let pageChanged: (String) -> Void
+    /// The page showing (0-based) and the page count.
+    let pageChanged: (Int, Int) -> Void
+    /// The document once it's readable: loaded, and unlocked if it has a password.
+    let ready: (PDFDocument?) -> Void
     @State private var document: PDFDocument?
     @State private var password = ""
     @State private var locked = false
@@ -133,7 +160,7 @@ private struct PDFReviewDocument: View {
                     SecureField("PDF password", text: $password).textFieldStyle(.roundedBorder)
                     if incorrect { Text("That password didn't unlock this PDF.").foregroundStyle(.secondary) }
                     Button("Unlock") {
-                        if document?.unlock(withPassword: password) == true { locked = false; password = "" }
+                        if document?.unlock(withPassword: password) == true { locked = false; password = ""; ready(document) }
                         else { incorrect = true }
                     }.buttonStyle(.borderedProminent)
                 }.padding().frame(maxWidth: 400).frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -143,6 +170,7 @@ private struct PDFReviewDocument: View {
         .task(id: revision) {
             document = PDFDocument(url: url); locked = document?.isLocked == true
             password = ""; incorrect = false
+            ready(locked ? nil : document)
         }
     }
 }
@@ -150,7 +178,7 @@ private struct PDFReviewDocument: View {
 /// PDFKit supplies native pinch zoom, page scrolling and selection.
 private struct PDFReviewSurface: UIViewRepresentable {
     let document: PDFDocument
-    let pageChanged: (String) -> Void
+    let pageChanged: (Int, Int) -> Void
     func makeCoordinator() -> Coordinator { Coordinator(pageChanged) }
     func makeUIView(context: Context) -> PDFView {
         let view = PDFView()
@@ -168,11 +196,11 @@ private struct PDFReviewSurface: UIViewRepresentable {
     }
     final class Coordinator {
         var observer: NSObjectProtocol?
-        let callback: (String) -> Void
-        init(_ callback: @escaping (String) -> Void) { self.callback = callback }
+        let callback: (Int, Int) -> Void
+        init(_ callback: @escaping (Int, Int) -> Void) { self.callback = callback }
         func report(_ view: PDFView) {
             guard let document = view.document, let page = view.currentPage else { return }
-            callback("\(document.index(for: page) + 1) of \(document.pageCount)")
+            callback(document.index(for: page), document.pageCount)
         }
         deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
     }
@@ -227,7 +255,13 @@ struct SavedPDFsView: View {
             .navigationTitle("Saved PDFs")
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .task { entries = await Task.detached { MobilePDFCache.entries() }.value }
-            .fullScreenCover(item: $selection) { entry in MobilePDFViewer(file: entry.file, chat: entry.chat) }
+            .fullScreenCover(item: $selection) { entry in
+                // Comment from here puts the feedback in that session's message box and opens it.
+                MobilePDFViewer(file: entry.file, chat: entry.chat) {
+                    dismiss()
+                    MobilePushNotifications.shared.pendingChat = entry.chat
+                }
+            }
         }
     }
 }

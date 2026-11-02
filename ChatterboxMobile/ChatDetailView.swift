@@ -933,6 +933,7 @@ private struct RemoteImage: View {
     @State private var image: UIImage?
     @State private var original: UIImage?
     @State private var viewing = false
+    @State private var commenting: MobileReviewRequest?
     @State private var failed = false
     @State private var visible = false
     @State private var retry = 0
@@ -974,12 +975,24 @@ private struct RemoteImage: View {
         .frame(maxWidth: 320)
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .fullScreenCover(isPresented: $viewing) {
-            if let shown = original ?? image { ImageViewer(image: shown, onMarkUp: onMarkUp) }
+            if let shown = original ?? image {
+                ImageViewer(image: shown, name: file.name, onMarkUp: onMarkUp,
+                            onComment: { store.composer(for: chat).add($0) })
+            }
+        }
+        // Comment from the menu: numbered notes on the original, into this session's message box.
+        .background {
+            Color.clear.fullScreenCover(item: $commenting) { request in
+                MobileReviewView(source: request.source) { store.composer(for: chat).add($0) }
+            }
         }
         .contextMenu {
             if image != nil {
                 Button { viewing = true } label: { Label("View", systemImage: "arrow.up.left.and.arrow.down.right") }
                 Button { Task { if let full = await full() { onMarkUp(full) } } } label: { Label("Mark Up", systemImage: "pencil.tip.crop.circle") }
+                Button {
+                    Task { if let full = await full() { commenting = MobileReviewRequest(source: .image(full, name: file.name)) } }
+                } label: { Label("Comment", systemImage: "text.bubble") }
                 Button { Task { if let full = await full() { UIPasteboard.general.image = full } } } label: { Label("Copy", systemImage: "doc.on.doc") }
             }
         }

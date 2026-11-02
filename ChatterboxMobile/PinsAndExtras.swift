@@ -131,10 +131,15 @@ struct StudioInstructionsEditor: View {
     }
 }
 
-/// An image full screen: pinch or double-tap to zoom, save to Photos, share, copy, or mark up.
+/// An image full screen: pinch or double-tap to zoom, save to Photos, share, copy, mark up,
+/// or comment (numbered notes on spots and areas, for the session's message box).
 struct ImageViewer: View {
     let image: UIImage
+    /// The file's name, for Comment's words ("Feedback on …").
+    var name = "Image"
     var onMarkUp: ((UIImage) -> Void)? = nil
+    var onComment: ((MobileReviewResult) -> Void)? = nil
+    @State private var commenting: MobileReviewRequest?
     @Environment(\.dismiss) private var dismiss
     @State private var scale: CGFloat = 1
     @State private var lastScale: CGFloat = 1
@@ -185,6 +190,19 @@ struct ImageViewer: View {
                         Spacer()
                         Button { dismiss(); onMarkUp(image) } label: { Label("Mark Up", systemImage: "pencil.tip.crop.circle") }
                     }
+                    if onComment != nil {
+                        Spacer()
+                        Button { commenting = MobileReviewRequest(source: .image(image, name: name)) } label: {
+                            Label("Comment", systemImage: "text.bubble")
+                        }
+                    }
+                }
+            }
+            .fullScreenCover(item: $commenting) { request in
+                MobileReviewView(source: request.source) { result in
+                    onComment?(result)
+                    commenting = nil
+                    dismiss()
                 }
             }
             .alert(note ?? "", isPresented: Binding(get: { note != nil }, set: { if !$0 { note = nil } })) {
