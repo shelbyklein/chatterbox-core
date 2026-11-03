@@ -57,17 +57,23 @@ struct StudioSessionSummary {
     }
 }
 
-/// Which Studio entry is chosen in the left column.
+/// Which entry is chosen in Home's left column: the Desk (DeskView.swift), Pinned, or a Studio.
 enum StudioSelection: Hashable {
-    case pinned, studio(UUID)
+    case desk, pinned, studio(UUID)
 
-    init(_ raw: String) { self = UUID(uuidString: raw).map(StudioSelection.studio) ?? .pinned }
+    init(_ raw: String) { self = raw == "desk" ? .desk : UUID(uuidString: raw).map(StudioSelection.studio) ?? .pinned }
     var raw: String {
         switch self {
+        case .desk: "desk"
         case .pinned: "pinned"
         case .studio(let id): id.uuidString
         }
     }
+
+    /// Where ChatHomeView keeps the choice.
+    static let key = "macStudioSelection"
+    static var saved: StudioSelection { StudioSelection(AppPreferences.defaults.string(forKey: key) ?? "pinned") }
+    static func save(_ selection: StudioSelection) { AppPreferences.defaults.set(selection.raw, forKey: key) }
 }
 
 struct ChatHomeView: View {
@@ -102,6 +108,9 @@ struct ChatHomeView: View {
             StudioColumn(selection: selection, newStudio: newStudio) { savedSelection = $0.raw }
                 .frame(width: 230)
             Divider()
+            if selection == .desk {
+                DeskView()
+            } else {
             VStack(spacing: 0) {
                 header.padding(.horizontal, 28).padding(.top, 24).padding(.bottom, 16)
                 Divider()
@@ -123,12 +132,13 @@ struct ChatHomeView: View {
                     }
                 }
             }
+            }
         }
         // The window's theme (Settings → Appearance), else the system's window color.
         .background(Theme.currentBackground ?? Color(nsColor: .windowBackgroundColor))
         // Studios returns here, not to a session, until one is opened again.
         .onAppear { model.rememberStudiosOverview() }
-        .accessibilityLabel(selectedStudio.map { "Studio \($0.name)" } ?? "Pinned Studio sessions")
+        .accessibilityLabel(selection == .desk ? "Desk" : selectedStudio.map { "Studio \($0.name)" } ?? "Pinned Studio sessions")
     }
 
     private var isFiltering: Bool { !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || filter != .all }
@@ -247,6 +257,11 @@ private struct StudioColumn: View {
                 #endif
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
+                    // Home's first page: what needs you, work to place, and what's working.
+                    let desk = DeskModel.shared.sections(in: model).actionCount
+                    entry(.desk, title: "Desk", count: nil, attention: desk, icon: "tray",
+                          badgeHelp: "\(desk) waiting on you or to be placed")
+                        .padding(.bottom, 12)
                     HStack {
                         Text("STUDIOS").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                         Spacer()
@@ -275,11 +290,11 @@ private struct StudioColumn: View {
         model.activeSessions.filter { $0.record.studioID == studio.id && Attention.shared.needsAttention($0) }.count
     }
 
-    private func entry(_ value: StudioSelection, title: String, count: Int, attention: Int, icon: String) -> some View {
+    private func entry(_ value: StudioSelection, title: String, count: Int?, attention: Int, icon: String, badgeHelp: String? = nil) -> some View {
         let selected = selection == value
         return Button { withAnimation(.smooth(duration: 0.2)) { select(value) } } label: {
             HStack(spacing: 8) {
-                Image(systemName: selected && value == .pinned ? "pin.fill" : icon).frame(width: 18).foregroundStyle(.secondary)
+                Image(systemName: selected && (value == .pinned || value == .desk) ? icon + ".fill" : icon).frame(width: 18).foregroundStyle(.secondary)
                 Text(title).lineLimit(1)
                 Spacer(minLength: 4)
                 // As on the toolbar's Studios button: which Studio has something for you.
@@ -288,9 +303,9 @@ private struct StudioColumn: View {
                         .foregroundStyle(.white)
                         .padding(.horizontal, 6).padding(.vertical, 1)
                         .background(Capsule().fill(Color.orange))
-                        .help("\(attention) session\(attention == 1 ? "" : "s") waiting on you or with a new reply")
+                        .help(badgeHelp ?? "\(attention) session\(attention == 1 ? "" : "s") waiting on you or with a new reply")
                 }
-                Text("\(count)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                if let count { Text("\(count)").font(.caption.monospacedDigit()).foregroundStyle(.secondary) }
             }
             .padding(.horizontal, 10).padding(.vertical, 7)
             .background(selected ? Color.primary.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 7))

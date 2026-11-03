@@ -21,9 +21,16 @@ struct ChatListView: View {
         /// The one kind of group the page lists (All and Pinned list every kind).
         var kind: Companion.ChatGroup.Kind { self == .projects ? .projects : self == .studios ? .studio : .chats }
         func includes(_ kind: Companion.ChatGroup.Kind) -> Bool { self == .all || self == .pinned || kind == self.kind }
+        /// The tab a session of this kind lives on (Pinned and All list every kind).
+        static func home(for kind: Companion.ChatGroup.Kind?) -> Page { kind == .projects ? .projects : kind == .studio ? .studios : .chats }
     }
     /// Set when the list is one of the home's bottom tabs: only that page, no page switcher.
     var fixedPage: Page? = nil
+    /// Whether this tab is the one on screen: only that one opens a tapped notification's chat.
+    var isSelected = true
+    /// Pages this tab switches between (Chats and All), and the one shown.
+    var scopes: [Page] = []
+    var scope: Binding<String>? = nil
     @Environment(MobileStore.self) private var store
     /// List rows, or cards two to a row.
     @AppStorage("mobileChatListCards") private var showsCards = false
@@ -112,12 +119,15 @@ struct ChatListView: View {
                     .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { notificationSettings = false } } }
             }
         }
-        .task(id: "\(MobilePushNotifications.shared.pendingChat?.uuidString ?? "")|\(scenePhase)") {
-            guard let id = MobilePushNotifications.shared.pendingChat else { return }
+        .task(id: "\(MobilePushNotifications.shared.pendingChat?.uuidString ?? "")|\(scenePhase)|\(fixedPage?.rawValue ?? "")|\(isSelected)") {
+            guard let id = MobilePushNotifications.shared.pendingChat, fixedPage == nil || isSelected else { return }
             await store.loadChats()
+            guard !Task.isCancelled, MobilePushNotifications.shared.pendingChat == id else { return }
             if let fixedPage {
+                // The tab on screen opens it when it's the chat's own tab (ChatterboxTabs goes
+                // there), or All, which lists every chat.
                 let kind = store.chatList?.groups.first { $0.chats.contains { $0.id == id } }?.kind
-                guard kind.map(fixedPage.includes) ?? (fixedPage == .chats), fixedPage != .all || kind == nil else { return }
+                guard fixedPage == .all || fixedPage == Page.home(for: kind) else { return }
             }
             if let chat = allChats.first(where: { $0.id == id }) {
                 open(chat); MobilePushNotifications.shared.pendingChat = nil
@@ -174,7 +184,9 @@ struct ChatListView: View {
     /// Shared list controls; only the surrounding navigation changes on a closed phone.
     private var configuredSidebar: some View {
         sidebar
-            .safeAreaInset(edge: .top, spacing: 0) { if fixedPage == nil { pagePicker } }
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if fixedPage == nil { pagePicker } else if scopes.count > 1, scope != nil { scopePicker }
+            }
             .navigationTitle(fixedPage?.title ?? store.connection?.macName ?? "Chatterbox")
             .navigationBarTitleDisplayMode(.inline)
             .refreshable { await store.loadChats() }
@@ -356,6 +368,18 @@ struct ChatListView: View {
         .padding(.vertical, 8)
         .background(.bar)
         .accessibilityIdentifier("home-pages")
+    }
+
+    /// Chats · All, on the Chats tab (the Desk took All's place in the tab bar).
+    private var scopePicker: some View {
+        Picker("Show", selection: Binding(get: { page }, set: { new in withAnimation(.easeOut(duration: 0.2)) { scope?.wrappedValue = new.rawValue } })) {
+            ForEach(scopes) { Text($0.title).tag($0) }
+        }
+        .pickerStyle(.segmented)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(.bar)
+        .accessibilityIdentifier("tab-scopes")
     }
 
     /// Nothing on this page (or nothing found).

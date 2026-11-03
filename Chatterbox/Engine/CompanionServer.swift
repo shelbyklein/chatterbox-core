@@ -342,41 +342,37 @@ final class CompanionServer {
             return .json(CompanionMapper.detail(session, model: model))
         case ("POST", 2) where parts[1] == "chats":
             let body = (try? Companion.decoder.decode(Companion.NewChatRequest.self, from: request.body)) ?? .init()
-            let backend = body.backend.flatMap(Backend.init(rawValue:))
-            // Starting a chat from the phone leaves the Mac showing what it was.
-            let shown = model.selectedID
+            // Starting a chat from the phone leaves the Mac showing what it was (newSession).
             let session: ChatSession
-            if let parentID = body.project {
-                guard let parent = model.sessions.first(where: { $0.id == parentID }), parent.record.archivedAt == nil else {
-                    return .error(404, "That project's session is gone.")
-                }
-                #if CHATTERBOX_HEADLESS
-                do{session=try model.newSidechat(of:parent)}catch{return .error(503,"Could not save the new chat.")}
-                #else
-                session = model.newSidechat(of: parent)
-                #endif
-            } else if let id = body.studio {
-                guard let studio = model.studio(id), studio.archivedAt == nil else { return .error(404, "That Studio is gone.") }
-                #if CHATTERBOX_HEADLESS
-                do{session=try model.newChat(in:studio,backend:backend)}catch{return .error(503,"Could not save the new chat.")}
-                #else
-                session = model.newChat(in: studio, backend: backend)
-                #endif
-            } else {
-                #if CHATTERBOX_HEADLESS
-                do{session=try model.newChat(backend:backend)}catch{return .error(503,"Could not save the new chat.")}
-                #else
-                session = model.newChat(backend: backend)
-                #endif
-            }
+            do { session = try newSession(project: body.project, studio: body.studio, backend: body.backend.flatMap(Backend.init(rawValue:))) }
+            catch { return (error as? Failure)?.response ?? .error(503, "Could not save the new chat.") }
             if let id = body.preset {
                 guard let preset = ModelPresets.shared.presets.first(where: { $0.id == id }) else { return .error(404, "That preset is gone.") }
                 ModelPresets.shared.apply(preset, to: session)
             }
             if let settings = body.settings { CompanionMapper.apply(settings, to: session) }
             if let title = body.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty { session.setTitle(title) }
-            if let shown, model.sessions.contains(where: { $0.id == shown }) { model.selectedID = shown }
             return .json(CompanionMapper.detail(session, model: model))
+        case ("GET", 2) where parts[1] == "desk":
+            return .json(DeskStore.shared.snapshot())
+        case ("POST", 2) where parts[1] == "desk":
+            guard let body = try? Companion.decoder.decode(Companion.DeskAddRequest.self, from: request.body) else { return .error(400, "Say what needs doing.") }
+            do { try DeskStore.shared.add(body) } catch { return failure(error) }
+            return .json(DeskStore.shared.snapshot())
+        case ("GET", 3) where parts[1] == "desk" && parts[2] == "places":
+            return .json(DeskStore.shared.places())
+        case ("POST", 4) where parts[1] == "desk" && (parts[3] == "start" || parts[3] == "ignore"):
+            guard let id = UUID(uuidString: parts[2]) else { return .error(404, "That request is gone.") }
+            do {
+                if parts[3] == "ignore" {
+                    try DeskStore.shared.ignore(id)
+                    return .json(DeskStore.shared.snapshot())
+                }
+                guard let body = request.body.isEmpty ? Companion.DeskStartRequest() : try? Companion.decoder.decode(Companion.DeskStartRequest.self, from: request.body) else {
+                    return .error(400, "Bad place.")
+                }
+                return .json(CompanionMapper.detail(try DeskStore.shared.start(id, body), model: model))
+            } catch { return failure(error) }
         case ("GET", 2) where parts[1] == "new-chat-options":
             // What a new chat would start with, given the picks so far: nothing is created.
             let picks = Companion.SettingsRequest(backend: request.query["backend"], model: request.query["model"],
@@ -568,6 +564,50 @@ final class CompanionServer {
     private func session(_ id: String) -> ChatSession? {
         guard let uuid = UUID(uuidString: id) else { return nil }
         return model?.sessions.first { $0.id == uuid }
+    }
+
+    private func failure(_ error: Error) -> HTTPResponse {
+        (error as? Failure)?.response ?? .error(503, error.localizedDescription)
+    }
+
+    /// Why a request couldn't be done, as the phone is told.
+    struct Failure: LocalizedError {
+        var status: Int
+        var message: String
+        var errorDescription: String? { message }
+        var response: HTTPResponse { .error(status, message) }
+    }
+
+    /// A new session: a Sidechat of a project's session, a chat in a Studio, or one on its own.
+    /// The Mac keeps showing what it was. New chats from the phone and the Desk start here.
+    func newSession(project: UUID?, studio: UUID?, backend: Backend?) throws -> ChatSession {
+        guard let model else { throw Failure(status: 503, message: "Chatterbox is starting.") }
+        let shown = model.selectedID
+        defer { if let shown, model.sessions.contains(where: { $0.id == shown }) { model.selectedID = shown } }
+        let saveFailed = Failure(status: 503, message: "Could not save the new chat.")
+        if let parentID = project {
+            guard let parent = model.sessions.first(where: { $0.id == parentID }), parent.record.archivedAt == nil else {
+                throw Failure(status: 404, message: "That project's session is gone.")
+            }
+            #if CHATTERBOX_HEADLESS
+            do{return try model.newSidechat(of:parent)}catch{throw saveFailed}
+            #else
+            return model.newSidechat(of: parent)
+            #endif
+        } else if let id = studio {
+            guard let studio = model.studio(id), studio.archivedAt == nil else { throw Failure(status: 404, message: "That Studio is gone.") }
+            #if CHATTERBOX_HEADLESS
+            do{return try model.newChat(in:studio,backend:backend)}catch{throw saveFailed}
+            #else
+            return model.newChat(in: studio, backend: backend)
+            #endif
+        } else {
+            #if CHATTERBOX_HEADLESS
+            do{return try model.newChat(backend:backend)}catch{throw saveFailed}
+            #else
+            return model.newChat(backend: backend)
+            #endif
+        }
     }
 
     private func pair(_ request: HTTPRequest) -> HTTPResponse {

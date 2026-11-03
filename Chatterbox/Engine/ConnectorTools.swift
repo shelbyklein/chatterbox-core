@@ -7,13 +7,15 @@ enum ConnectorTools {
     static let instructions = """
     Chatterbox runs Claude Code and Codex sessions on Shelby's Mac. Use list_sessions to see them \
     (what's working, what's waiting on Shelby), list_places for the Studios and projects work goes \
-    in (new work always goes in the one it belongs to; ask Shelby when unsure), read_session for a session's latest messages, \
-    send_message to reply in one, start_session for a new one, answer to approve, deny or answer \
-    questions a session is waiting on, and stop_reply to stop one. read_session lists each \
-    message's files: show_image shows a picture, share_file makes a download link (24 hours) \
-    for any file. session_settings shows or changes a session's agent, model, effort and Fast \
+    in (new work always goes in the one it belongs to), read_session for a session's latest messages, \
+    send_message to reply in one, start_session for a new one in its place, answer to approve, deny or answer \
+    questions a session is waiting on, and stop_reply to stop one. When it's unclear where new work \
+    goes, propose_work instead of start_session: it puts the work on Shelby's Desk with the place \
+    you think fits (or none), and Shelby starts it there, picks another place, or ignores it. \
+    read_session lists each message's files: show_image shows a picture, share_file makes a \
+    download link (24 hours) for any file. session_settings shows or changes a session's agent, model, effort and Fast \
     mode. Sessions act on the Mac: before sending work, starting a session, approving anything \
-    or changing a model, confirm with Shelby.
+    or changing a model, confirm with Shelby. propose_work starts nothing, so it needs no confirming.
     """
 
     static let list: [JSON] = [
@@ -24,13 +26,18 @@ enum ConnectorTools {
              required: ["session_id"]),
         tool("send_message", "Sends a message in a session, as Shelby typing it. While it's working, the message waits for the reply to finish.",
              ["session_id": prop("string", "From list_sessions"), "text": prop("string", "The message")], required: ["session_id", "text"]),
-        tool("list_places", "Where work can go: every Studio and project, with what belongs in each (its instructions or brief). Read before start_session.",
+        tool("list_places", "Where work can go: every Studio and project, with what belongs in each (its instructions or brief). Read before start_session or propose_work.",
              [:], required: []),
-        tool("start_session", "Starts a new session in a place from list_places and sends its first message. Work belongs in a Studio or project: pick the one that fits from what belongs there, and if none clearly fits, ask Shelby instead of guessing. A loose session (no place) needs loose_reason.",
+        tool("start_session", "Starts a new session in a place from list_places and sends its first message. Work belongs in a Studio or project: pick the one that fits from what belongs there, and if none clearly fits, propose_work instead of guessing (or ask Shelby). A loose session (no place) needs loose_reason.",
              ["text": prop("string", "The first message: the task, the files, and what done looks like"),
               "place": prop("string", "A Studio's or project's name, from list_places"),
               "loose_reason": prop("string", "Only without a place: why this belongs in no Studio or project"),
               "agent": prop("string", "claude (default) or codex", ["claude", "codex"]), "title": prop("string", "A name (optional)")],
+             required: ["text"]),
+        tool("propose_work", "Puts work on Shelby's Desk, to be placed and started there; nothing starts until Shelby starts it. Use it instead of start_session when it's unclear which Studio or project the work belongs in. Name the place you think fits, or leave it out and the Desk proposes one from each place's instructions or brief (or none when nothing clearly fits).",
+             ["text": prop("string", "The work: the task, the files, and what done looks like. It becomes the session's first message."),
+              "place": prop("string", "A Studio's or project's name from list_places, to propose (optional)"),
+              "note": prop("string", "A line for Shelby: why that place, or the plan (optional)")],
              required: ["text"]),
         tool("answer", "Answers what a session is waiting on: an approval (approve, approve_for_session or deny) or its questions (question id to chosen labels).",
              ["session_id": prop("string", "From list_sessions"), "item_id": prop("string", "The approval's or questions' id, from read_session"),
@@ -91,13 +98,15 @@ enum ConnectorTools {
                     return ("No Studio or project named \(name). Places:\n\(places(list))", true)
                 }
             } else if text("loose_reason").isEmpty {
-                return ("Give a place (a Studio or project from list_places). If none fits, ask Shelby where it goes; start it loose only with loose_reason.", true)
+                return ("Give a place (a Studio or project from list_places). If none clearly fits, propose_work puts it on Shelby's Desk to place, or ask Shelby where it goes; start it loose only with loose_reason.", true)
             }
             let new = Companion.NewChatRequest(studio: studio, backend: text("agent").isEmpty ? nil : text("agent"), project: project,
                                                title: text("title").isEmpty ? nil : text("title"))
             guard case .ok(let detail) = await request("POST", "/v1/chats", body: new, token: token, as: Companion.ChatDetail.self) else { return failure }
             let sent = await request("POST", "/v1/chats/\(detail.summary.id.uuidString)/messages", body: Companion.SendRequest(text: text("text")), token: token)
             return await detailResult(sent, "Started session \(detail.summary.id.uuidString).")
+        case "propose_work":
+            return await propose(text("text"), place: text("place"), note: text("note"), token: token)
         case "answer":
             guard UUID(uuidString: session) != nil, UUID(uuidString: text("item_id")) != nil else { return ("Give the session_id and item_id from read_session.", true) }
             if let decision = arguments["decision"]?.string {
@@ -187,6 +196,25 @@ enum ConnectorTools {
         if let efforts = current?.efforts, !efforts.isEmpty { lines.append("Efforts for \(current?.name ?? "this model"): \(efforts.joined(separator: ", "))") }
         if let fast = options.fastMode { lines.append("Fast mode: \(fast ? "on" : "off")") }
         return (lines.joined(separator: "\n"), false)
+    }
+
+    /// Puts work on the Desk from Claude, and says where it was proposed.
+    private static func propose(_ work: String, place: String, note: String, token: String) async -> (String, Bool) {
+        guard !work.isEmpty else { return ("Give the work to propose.", true) }
+        let add = Companion.DeskAddRequest(text: work, source: "claude", place: place.isEmpty ? nil : place, note: note.isEmpty ? nil : note)
+        switch await request("POST", "/v1/desk", body: add, token: token, as: Companion.Desk.self) {
+        case .ok(let desk):
+            let added = desk.incoming.first { $0.source == "claude" && $0.text == work }
+            let proposed = added?.proposed.map { place in
+                place.kind == "loose" ? "a loose session" : "\(place.kind == "project" ? "Project" : "Studio") \(place.name)"
+            } ?? "no place yet (nothing clearly fits; Shelby picks one)"
+            return ("On Shelby's Desk\(added.map { " [\($0.id.uuidString)]" } ?? ""): \(DeskStore.short(work, limit: 120)) → \(proposed). "
+                    + "Nothing has started: Shelby starts it there, picks another place, or ignores it.", false)
+        case .failed(let message):
+            guard !place.isEmpty, case .ok(let places) = await request("GET", "/v1/desk/places", token: token, as: [Companion.DeskPlace].self) else { return (message, true) }
+            let names = places.filter { $0.kind != "loose" }.map { "- \($0.kind == "project" ? "Project" : "Studio") \($0.name)" }
+            return ("\(message) Places:\n\(names.isEmpty ? "No Studios or projects yet." : names.joined(separator: "\n"))", true)
+        }
     }
 
     /// Projects' own sessions: not their Sidechats or worktrees.

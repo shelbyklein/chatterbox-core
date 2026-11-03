@@ -6,6 +6,9 @@ import UIKit
 
 struct MobileError: LocalizedError {
     var message: String
+    /// The Mac's HTTP status when it answered with an error it didn't explain (a 404 then
+    /// means a route this Mac doesn't have yet).
+    var status: Int? = nil
     var errorDescription: String? { message }
 }
 
@@ -157,6 +160,7 @@ final class MobileStore {
         token = nil
         connection = nil
         chatList = nil
+        latestDesk = nil
         AppPreferences.defaults.removeObject(forKey: "connection")
     }
 
@@ -420,6 +424,57 @@ final class MobileStore {
         throw MobileError(message: "Couldn't download from \(connection.macName). Check that Chatterbox is open and Wi-Fi or Tailscale is connected. \(lastError.localizedDescription)")
     }
 
+    // MARK: The Desk (plans/front-desk.md)
+
+    /// The Desk as last fetched or changed here; nil until the Mac first answers.
+    private(set) var latestDesk: Companion.Desk?
+    /// Bumped when a Desk change starts and ends: a read that overlapped one may be older
+    /// than the change's own answer, so it doesn't replace it.
+    @ObservationIgnored private var deskChanges = 0
+
+    @discardableResult
+    func desk() async throws -> Companion.Desk {
+        let before = deskChanges
+        let fresh: Companion.Desk = try await call("/v1/desk")
+        if before == deskChanges || latestDesk == nil { latestDesk = fresh }
+        return latestDesk ?? fresh
+    }
+
+    /// Puts a request on the Desk; the answer shows where the Desk proposes it goes.
+    @discardableResult
+    func addToDesk(_ text: String, source: String = "you", place: String? = nil, note: String? = nil) async throws -> Companion.Desk {
+        let body = try JSONEncoder().encode(Companion.DeskAddRequest(text: text, source: source, place: place, note: note))
+        return try await changeDesk { try await self.call("/v1/desk", method: "POST", body: body) }
+    }
+
+    /// Starts a request where it was proposed, or in `place` instead; returns the new session.
+    func startDesk(_ request: UUID, place: Companion.DeskPlace? = nil, agent: String? = nil) async throws -> Companion.ChatDetail {
+        let body = try JSONEncoder().encode(Companion.DeskStartRequest(place: place, agent: agent))
+        deskChanges += 1
+        defer { deskChanges += 1 }
+        let started: Companion.ChatDetail = try await call("/v1/desk/\(request.uuidString)/start", method: "POST", body: body)
+        latestDesk?.incoming.removeAll { $0.id == request }
+        return started
+    }
+
+    @discardableResult
+    func ignoreDesk(_ request: UUID) async throws -> Companion.Desk {
+        try await changeDesk { try await self.call("/v1/desk/\(request.uuidString)/ignore", method: "POST", body: Data("{}".utf8)) }
+    }
+
+    /// Where Desk work can go: Studios and projects, each with what belongs there.
+    func deskPlaces() async throws -> [Companion.DeskPlace] {
+        try await call("/v1/desk/places")
+    }
+
+    private func changeDesk(_ send: () async throws -> Companion.Desk) async throws -> Companion.Desk {
+        deskChanges += 1
+        defer { deskChanges += 1 }
+        let fresh = try await send()
+        latestDesk = fresh
+        return fresh
+    }
+
     // MARK: - Plumbing
 
     private func call<T: Decodable>(_ path: String, method: String = "GET", body: Data? = nil) async throws -> T {
@@ -476,7 +531,7 @@ final class MobileStore {
     private func checkStatus(_ data: Data, _ response: URLResponse) throws {
         guard let http = response as? HTTPURLResponse, http.statusCode != 200 else { return }
         let message = (try? Companion.decoder.decode(Companion.ErrorResponse.self, from: data))?.error
-        throw MobileError(message: message ?? "Chatterbox answered with error \(http.statusCode).")
+        throw MobileError(message: message ?? "Chatterbox answered with error \(http.statusCode).", status: message == nil ? http.statusCode : nil)
     }
 
     /// Simulator tests reach a test copy of the Mac app on its own port, never the real one.

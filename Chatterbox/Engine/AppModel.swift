@@ -369,6 +369,12 @@ final class AppModel {
         Diagnostics.shared.start()
         if RuntimeClient.usesDaemon {
             restoreNavigationCache()
+            // The Desk is new: the app's first start with it opens Home on the Desk, once.
+            if Bundle.main.bundleIdentifier == "com.shelbyklein.Chatterbox", !AppPreferences.defaults.bool(forKey: "deskIntroduced") {
+                AppPreferences.defaults.set(true, forKey: "deskIntroduced")
+                StudioSelection.save(.desk)
+                showingHome = true
+            }
             sessionLoadStatus = sessions.isEmpty ? "Connecting to background service…" : "Updating sessions…"
             RuntimeClient.shared.onEvent = { [weak self] event in self?.runtimeEvent(event) }
             RuntimeClient.shared.start()
@@ -1164,6 +1170,9 @@ final class AppModel {
     }
 
     private func runtimeEvent(_ event:RuntimeEvent) {
+        // The Desk (DeskView.swift) follows "desk.changed", reconnects and changed sessions.
+        DeskModel.shared.runtimeEvent(event)
+        if event.kind=="desk.changed" {return}
         if event.kind=="pin.open",let raw=event.payload,let pin=try? raw.decode(Pin.self){PinStore.shared.open(pin);return}
         if event.kind=="connector.request",let id=event.payload?["id"]?.string,let client=event.payload?["client"]?.string{askToAllowConnector(id,client:client);return}
         // Pinned or unpinned on the phone: the service sends the new list.

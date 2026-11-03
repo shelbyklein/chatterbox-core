@@ -33,9 +33,11 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         static let finished = NSToolbarItem.Identifier("chatterbox.finished")
         static let automations = NSToolbarItem.Identifier("chatterbox.automations")
         static let feedback = NSToolbarItem.Identifier("chatterbox.feedback")
-        /// The views on the left (chat, Studios, Command Center); usage and the terminal; Settings last.
-        /// New chats start from the sidebar, the Studios page and Cmd-N, not the toolbar.
-        static let all: [NSToolbarItem.Identifier] = [title, views, .flexibleSpace,
+        /// Home's Desk (DeskView.swift): what needs you, work to place, what's working.
+        static let desk = NSToolbarItem.Identifier("chatterbox.desk")
+        /// The views on the left (chat, Studios, Command Center), then the Desk; usage and the
+        /// terminal; Settings last. New chats start from the sidebar, the Studios page and Cmd-N.
+        static let all: [NSToolbarItem.Identifier] = [title, views, desk, .flexibleSpace,
                                                        automations, usage, terminal, finished, feedback, .space, settings, newChat]
         static let chat: [NSToolbarItem.Identifier] = [usage, images, terminal]
     }
@@ -88,7 +90,10 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 let page = AppPreferences.defaults.string(forKey: "macHomePage")
-                if page != self.lastHomePage { self.lastHomePage = page; self.apply() }
+                let selection = AppPreferences.defaults.string(forKey: StudioSelection.key)
+                if page != self.lastHomePage || selection != self.lastHomeSelection {
+                    self.lastHomePage = page; self.lastHomeSelection = selection; self.apply()
+                }
             }
         }
         applyTheme()
@@ -120,6 +125,9 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
     private var replaced: NSKeyValueObservation?
     private var pageObserver: NSObjectProtocol?
     private var lastHomePage: String?
+    /// Home's left-column choice: the Desk has its own title and button.
+    private var lastHomeSelection: String?
+    private var lastDeskCount: Int?
     private var recentReinstalls: [Date] = []
     private var lastViewCounts: Attention.ViewCounts?
     /// The view button apply() last highlighted; a click changes one, which tells pickView which.
@@ -173,8 +181,9 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
     private func apply() {
         let overview = model.showingSettings || model.showingAutomations || model.showingCommandCenter || model.showingHome
         let session = overview ? nil : bridge.session
+        let desk = model.showingDesk
         let title = model.showingSettings ? "Settings" : model.showingAutomations ? "Automations" : model.showingCommandCenter ? "Command Center"
-            : model.showingHome ? "Studios" : model.selected?.title ?? session?.title ?? "Chatterbox"
+            : model.showingHome ? (desk ? "Desk" : "Studios") : model.selected?.title ?? session?.title ?? "Chatterbox"
         if window?.title != title { window?.title = title }
         if titleLabel.stringValue != title { titleLabel.stringValue = title }
         titleLabel.toolTip = title
@@ -183,7 +192,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
 
         // Which of the left-hand views is showing; none while Settings is.
         if let views = items[ID.views] as? NSToolbarItemGroup {
-            let index = model.showingSettings || model.showingAutomations ? -1 : model.showingCommandCenter ? 3 : (model.showingHome || model.showingStudiosSidebar) ? 1 : model.showingChatsSidebar ? 2 : 0
+            let index = model.showingSettings || model.showingAutomations || desk ? -1 : model.showingCommandCenter ? 3 : (model.showingHome || model.showingStudiosSidebar) ? 1 : model.showingChatsSidebar ? 2 : 0
             // Set here, one or none (Settings, Automations): a select-one group always keeps one.
             viewIndex = index
             for i in views.subitems.indices where views.isSelected(at: i) != (i == index) { views.setSelected(i == index, at: i) }
@@ -198,8 +207,16 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
                 }
             }
         }
-        let selected = model.showingSettings ? ID.settings : model.showingAutomations ? ID.automations : nil
+        let selected = model.showingSettings ? ID.settings : model.showingAutomations ? ID.automations : desk ? ID.desk : nil
         if toolbar.selectedItemIdentifier != selected { toolbar.selectedItemIdentifier = selected }
+
+        // The Desk's badge: what needs you and what waits to be placed.
+        let deskCount = DeskModel.shared.badgeCount(in: model)
+        if deskCount != lastDeskCount, let item = items[ID.desk] {
+            lastDeskCount = deskCount
+            item.image = Self.viewImage("tray", count: deskCount)
+            item.toolTip = Self.deskTip + (deskCount > 0 ? " · \(deskCount) waiting on you or to be placed" : " · Nothing waiting")
+        }
 
         // Global actions keep their place even when there is no single chat to act on.
         items[ID.terminal]?.isEnabled = session != nil
@@ -210,7 +227,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { ID.all }
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { ID.all }
     /// The view buttons mark the view that's showing.
-    func toolbarSelectableItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { [ID.settings, ID.automations] }
+    func toolbarSelectableItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { [ID.settings, ID.automations, ID.desk] }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier,
                  willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
@@ -264,6 +281,9 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
             item = hosted(id, "Finished sessions", FinishedChatsBell())
         case ID.automations:
             item = button(id, "clock.arrow.circlepath", "Automations", "All project automations", #selector(toggleAutomations))
+        case ID.desk:
+            item = button(id, "tray", "Desk", Self.deskTip, #selector(showDeskPage))
+            item.image = Self.viewImage("tray", count: 0)
         default:
             return nil
         }
@@ -349,6 +369,8 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         model.showingHome = true
         apply()
     }
+    @objc private func showDeskPage() { model.showDesk(); apply() }
+    private static let deskTip = "Desk: what needs you, work to place, and what's working (\u{2318}0)"
     @objc private func toggleCommandCenter() { model.showingCommandCenter.toggle() }
     @objc private func toggleSettings() { model.showingSettings.toggle() }
     @objc private func sendFeedback() { model.startFeedback(from: toolbar.items.first?.view?.window ?? NSApp.keyWindow ?? NSApp.mainWindow) }
