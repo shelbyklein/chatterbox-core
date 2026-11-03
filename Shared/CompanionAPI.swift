@@ -294,6 +294,78 @@ enum Companion {
         var height: Double
     }
 
+    // MARK: - The Desk (plans/front-desk.md)
+
+    /// The Desk: what needs Shelby, requests waiting to be placed, and what's working. It
+    /// never does work itself; starting a request opens a session in its Studio or project.
+    struct Desk: Codable {
+        var revision: Int
+        var needsYou: [DeskWaiting]
+        var incoming: [DeskRequest]
+        var working: [DeskWorking]
+    }
+
+    /// A session waiting on Shelby, with what it asks.
+    struct DeskWaiting: Codable, Identifiable, Hashable {
+        /// The waiting item (an approval, a plan or questions); the session's id when it's
+        /// waiting on a reply in plain text.
+        var id: UUID
+        var chatID: UUID
+        var title: String
+        /// The session's Studio or project, if it has one.
+        var place: String?
+        /// "approval", "plan", "questions" or "reply".
+        var kind: String
+        /// What it asks, short.
+        var text: String
+        var questions: [Question]? = nil
+    }
+
+    /// Where work goes: a Studio, a project (its work starts as a Sidechat of it), or loose.
+    struct DeskPlace: Codable, Hashable, Identifiable {
+        /// "studio", "project" or "loose".
+        var kind: String
+        /// The Studio's id, or the project's own session id; nil for loose.
+        var id: UUID?
+        var name: String
+        /// What belongs there: the Studio's instructions or the project's brief.
+        var detail: String? = nil
+    }
+
+    /// Work waiting to be placed and started.
+    struct DeskRequest: Codable, Identifiable, Hashable {
+        var id: UUID
+        var text: String
+        /// Who asked: "you" (typed at the Desk) or "claude" (the connector); more sources later.
+        var source: String
+        var createdAt: Date
+        /// Where the Desk suggests it goes; nil when nothing clearly fits.
+        var proposed: DeskPlace?
+        /// A line from the asker (why that place, or the plan).
+        var note: String? = nil
+    }
+
+    struct DeskWorking: Codable, Identifiable, Hashable {
+        var id: UUID
+        var title: String
+        var place: String?
+    }
+
+    /// POST /v1/desk: a new request. `place` names a Studio or project to propose instead of
+    /// the Desk's own guess.
+    struct DeskAddRequest: Codable {
+        var text: String
+        var source: String? = nil
+        var place: String? = nil
+        var note: String? = nil
+    }
+
+    /// POST /v1/desk/<id>/start: start it where proposed, or in `place` instead.
+    struct DeskStartRequest: Codable {
+        var place: DeskPlace? = nil
+        var agent: String? = nil
+    }
+
     /// Pin to Top on the Mac, or not.
     struct PinRequest: Codable {
         var pinned: Bool
