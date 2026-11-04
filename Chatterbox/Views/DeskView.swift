@@ -12,7 +12,7 @@ import SwiftUI
 // something, what was silenced, sessions ready to mark complete and those done come from the
 // background service: socket operation "desk" (action get, add, start, ignore, silence,
 // complete, reopen, places, threads or options, with the HTTP API's bodies and replies), which
-// sends "desk.changed" when they change. Start there opens a step
+// sends "desk.changed" when they change. Start opens a step
 // (DeskStartPopover): the place, a session already there doing the same work to continue, or
 // the agent and model for a new one. What starts runs in the background, with a note to open it.
 
@@ -107,7 +107,7 @@ final class DeskModel {
     /// Where requests can go (the "places" action), loaded when a place is being chosen.
     private(set) var places: [Companion.DeskPlace] = []
     private(set) var loadingPlaces = false
-    /// A place chosen with Change place, by request, until it starts.
+    /// A place chosen from the place chip, by request, until it starts.
     private(set) var chosen: [UUID: Companion.DeskPlace] = [:]
     /// Requests being started or ignored.
     private(set) var busy: Set<UUID> = []
@@ -437,7 +437,7 @@ final class DeskModel {
 
     func choose(_ place: Companion.DeskPlace, for request: Companion.DeskRequest) { chosen[request.id] = place }
 
-    /// Start there, as its step chose: the service starts a session in the place shown (its
+    /// Start, as its step chose: the service starts a session in the place shown (its
     /// first message is the request's text), on `settings`' agent and model when given, or sends
     /// the request to `continuing`, a session already there. It runs in the background.
     func start(_ request: Companion.DeskRequest, continuing: Companion.DeskThread? = nil, settings: Companion.SettingsRequest? = nil) async {
@@ -987,19 +987,15 @@ private struct DeskRequestRow: View {
                 .deskFrame("chip:\(request.id)")
             HStack(spacing: 8) {
                 if busy { ProgressView().controlSize(.small) }
-                Button(busy ? "Starting\u{2026}" : "Start there") { starting = true }
+                // The place chip above changes the place; with none yet, Start asks for one first.
+                Button(busy ? "Starting\u{2026}" : "Start") { if place == nil { choosing = true } else { starting = true } }
                     .buttonStyle(.accent)
-                    .disabled(place == nil || busy)
-                    .help(place.map { "Start in \($0.name): choose the model, or continue a session already there" } ?? "Choose a place first")
+                    .disabled(busy)
+                    .help(place.map { "Start in \($0.name): choose the model, or continue a session already there" } ?? "Choose a place, then start")
                     .popover(isPresented: $starting, arrowEdge: .bottom) {
                         DeskStartPopover(step: DeskStartStep(request: request, desk: desk)) { starting = false }
                     }
                     .deskFrame("start:\(request.id)")
-                if place != nil {
-                    Button("Change place") { choosing = true }
-                        .disabled(busy)
-                        .deskFrame("change:\(request.id)")
-                }
                 Spacer(minLength: 0)
                 Button("Ignore") { Task { await desk.ignore(request) } }
                     .buttonStyle(.borderless)
@@ -1034,7 +1030,7 @@ private struct DeskPlaceChip: View {
     }
 }
 
-/// Start there's step, for one request: sessions already in its place doing the same work
+/// Start's step, for one request: sessions already in its place doing the same work
 /// (a clear match is chosen), and a new session's agent and model as New Chat would start one
 /// there. Tests drive it directly.
 @MainActor
@@ -1107,7 +1103,7 @@ final class DeskStartStep {
     }
 }
 
-/// Start there: the place (Change picks another), "Continue in" sessions already there doing
+/// Start: the place (Change picks another), "Continue in" sessions already there doing
 /// the same work, or a new session with its agent and model. Start sends the choice.
 struct DeskStartPopover: View {
     @State var step: DeskStartStep
@@ -1132,7 +1128,7 @@ struct DeskStartPopover: View {
     private var content: some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Start there").font(.headline)
+                Text("Start").font(.headline)
                 Text(step.request.text).font(.callout).foregroundStyle(.secondary).lineLimit(2)
             }
             if let place = step.place {
@@ -1248,7 +1244,7 @@ private struct DeskStartChoice: View {
     }
 }
 
-/// Change place: every Studio and project, with what belongs in each.
+/// The place chip's list: every Studio and project, with what belongs in each.
 struct DeskPlacePicker: View {
     let request: Companion.DeskRequest
     let desk: DeskModel

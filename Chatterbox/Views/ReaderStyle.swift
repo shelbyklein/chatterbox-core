@@ -228,7 +228,7 @@ struct HighlightButtonStyle: ButtonStyle {
 }
 
 #if os(macOS)
-/// The Mac's primary action (Allow, Start there, Mark complete, Start): filled with the accent,
+/// The Mac's primary action (Allow, Start, Mark complete): filled with the accent,
 /// white text, as the phone's filled Approve. Unlike the system's prominent style it stays
 /// filled in a window that isn't frontmost, so the eye always has one place to land.
 struct AccentButtonStyle: ButtonStyle {

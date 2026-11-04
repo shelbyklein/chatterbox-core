@@ -63,10 +63,12 @@ struct MobileDeskView: View {
     /// Wide, the board has been scrolled to Needs you once.
     @State private var showedNeedsYou = false
     @State private var busy = Set<UUID>()
-    /// Places picked with Change Place, per request; Start There uses them.
+    /// Places picked from the place chip, per request; Start uses them.
     @State private var chosen: [UUID: Companion.DeskPlace] = [:]
     @State private var choosing: Companion.DeskRequest?
-    /// The request in Start There's step (MobileDeskStartSheet).
+    /// Start was tapped with no place: once one is picked, its step opens.
+    @State private var startAfterChoosing: Companion.DeskRequest?
+    /// The request in Start's step (MobileDeskStartSheet).
     @State private var starting: Companion.DeskRequest?
     /// Why the Desk couldn't be read, shown until it can.
     @State private var loadProblem: String?
@@ -148,7 +150,9 @@ struct MobileDeskView: View {
         .sheet(isPresented: $showingAutomations, onDismiss: {
             if let id = automationPick { automationPick = nil; open(id) }
         }) { MobileAutomationsView { automationPick = $0 }.environment(store) }
-        .sheet(item: $choosing) { request in
+        .sheet(item: $choosing, onDismiss: {
+            if let request = startAfterChoosing { startAfterChoosing = nil; if place(for: request) != nil { start(request) } }
+        }) { request in
             MobileDeskPlacePicker(current: place(for: request)) { chosen[request.id] = $0 }
                 .environment(store)
         }
@@ -563,9 +567,10 @@ struct MobileDeskView: View {
         }
     }
 
-    /// Start There: first its step (the place, a session already there to continue, the model).
+    /// Start: first its step (the place, a session already there to continue, the model); with
+    /// no place yet, the places first.
     private func start(_ request: Companion.DeskRequest) {
-        guard place(for: request) != nil else { choosing = request; return }
+        guard place(for: request) != nil else { startAfterChoosing = request; choosing = request; return }
         guard !busy.contains(request.id) else { return }
         starting = request
     }
@@ -1042,7 +1047,7 @@ private struct DeskSwipe<Content: View>: View {
 private struct DeskRequestCard: View {
     let request: Companion.DeskRequest
     let place: Companion.DeskPlace?
-    /// Picked here with Change Place, instead of the Desk's proposal.
+    /// Picked here from the place chip, instead of the Desk's proposal.
     let changed: Bool
     let busy: Bool
     let start: () -> Void
@@ -1089,25 +1094,18 @@ private struct DeskRequestCard: View {
                     Text("Working on it…").font(.footnote).foregroundStyle(Color.metadata)
                 }
             } else {
-                // In a narrow column, Ignore goes under the others.
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 8) { startButtons; Spacer(minLength: 0); ignoreButton }
-                    VStack(alignment: .leading, spacing: 8) { HStack(spacing: 8) { startButtons }; ignoreButton }
-                }
+                HStack(spacing: 8) { startButton; Spacer(minLength: 0); ignoreButton }
             }
         }
         .deskCard()
     }
 
-    @ViewBuilder private var startButtons: some View {
-        // Nothing starts until it has a place.
-        Button("Start There", action: start)
+    // The place chip above changes the place; with none yet, Start asks for one first.
+    private var startButton: some View {
+        Button("Start", action: start)
             .buttonStyle(.borderedProminent)
-            .disabled(place == nil)
+            .accessibilityHint(place == nil ? "Choose a place, then start" : "Choose the model, or continue a session already there")
             .accessibilityIdentifier("desk-start-\(request.id.uuidString)")
-        Button(place == nil ? "Choose Place" : "Change Place", action: change)
-            .buttonStyle(.bordered)
-            .accessibilityIdentifier("desk-\(place == nil ? "choose" : "change")-\(request.id.uuidString)")
     }
 
     private var ignoreButton: some View {
@@ -1118,7 +1116,7 @@ private struct DeskRequestCard: View {
     }
 }
 
-/// Start There's step: where it goes (with Change), a session already there doing the same
+/// Start's step: where it goes (with Change), a session already there doing the same
 /// work to continue instead (a clear match is chosen), and for a new session its agent and
 /// model, as New Chat would start one there. Start sends the choice; nothing opens.
 private struct MobileDeskStartSheet: View {
@@ -1165,7 +1163,7 @@ private struct MobileDeskStartSheet: View {
                 if continuing == nil { modelSection }
             }
             .tint(.blue)
-            .navigationTitle("Start There")
+            .navigationTitle("Start")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
@@ -1288,7 +1286,7 @@ private struct MobileDeskStartSheet: View {
     }
 }
 
-/// Change Place: every Studio and project, with what belongs there.
+/// The place chip's list: every Studio and project, with what belongs there.
 private struct MobileDeskPlacePicker: View {
     let current: Companion.DeskPlace?
     let pick: (Companion.DeskPlace) -> Void
