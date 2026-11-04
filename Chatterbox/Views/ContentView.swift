@@ -4,7 +4,6 @@ import SwiftUI
 struct ContentView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.openWindow) private var openWindow
-    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var chatToolbar = ChatToolbarBridge()
     @State private var windowToolbarOwner: WindowToolbar?
@@ -591,19 +590,14 @@ extension ContentView {
             }
         }
             .contentShape(Rectangle())
-            // The open chat is white with dark text, so it's obvious at a glance; drawn in the
-            // light appearance so its secondary text and pills stay readable on white.
-            .environment(\.colorScheme, model.selectedID == session.id && !session.isWaitingOnYou ? .light : colorScheme)
             .onTapGesture { model.selectedID = session.id }
             // Drag onto a Studio to move the chat in. Project chats stay put.
             .modifier(ChatDrag(id: session.record.projectFolder == nil ? session.id : nil))
             .listRowBackground(
-                // Waiting on you wins over selection: the whole row turns yellow.
+                // The open chat: a quiet accent tint. Waiting on you: the leading bar (SessionMarks).
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(session.isWaitingOnYou ? Color.yellow.opacity(0.22)
-                          : model.selectedID == session.id ? Color.white : Color.clear)
-                    .overlay(RoundedRectangle(cornerRadius: 8)
-                        .strokeBorder(Color.yellow.opacity(session.isWaitingOnYou ? 0.7 : 0), lineWidth: 1))
+                    .fill(model.selectedID == session.id ? SessionMarks.selectedFill : Color.clear)
+                    .needsYouBar(session.isWaitingOnYou)
                     .padding(.horizontal, 10)
             )
             .contextMenu { threadMenu(session) }
@@ -869,7 +863,7 @@ private struct StudioRow: View {
             Spacer(minLength: 0)
             if collapsed {
                 if chats.contains(where: \.isWaitingOnYou) {
-                    Circle().fill(Color.yellow).frame(width: 7, height: 7).help("A session here is waiting on you")
+                    Circle().fill(Color.attention).frame(width: 7, height: 7).help("A session here is waiting on you")
                 } else if chats.contains(where: { $0.isRunning || $0.hasBackgroundWork }) {
                     ActivitySpinner(color: .secondary).frame(width: 10, height: 10).help("A session here is working")
                 } else if !chats.isEmpty {
@@ -1015,7 +1009,7 @@ struct SidebarRow: View {
                     // What happened last, rather than the chat's title.
                     if let summary = session.lastActionSummary ?? (session.title != "New chat" ? session.title : nil) {
                         Text(summary).font(.caption.weight(session.isWaitingOnYou ? .semibold : .regular))
-                            .foregroundStyle(session.isWaitingOnYou ? Color.yellow : Color.secondary).lineLimit(1)
+                            .foregroundStyle(session.isWaitingOnYou ? Color.attention : Color.metadata).lineLimit(1)
                             .help(session.title)
                     }
                 }
@@ -1494,14 +1488,13 @@ extension ContentView {
     }
 
     private func pinnedRow(_ session: ChatSession) -> some View {
-        let background: Color = session.isWaitingOnYou ? .yellow.opacity(0.22)
-            : model.selectedID == session.id ? .white : .clear
-        // Compact, like Activity: status, then the title.
+        // Compact, like Activity: status, then the title. Selected: the accent tint; waiting on
+        // you: the leading bar (SessionMarks).
         return PinnedSidebarRow(session: session)
             .padding(.horizontal, 6)
-            .background(RoundedRectangle(cornerRadius: 6).fill(background))
+            .background(RoundedRectangle(cornerRadius: 6).fill(model.selectedID == session.id ? SessionMarks.selectedFill : Color.clear))
+            .needsYouBar(session.isWaitingOnYou)
             .contentShape(Rectangle())
-            .environment(\.colorScheme, model.selectedID == session.id && !session.isWaitingOnYou ? .light : colorScheme)
             .onTapGesture { model.selectedID = session.id }
             .modifier(ChatDrag(id: session.record.projectFolder == nil ? session.id : nil))
             .contextMenu { threadMenu(session) }
@@ -1828,7 +1821,7 @@ private struct StudioRail: View {
                 }
             }
             .padding(.horizontal, 8).padding(.vertical, 6)
-            .background(selected ? Color.primary.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 6))
+            .background(selected ? SessionMarks.selectedFill : .clear, in: RoundedRectangle(cornerRadius: 6))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

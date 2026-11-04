@@ -10,7 +10,7 @@ enum StudioSessionStatus: String {
 
     var color: Color {
         switch self {
-        case .needsYou: .orange
+        case .needsYou: .attention
         case .working: .blue
         case .review: .green
         case .idle: .secondary
@@ -308,7 +308,7 @@ private struct StudioColumn: View {
                 if let count { Text("\(count)").font(.caption.monospacedDigit()).foregroundStyle(.secondary) }
             }
             .padding(.horizontal, 10).padding(.vertical, 7)
-            .background(selected ? Color.primary.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 7))
+            .background(selected ? SessionMarks.selectedFill : .clear, in: RoundedRectangle(cornerRadius: 7))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -391,10 +391,10 @@ private struct StudioPreviewCard: View {
                 HStack(alignment: .firstTextBaseline) {
                     Text(session.title).font(.headline).lineLimit(1)
                     Spacer(minLength: 6)
-                    Text(ShortAge.string(since: summary.lastActivity)).font(.caption).foregroundStyle(.secondary)
+                    Text(ShortAge.string(since: summary.lastActivity)).font(.caption).foregroundStyle(Color.metadata)
                 }
                 StudioAttentionLabel(status: summary.status)
-                Text(summary.note).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
+                Text(summary.note).font(.subheadline).foregroundStyle(Color.metadata).lineLimit(2)
             }
             .padding(.horizontal, 2)
         }
@@ -403,8 +403,9 @@ private struct StudioPreviewCard: View {
         .background(RoundedRectangle(cornerRadius: 14).fill(Color.primary.opacity(hovered ? 0.08 : 0.055)))
         .overlay {
             RoundedRectangle(cornerRadius: 14)
-                .strokeBorder(summary.status == .needsYou ? Color.orange : Color.primary.opacity(hovered ? 0.28 : 0.1), lineWidth: summary.status == .needsYou ? 2 : 1)
+                .strokeBorder(Color.primary.opacity(hovered ? 0.28 : 0.1))
         }
+        .needsYouBar(summary.status == .needsYou)
         .contentShape(RoundedRectangle(cornerRadius: 14)) }
         .buttonStyle(.plain)
         .onHover { hovered = $0 }
@@ -514,16 +515,15 @@ private struct InspectorRow: View {
                 }
                 Text(session.title).font(.body.weight(.semibold)).lineLimit(1)
                 StudioAttentionLabel(status: summary.status)
-                Text(summary.note).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                Text(ShortAge.string(since: summary.lastActivity)).font(.caption2).foregroundStyle(.secondary)
+                Text(summary.note).font(.caption).foregroundStyle(Color.metadata).lineLimit(2)
+                Text(ShortAge.string(since: summary.lastActivity)).font(.caption2).foregroundStyle(Color.metadata)
             }
             Spacer(minLength: 0)
         }
         .padding(10)
-        .background(selected ? Color.primary.opacity(0.12) : hovered ? Color.primary.opacity(0.06) : .clear, in: RoundedRectangle(cornerRadius: 10))
-        .overlay {
-            if summary.status == .needsYou { RoundedRectangle(cornerRadius: 10).strokeBorder(Color.orange.opacity(0.7)) }
-        }
+        // Selected: the accent tint; needs you: the leading bar (SessionMarks), not an outline.
+        .background(selected ? SessionMarks.selectedFill : hovered ? Color.primary.opacity(0.06) : .clear, in: RoundedRectangle(cornerRadius: 10))
+        .needsYouBar(summary.status == .needsYou)
         .contentShape(Rectangle()) }
         .buttonStyle(.plain)
         .padding(.leading, session.record.sidechatOf != nil ? 20 : 0)
@@ -669,7 +669,7 @@ private struct StudioAttentionLabel: View {
         if status == .needsYou || status == .review {
             Text(status == .review ? "New reply" : status.rawValue)
                 .font(.caption.weight(.medium))
-                .foregroundStyle(status == .needsYou ? Color.orange : .blue)
+                .foregroundStyle(status == .needsYou ? Color.attention : .blue)
         }
     }
 }

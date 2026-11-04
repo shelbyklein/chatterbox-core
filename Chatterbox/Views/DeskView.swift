@@ -64,6 +64,9 @@ struct DeskSections: Equatable {
     var working: [Companion.DeskWorking] = []
     var ready: [Companion.DeskReady] = []
     var done: [Companion.DeskDone] = []
+    /// Silenced (on any device), still waiting in their sessions: the quiet row at the foot of
+    /// Needs you, each with Unsilence. Not counted in Needs you.
+    var silenced: [Companion.DeskWaiting] = []
 
     func count(_ section: Section) -> Int {
         switch section {
@@ -113,6 +116,10 @@ final class DeskModel {
     /// Sessions being marked complete or reopened here, hidden until the service answers.
     private(set) var completing: Set<UUID> = []
     private(set) var reopening: Set<UUID> = []
+    /// Silenced things being put back (DeskNeed.silenceKey), off the silenced list until the service answers.
+    private(set) var unsilencing: Set<String> = []
+    /// The last thing silenced here: a few seconds to Undo it.
+    var silencedNote: DeskNeed?
     private(set) var adding = false
     /// What last went wrong, shown under the header.
     var problem: String?
@@ -264,7 +271,8 @@ final class DeskModel {
         let done = (snapshot?.done ?? []).filter { item in
             !reopening.contains(item.id) && all[item.id].map { $0.record.archivedAt != nil } ?? true
         }
-        return DeskSections(needsYou: needs.map(\.need), incoming: snapshot?.incoming ?? [], working: working, ready: ready, done: done)
+        let silencedNow = (snapshot?.silenced ?? []).filter { !unsilencing.contains(DeskNeed.silenceKey(chatID: $0.chatID, id: $0.id, reply: $0.kind == "reply" ? $0.text : nil)) }
+        return DeskSections(needsYou: needs.map(\.need), incoming: snapshot?.incoming ?? [], working: working, ready: ready, done: done, silenced: silencedNow)
     }
 
     /// What silencing a ready session hides: the session, as its last reply says.
@@ -340,10 +348,25 @@ final class DeskModel {
         do {
             load(try await send(body).decode(Companion.Desk.self))
             problem = nil
+            // A few seconds to take it back; it's also listed under "silenced".
+            silencedNote = need
         } catch let error where error.localizedDescription.contains("unsupported_operation") {
             // The rest of the Desk still works with an older service.
             problem = "Silence works once the background service restarts with this version of Chatterbox."
         } catch { note(error, "silence it") }
+    }
+
+    /// Unsilence (Undo, or the silenced list): back on the Desk on every device, named as it
+    /// was silenced.
+    func unsilence(_ item: Companion.DeskWaiting) async {
+        let reply = item.kind == "reply" ? item.text : nil
+        let key = DeskNeed.silenceKey(chatID: item.chatID, id: item.id, reply: reply)
+        guard canSilence, unsilencing.insert(key).inserted else { return }
+        defer { unsilencing.remove(key) }
+        if silencedNote?.silenceKey == key { silencedNote = nil }
+        var body: [String: JSON] = ["action": "unsilence", "chatID": .string(item.chatID.uuidString), "id": .string(item.id.uuidString)]
+        if let reply { body["text"] = .string(reply) }
+        await change(body, doing: "unsilence it", older: "Unsilence works once the background service restarts with this version of Chatterbox.")
     }
 
     /// Silence a session ready to mark complete: off the board on every device until something
@@ -526,19 +549,30 @@ enum DeskText {
     static func icon(kind: String) -> String {
         switch kind {
         case "plan": "list.bullet.clipboard"
-        case "questions": "questionmark.bubble"
-        case "reply": "text.bubble"
-        default: "hand.raised"
+        case "questions": "questionmark.bubble.fill"
+        case "reply": "text.bubble.fill"
+        default: "hand.raised.fill"
         }
     }
 
+    /// One word per kind, as the phone and the session's cards say it.
     static func label(kind: String) -> String {
         switch kind {
         case "plan": "Plan"
-        case "questions": "Question"
-        case "reply": "Asked you"
-        default: "Approval"
+        case "questions", "reply": "Question"
+        default: "Permission"
         }
+    }
+
+    /// Where a waiting session is, as its approval card says it everywhere: "USA Archery ›
+    /// Deploy the site", or "Chatterbox › Mac Desk page" for a project's session.
+    static func context(title: String, place: String?, subtitle: String?) -> String {
+        [place.flatMap { $0 == title ? nil : $0 }, title, subtitle].compactMap { $0 }.joined(separator: " \u{203A} ")
+    }
+
+    @MainActor static func context(of session: ChatSession, in model: AppModel) -> String {
+        let name = CompanionMapper.heading(session)
+        return context(title: name.title, place: DeskModel.placeName(of: session, in: model), subtitle: name.subtitle)
     }
 
     static func icon(place: Companion.DeskPlace) -> String {
@@ -647,7 +681,7 @@ struct DeskView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Text("Desk").font(.largeTitle.weight(.bold)).lineLimit(1)
-                Text(sections.summary).font(.title3).foregroundStyle(.secondary).lineLimit(1)
+                Text(sections.summary).font(.title3).foregroundStyle(Color.metadata).lineLimit(1)
                     .deskFrame("summary")
                 Spacer()
             }
@@ -665,6 +699,24 @@ struct DeskView: View {
                 .deskFrame("startedNote")
                 .task(id: started.chat) { try? await Task.sleep(for: .seconds(8)); if desk.startedNote?.chat == started.chat { desk.startedNote = nil } }
             }
+            // Silenced: a few seconds to take it back.
+            if let silenced = desk.silencedNote {
+                HStack(spacing: 8) {
+                    Image(systemName: "bell.slash.fill").foregroundStyle(.indigo)
+                    Text("Silenced \(DeskText.context(title: silenced.waiting.title, place: silenced.waiting.place, subtitle: silenced.waiting.subtitle))").lineLimit(1)
+                    Button("Undo") { Task { await desk.unsilence(silenced.waiting) } }
+                        .buttonStyle(.link)
+                        .deskFrame("undoSilence")
+                    Button { desk.silencedNote = nil } label: { Image(systemName: "xmark") }
+                        .buttonStyle(.borderless).help("Dismiss").accessibilityLabel("Dismiss")
+                }
+                .font(.callout)
+                .deskFrame("silencedNote")
+                .task(id: silenced.silenceKey) {
+                    try? await Task.sleep(for: .seconds(8))
+                    if desk.silencedNote?.silenceKey == silenced.silenceKey { desk.silencedNote = nil }
+                }
+            }
             if let problem = desk.problem {
                 HStack(spacing: 6) {
                     Image(systemName: desk.unsupported ? "info.circle" : "exclamationmark.triangle")
@@ -679,7 +731,7 @@ struct DeskView: View {
 
     private var askField: some View {
         HStack(spacing: 8) {
-            Image(systemName: "plus.bubble").foregroundStyle(.secondary)
+            Image(systemName: "plus.bubble").foregroundStyle(Color.metadata)
             TextField("What needs doing?", text: $ask).textFieldStyle(.plain)
                 .onSubmit(submit)
                 .disabled(desk.adding)
@@ -708,9 +760,9 @@ struct DeskView: View {
             HStack(spacing: 8) {
                 Text(section.rawValue).font(.headline).lineLimit(1)
                 Text("\(count)").font(.caption.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(urgent ? Color.white : Color.secondary)
+                    .foregroundStyle(urgent ? Color(nsColor: .windowBackgroundColor) : Color.metadata)
                     .padding(.horizontal, 7).padding(.vertical, 2)
-                    .background(Capsule().fill(urgent ? Color.orange : Color.primary.opacity(0.08)))
+                    .background(Capsule().fill(urgent ? Color.attention : Color.primary.opacity(0.08)))
                     .deskFrame("count:" + section.key)
                 Spacer(minLength: 0)
             }
@@ -720,7 +772,7 @@ struct DeskView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
                     if count == 0 {
-                        Text(section.empty).font(.callout).foregroundStyle(.secondary)
+                        Text(section.empty).font(.callout).foregroundStyle(Color.metadata)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 4).padding(.vertical, 6)
                             .deskFrame("empty:" + section.key)
@@ -743,7 +795,9 @@ struct DeskView: View {
         switch section {
         case .todo: ForEach(sections.incoming) { DeskRequestRow(request: $0, desk: desk) }
         case .working: ForEach(sections.working) { DeskWorkingCard(item: $0, desk: desk) }
-        case .needsYou: ForEach(sections.needsYou) { DeskNeedRow(need: $0, desk: desk) }
+        case .needsYou:
+            ForEach(sections.needsYou) { DeskNeedRow(need: $0, desk: desk) }
+            if !sections.silenced.isEmpty { DeskSilencedRows(items: sections.silenced, desk: desk) }
         case .ready: ForEach(sections.ready) { DeskReadyRow(item: $0, desk: desk) }
         case .done: ForEach(sections.done) { DeskDoneRow(item: $0, desk: desk) }
         }
@@ -772,6 +826,9 @@ private extension View {
 
 // MARK: - Needs you
 
+/// A session waiting on you. An approval or plan is the one approval card (ApprovalPanel):
+/// Allow, Allow for Session or Deny right here. Questions and a reply that asks: Open. The bell
+/// silences it (with Undo); the square opens its session.
 private struct DeskNeedRow: View {
     @Environment(AppModel.self) private var model
     let need: DeskNeed
@@ -779,34 +836,42 @@ private struct DeskNeedRow: View {
     @State private var hovered = false
 
     private var waiting: Companion.DeskWaiting { need.waiting }
-    private var isPlan: Bool { waiting.kind == "plan" }
+    private var context: String { DeskText.context(title: waiting.title, place: waiting.place, subtitle: waiting.subtitle) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Image(systemName: DeskText.icon(kind: waiting.kind)).foregroundStyle(.orange)
-                Text(DeskText.label(kind: waiting.kind)).font(.caption.weight(.semibold)).foregroundStyle(.orange)
-                if let place = waiting.place, place != waiting.title { DeskPlaceLabel(name: place) }
-                Spacer(minLength: 4)
-                if desk.canSilence { silenceButton }
-            }
-            Text(waiting.title).font(.headline).lineLimit(2)
-            // A project's session: its own title under the project's name.
-            if let subtitle = waiting.subtitle {
-                Text(subtitle).font(.subheadline.weight(.medium)).lineLimit(2)
-                    .deskFrame("subtitle:\(need.id)")
-            }
-            Text(waiting.text).font(.subheadline).foregroundStyle(.secondary).lineLimit(4)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            if let detail = need.detail {
-                Text(detail).font(.system(.caption, design: .monospaced)).lineLimit(3)
-                    .padding(.horizontal, 8).padding(.vertical, 5)
+            if need.canDecide {
+                ApprovalPanel(context: context, ask: waiting.text, command: need.detail, isPlan: waiting.kind == "plan",
+                              frame: { name, rect in
+                                  #if DEBUG
+                                  DeskDebug.frames["\(name):\(need.id)"] = rect
+                                  #endif
+                              }) { desk.decide(need, $0, in: model) }
+            } else {
+                Label(DeskText.label(kind: waiting.kind), systemImage: DeskText.icon(kind: waiting.kind))
+                    .font(.caption.weight(.semibold)).foregroundStyle(Color.attention)
+                Text(context).font(.headline).lineLimit(2)
+                Text(waiting.text).font(.callout).lineLimit(4)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(.quaternary.opacity(0.6)))
+                Button("Open") { desk.open(waiting.chatID, in: model) }
+                    .help(waiting.kind == "questions" ? "Answer in the session" : "Reply in the session")
+                    .padding(.top, 4)
+                    .deskFrame("open:\(need.id)")
             }
-            actions.padding(.top, 4)
         }
-        .deskCard(fill: Color.orange.opacity(hovered ? 0.11 : 0.07), stroke: Color.orange.opacity(0.75), width: 1.5)
+        .deskCard(fill: Color.attention.opacity(hovered ? 0.08 : 0.045), stroke: Color.attention.opacity(0.8), width: 1.5)
+        .overlay(alignment: .topTrailing) {
+            HStack(spacing: 10) {
+                if desk.canSilence { silenceButton }
+                if need.canDecide {
+                    Button { desk.open(waiting.chatID, in: model) } label: { Image(systemName: "arrow.up.forward.square") }
+                        .buttonStyle(.borderless).foregroundStyle(Color.metadata)
+                        .help("Open the session").accessibilityLabel("Open \(waiting.title)")
+                        .deskFrame("open:\(need.id)")
+                }
+            }
+            .padding(12)
+        }
         .onHover { hovered = $0 }
         .contextMenu {
             Button("Open Session") { desk.open(waiting.chatID, in: model) }
@@ -816,7 +881,7 @@ private struct DeskNeedRow: View {
             }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(waiting.title)\(waiting.subtitle.map { ", " + $0 } ?? ""), \(DeskText.label(kind: waiting.kind)): \(waiting.text)")
+        .accessibilityLabel("\(context), \(DeskText.label(kind: waiting.kind)): \(waiting.text)")
         .accessibilityAction(named: "Silence") { Task { await desk.silence(need) } }
         .deskFrame("needs:\(need.id)")
     }
@@ -825,35 +890,60 @@ private struct DeskNeedRow: View {
     private var silenceButton: some View {
         Button { Task { await desk.silence(need) } } label: { Image(systemName: "bell.slash") }
             .buttonStyle(.borderless)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(Color.metadata)
             .help(need.canDecide
                   ? "Silence: take this off the Desk on every device without answering it. It stays waiting in the session."
                   : "Silence: take this off the Desk on every device. A new question from this session shows again.")
             .accessibilityLabel("Silence")
             .deskFrame("silence:\(need.id)")
     }
+}
 
-    private var actions: some View {
-        HStack(spacing: 8) {
-            if need.canDecide {
-                Button("Approve") { desk.decide(need, .approved, in: model) }
-                    .buttonStyle(.borderedProminent)
-                    .help(isPlan ? "Start building, asking before edits (the plan card's Start Building)" : "Allow it this once")
-                    .deskFrame("approve:\(need.id)")
-                Button("Deny") { desk.decide(need, .denied, in: model) }
-                    .help(isPlan ? "Keep planning" : "Don't allow it")
-                    .deskFrame("deny:\(need.id)")
-                Spacer(minLength: 0)
-                Button { desk.open(waiting.chatID, in: model) } label: { Image(systemName: "arrow.up.forward.square") }
-                    .buttonStyle(.borderless).help("Open the session").accessibilityLabel("Open \(waiting.title)")
-                    .deskFrame("open:\(need.id)")
-            } else {
-                Button("Open") { desk.open(waiting.chatID, in: model) }
-                    .help(waiting.kind == "questions" ? "Answer in the session" : "Reply in the session")
-                    .deskFrame("open:\(need.id)")
-                Spacer(minLength: 0)
+/// The foot of Needs you: what was silenced (on any device), folded into one quiet row ("2
+/// silenced"); opened, each with Unsilence, which puts it back on the Desk everywhere.
+private struct DeskSilencedRows: View {
+    let items: [Companion.DeskWaiting]
+    let desk: DeskModel
+    @State private var open = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button { withAnimation(.easeOut(duration: 0.15)) { open.toggle() } } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "bell.slash")
+                    Text("\(items.count) silenced")
+                    Spacer(minLength: 4)
+                    Image(systemName: "chevron.right").font(.caption.weight(.semibold)).rotationEffect(.degrees(open ? 90 : 0))
+                }
+                .font(.callout.weight(.medium)).foregroundStyle(Color.metadata)
+                .padding(.horizontal, 12).padding(.vertical, 9)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Taken off the Desk, still waiting in their sessions")
+            .accessibilityValue(open ? "Shown" : "Hidden")
+            .deskFrame("silencedRow")
+            if open {
+                ForEach(items) { item in
+                    Divider().padding(.leading, 12)
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(DeskText.context(title: item.title, place: item.place, subtitle: item.subtitle)).font(.callout.weight(.medium)).lineLimit(1)
+                            Text("\(DeskText.label(kind: item.kind)): \(item.text)").font(.caption).foregroundStyle(Color.metadata).lineLimit(2)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        Button("Unsilence") { Task { await desk.unsilence(item) } }
+                            .controlSize(.small)
+                            .help("Put it back on the Desk, on every device")
+                            .deskFrame("unsilence:\(item.id)")
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 7)
+                }
             }
         }
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.03)))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.08)))
+        .padding(.top, 4)
     }
 }
 
@@ -861,7 +951,7 @@ private struct DeskNeedRow: View {
 private struct DeskPlaceLabel: View {
     let name: String
     var body: some View {
-        Text(name).font(.caption.weight(.medium)).foregroundStyle(.secondary).lineLimit(1)
+        Text(name).font(.caption.weight(.medium)).foregroundStyle(Color.metadata).lineLimit(1)
             .padding(.horizontal, 7).padding(.vertical, 2)
             .background(Capsule().fill(Color.primary.opacity(0.08)))
     }
@@ -883,10 +973,10 @@ private struct DeskRequestRow: View {
             Text(request.text).font(.body.weight(.medium)).lineLimit(5)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)
-            Text(DeskText.origin(request)).font(.caption).foregroundStyle(.secondary)
+            Text(DeskText.origin(request)).font(.caption).foregroundStyle(Color.metadata)
             if let note = request.note, !note.isEmpty {
                 Label { Text(note) } icon: { Image(systemName: "text.quote") }
-                    .font(.subheadline).foregroundStyle(.secondary).lineLimit(3)
+                    .font(.subheadline).foregroundStyle(Color.metadata).lineLimit(3)
             }
             Button { choosing = true } label: { DeskPlaceChip(place: place) }
                 .buttonStyle(.plain)
@@ -898,7 +988,7 @@ private struct DeskRequestRow: View {
             HStack(spacing: 8) {
                 if busy { ProgressView().controlSize(.small) }
                 Button(busy ? "Starting\u{2026}" : "Start there") { starting = true }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.accent)
                     .disabled(place == nil || busy)
                     .help(place.map { "Start in \($0.name): choose the model, or continue a session already there" } ?? "Choose a place first")
                     .popover(isPresented: $starting, arrowEdge: .bottom) {
@@ -933,13 +1023,13 @@ private struct DeskPlaceChip: View {
         HStack(spacing: 5) {
             Image(systemName: place.map(DeskText.icon(place:)) ?? "mappin.and.ellipse")
             Text(place?.name ?? "Choose a place").lineLimit(1)
-            Image(systemName: "chevron.down").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+            Image(systemName: "chevron.down").font(.caption2.weight(.semibold)).foregroundStyle(Color.metadata)
         }
         .font(.callout.weight(.medium))
-        .foregroundStyle(place == nil ? Color.orange : Color.primary)
+        .foregroundStyle(place == nil ? Color.attention : Color.primary)
         .padding(.horizontal, 10).padding(.vertical, 5)
-        .background(Capsule().fill(place == nil ? Color.orange.opacity(0.12) : Color.primary.opacity(0.08)))
-        .overlay(Capsule().strokeBorder(place == nil ? Color.orange.opacity(0.5) : Color.primary.opacity(0.14)))
+        .background(Capsule().fill(place == nil ? Color.attention.opacity(0.12) : Color.primary.opacity(0.08)))
+        .overlay(Capsule().strokeBorder(place == nil ? Color.attention.opacity(0.6) : Color.primary.opacity(0.14)))
         .contentShape(Capsule())
     }
 }
@@ -1066,7 +1156,7 @@ struct DeskStartPopover: View {
                     Task { await step.start() }
                 }
                 .keyboardShortcut(.defaultAction)
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.accent)
                 .disabled(!step.loaded)
                 .deskFrame("startConfirm")
             }
@@ -1247,14 +1337,14 @@ private struct DeskWorkingCard: View {
             HStack(spacing: 6) {
                 ActivitySpinner(color: session.map { appearance.style.color(for: $0) } ?? .blue)
                     .frame(width: 10, height: 10)
-                Text(item.since.map { "Working · \(DeskText.ago($0))" } ?? "Working").font(.caption.weight(.semibold)).foregroundStyle(.blue)
+                Text(item.since.map { "Working · \(DeskText.ago($0))" } ?? "Working").font(.caption.weight(.semibold)).foregroundStyle(Color.metadata)
                 if let place = item.place, place != item.title { DeskPlaceLabel(name: place) }
                 Spacer(minLength: 0)
             }
             Text(item.title).font(.headline).lineLimit(2)
             if let subtitle = item.subtitle { Text(subtitle).font(.subheadline.weight(.medium)).lineLimit(2) }
             if let activity = item.activity, !activity.isEmpty {
-                Text(activity).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
+                Text(activity).font(.subheadline).foregroundStyle(Color.metadata).lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             Button("Open") { desk.openWorking(item.id, in: model) }
@@ -1283,13 +1373,13 @@ private struct DeskReadyRow: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Image(systemName: "checkmark.circle").foregroundStyle(.green)
-                Text("Finished \(DeskText.ago(item.finishedAt))").font(.caption.weight(.semibold)).foregroundStyle(.green).lineLimit(1)
+                Text("Finished \(DeskText.ago(item.finishedAt))").font(.caption.weight(.semibold)).foregroundStyle(Color.metadata).lineLimit(1)
                 if let place = item.place, place != item.title { DeskPlaceLabel(name: place) }
                 Spacer(minLength: 4)
                 if desk.canSilence {
                     Button { Task { await desk.silence(item) } } label: { Image(systemName: "bell.slash") }
                         .buttonStyle(.borderless)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.metadata)
                         .help("Silence: take this off the Desk on every device until something new happens in the session.")
                         .accessibilityLabel("Silence")
                         .deskFrame("readySilence:\(item.id)")
@@ -1297,12 +1387,11 @@ private struct DeskReadyRow: View {
             }
             Text(item.title).font(.headline).lineLimit(2)
             if let subtitle = item.subtitle { Text(subtitle).font(.subheadline.weight(.medium)).lineLimit(2) }
-            Text(item.text).font(.subheadline).foregroundStyle(.secondary).lineLimit(3)
+            Text(item.text).font(.subheadline).foregroundStyle(Color.metadata).lineLimit(3)
                 .frame(maxWidth: .infinity, alignment: .leading)
             HStack(spacing: 8) {
                 Button("Mark complete") { Task { await desk.complete(item) } }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.green)
+                    .buttonStyle(.accent)
                     .disabled(!desk.canSilence)
                     .help("Archive the session. It shows in Done for a week, where Reopen brings it back.")
                     .deskFrame("complete:\(item.id)")
@@ -1340,9 +1429,9 @@ private struct DeskDoneRow: View {
                     Image(systemName: "checkmark.circle.fill")
                     Text("Completed \(DeskText.ago(item.completedAt))").lineLimit(1)
                 }
-                .font(.caption.weight(.medium)).foregroundStyle(.secondary)
-                Text(item.title).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary).lineLimit(2)
-                if let subtitle = item.subtitle { Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+                .font(.caption.weight(.medium)).foregroundStyle(Color.metadata)
+                Text(item.title).font(.subheadline.weight(.semibold)).foregroundStyle(Color.metadata).lineLimit(2)
+                if let subtitle = item.subtitle { Text(subtitle).font(.caption).foregroundStyle(Color.metadata).lineLimit(1) }
                 if let place = item.place, place != item.title { DeskPlaceLabel(name: place).padding(.top, 2) }
             }
             .frame(maxWidth: .infinity, alignment: .leading)

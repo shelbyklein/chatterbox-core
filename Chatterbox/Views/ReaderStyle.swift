@@ -227,6 +227,31 @@ struct HighlightButtonStyle: ButtonStyle {
     }
 }
 
+#if os(macOS)
+/// The Mac's primary action (Allow, Start there, Mark complete, Start): filled with the accent,
+/// white text, as the phone's filled Approve. Unlike the system's prominent style it stays
+/// filled in a window that isn't frontmost, so the eye always has one place to land.
+struct AccentButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.controlSize) private var controlSize
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(controlSize == .small ? .callout.weight(.medium) : .body.weight(.medium))
+            .lineLimit(1)
+            .padding(.horizontal, controlSize == .small ? 8 : 10)
+            .padding(.vertical, controlSize == .small ? 2 : 4)
+            .foregroundStyle(isEnabled ? Color.white : Color.white.opacity(0.7))
+            .background(RoundedRectangle(cornerRadius: 6).fill(Color.accentColor.opacity(isEnabled ? (configuration.isPressed ? 0.75 : 1) : 0.35)))
+            .contentShape(RoundedRectangle(cornerRadius: 6))
+    }
+}
+
+extension ButtonStyle where Self == AccentButtonStyle {
+    static var accent: AccentButtonStyle { AccentButtonStyle() }
+}
+#endif
+
 extension Color {
     /// The window's own background, on either platform.
     static var windowBackground: Color {

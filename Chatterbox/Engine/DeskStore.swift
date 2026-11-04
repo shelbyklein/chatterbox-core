@@ -277,6 +277,22 @@ final class DeskStore {
         return true
     }
 
+    /// Unsilence: puts something silenced back on the Desk, on every device (Undo after
+    /// silencing, and the "silenced" list). The body names it as `silence` did: an approval's,
+    /// plan's or questions' item, or the session's id for a reply (with what it asks) or for a
+    /// session Ready to mark complete. True when a silence went.
+    @discardableResult
+    func unsilence(_ body: Companion.DeskSilenceRequest) -> Bool {
+        let before = silences.count
+        silences.removeAll { silence in
+            silence.chatID == body.chatID
+                && (silence.itemID == body.id || (body.id == body.chatID && (body.text == nil || silence.text == body.text)))
+        }
+        guard silences.count < before else { return false }
+        changed()
+        return true
+    }
+
     /// Mark complete: archives the session (its agent stops; nothing is removed) and puts it in
     /// Done for a week. Refused while it's working, so a reply is never cut off.
     func complete(_ chatID: UUID) throws {
@@ -369,7 +385,7 @@ final class DeskStore {
     }
 
     /// The service socket's "desk" operation (the Mac app): `action` get, add, start, ignore,
-    /// silence, complete, reopen, places, threads or options, with the companion API's bodies, plus `id` for
+    /// silence, unsilence, complete, reopen, places, threads or options, with the companion API's bodies, plus `id` for
     /// start, ignore and threads. Replies as the companion API does: the Desk, a started
     /// session's ChatDetail, the places, the sessions to continue, or a new session's options
     /// in `place` (with `picks`, a SettingsRequest). An agent's request is from Claude (or
@@ -398,6 +414,10 @@ final class DeskStore {
         case "silence":
             guard let request = try? body.decode(Companion.DeskSilenceRequest.self) else { throw Failure(status: 400, message: "Say what to silence.") }
             silence(request)
+            return try .value(snapshot())
+        case "unsilence":
+            guard let request = try? body.decode(Companion.DeskSilenceRequest.self) else { throw Failure(status: 400, message: "Say what to unsilence.") }
+            unsilence(request)
             return try .value(snapshot())
         case "complete", "reopen":
             guard let request = try? body.decode(Companion.DeskSessionRequest.self) else { throw Failure(status: 400, message: "Say which session.") }
@@ -511,8 +531,13 @@ final class DeskStore {
                     if questions.count > 1 { text += " (and \(questions.count - 1) more)" }
                     return Waiting(date: date, item: item(id: request.id, kind: "questions", text: Self.short(text), questions: questions), itemID: request.id)
                 }
-                return Waiting(date: date, item: item(id: request.id, kind: request.approvalStyle == .plan ? "plan" : "approval", text: Self.short(request.text)),
-                               itemID: request.id)
+                let isPlan = request.approvalStyle == .plan
+                var waiting = item(id: request.id, kind: isPlan ? "plan" : "approval", text: Self.short(request.text))
+                // The exact command or files, so it can be allowed from the Desk without opening it.
+                if !isPlan, let detail = request.detail?.trimmingCharacters(in: .whitespacesAndNewlines), !detail.isEmpty {
+                    waiting.detail = detail.count > 4000 ? String(detail.prefix(3999)) + "\u{2026}" : detail
+                }
+                return Waiting(date: date, item: waiting, itemID: request.id)
             }
         }
         // A question in a reply: the last thing said is the agent's, asking. Sidequests and

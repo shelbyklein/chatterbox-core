@@ -336,6 +336,9 @@ enum Companion {
         var questions: [Question]? = nil
         /// The session's own title, when `title` is its project's or branch's name.
         var subtitle: String? = nil
+        /// An approval's exact command or files, as its session's card shows them. Nil for
+        /// plans, questions and replies, and from a service older than it.
+        var detail: String? = nil
     }
 
     /// Where work goes: a Studio, a project (its work starts as a Sidechat of it), or loose.
@@ -452,6 +455,9 @@ enum Companion {
     /// POST /v1/desk/silence (socket: action "silence"): takes one waiting thing off the Desk,
     /// on every device, without answering it. The DeskWaiting's chatID, id and text: a new
     /// approval, plan or questions, or a newer reply that asks something, shows again.
+    /// POST /v1/desk/unsilence (socket: action "unsilence"), the same body: puts a silenced
+    /// thing (one of the Desk's `silenced`) back on the Desk. Answers the Desk; something
+    /// not silenced is left as it is. A service older than it answers 404.
     struct DeskSilenceRequest: Codable {
         var chatID: UUID
         var id: UUID

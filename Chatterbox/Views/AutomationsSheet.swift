@@ -73,13 +73,15 @@ struct AutomationsSheet: View {
             Toggle(isOn: binding(automation, \.enabled)) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(automation.title).font(.headline)
-                    Text(statusLine(automation)).font(.caption).foregroundStyle(.secondary)
+                    Text(statusLine(automation)).font(.caption).foregroundStyle(Color.metadata)
                 }
             }
             .toggleStyle(.switch)
             Spacer()
             Button(running == automation.id ? "Starting\u{2026}" : "Run Now") { runNow(automation) }
                 .disabled(running != nil || !RuntimeClient.usesDaemon)
+                .help(RuntimeClient.usesDaemon ? "Run it now, as its schedule would" : "Run Now needs Chatterbox's background service, which isn't running")
+                .accessibilityHint(RuntimeClient.usesDaemon ? "" : "Needs Chatterbox's background service, which isn't running")
             if let thread = state[automation.id.uuidString]?.threadID, model.sessions.contains(where: { $0.id == thread }) {
                 Button("Last Run") { model.selectedID = thread; dismiss() }
                     .help("Open the last run's sidequest (archived once it reported back)")
@@ -104,7 +106,7 @@ struct AutomationsSheet: View {
                     .font(.callout)
                     .frame(minHeight: 160)
                 Text("Every run also follows these rules: report first and ask before changing anything, never touch staging or production without your approval, and back up first. Its report goes to this project's session, and the run archives itself.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.caption).foregroundStyle(Color.metadata)
             }
             HStack {
                 Spacer()
@@ -123,6 +125,8 @@ struct AutomationsSheet: View {
         if let last = state[automation.id.uuidString]?.lastRun {
             parts.append("last ran \(last.formatted(.relative(presentation: .named)))")
         }
+        // Why Run Now is dimmed, where it is.
+        if !RuntimeClient.usesDaemon { parts.append("Run Now needs the background service") }
         return parts.joined(separator: " \u{00B7} ")
     }
 

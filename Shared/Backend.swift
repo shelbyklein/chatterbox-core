@@ -13,3 +13,9 @@ enum Backend: String, Codable, CaseIterable, Identifiable {
         }
     }
 }
+
+/// Effort, named the same everywhere (the Mac's chips and menus, the phone's slider and
+/// header): Minimal · Low · Medium · High · Extra High · Max.
+enum EffortNames {
+    static func label(_ effort: String) -> String { effort == "xhigh" ? "Extra High" : effort.capitalized }
+}

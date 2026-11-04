@@ -361,9 +361,11 @@ final class CompanionServer {
             return .json(DeskStore.shared.snapshot())
         case ("GET", 3) where parts[1] == "desk" && parts[2] == "places":
             return .json(DeskStore.shared.places())
-        case ("POST", 3) where parts[1] == "desk" && parts[2] == "silence":
-            guard let body = try? Companion.decoder.decode(Companion.DeskSilenceRequest.self, from: request.body) else { return .error(400, "Say what to silence.") }
-            DeskStore.shared.silence(body)
+        case ("POST", 3) where parts[1] == "desk" && (parts[2] == "silence" || parts[2] == "unsilence"):
+            guard let body = try? Companion.decoder.decode(Companion.DeskSilenceRequest.self, from: request.body) else {
+                return .error(400, "Say what to \(parts[2]).")
+            }
+            if parts[2] == "silence" { DeskStore.shared.silence(body) } else { DeskStore.shared.unsilence(body) }
             return .json(DeskStore.shared.snapshot())
         case ("POST", 3) where parts[1] == "desk" && (parts[2] == "complete" || parts[2] == "reopen"):
             // The board's Mark complete (archives, into Done) and Reopen (unarchives).
@@ -995,7 +997,8 @@ enum CompanionMapper {
             Task { await ClaudeModels.shared.refresh() }
         }
         let claude = ClaudeModels.shared.models.map {
-            Companion.ModelOption(id: $0.value, name: $0.displayName, detail: $0.detail, efforts: $0.efforts, defaultEffort: nil)
+            // Full names ("Opus 5.5"), as the Mac's chip says them; the description without the name.
+            Companion.ModelOption(id: $0.value, name: $0.fullName, detail: $0.summary, efforts: $0.efforts, defaultEffort: nil)
         }
         let codex = [Companion.ModelOption(id: "", name: "Codex default", detail: "Whatever Codex uses when none is picked", efforts: [], defaultEffort: nil)]
             + CodexModelCatalog.entries(CodexAppServer.shared.models, chosen: session.record.codex?.model)

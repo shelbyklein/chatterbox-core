@@ -27,7 +27,8 @@ struct MobileNewChatSheet: View {
                                 .accessibilityIdentifier("new-chat-name")
                         }
                         if !studios.isEmpty {
-                            Section("Start in") {
+                            // The row names itself: no header over it saying the same.
+                            Section {
                                 Picker("Start in", selection: $studio) {
                                     Text("Chats").tag(UUID?.none)
                                     ForEach(studios) { Text($0.name).tag(UUID?.some($0.id)) }

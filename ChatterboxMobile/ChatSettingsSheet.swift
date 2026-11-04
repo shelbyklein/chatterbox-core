@@ -52,9 +52,8 @@ struct ChatSettingsForm<Leading: View>: View {
                                 Label("Fast mode", systemImage: "hare")
                             }
                         }
-                    } header: {
-                        Text("Effort")
                     } footer: {
+                        // The slider's row says "Effort": no header over it saying the same.
                         if options.fastMode != nil {
                             Text(isCodex ? "Fast mode gives faster replies with higher usage. Applies to the next reply; availability depends on your model and plan." : "Requires usage credits and account support; billed outside your subscription allowance. Applies after the current reply.")
                         }
@@ -62,8 +61,17 @@ struct ChatSettingsForm<Leading: View>: View {
                 }
 
                 if !options.modes.isEmpty {
-                    Section("Permissions") {
+                    Section {
                         PermissionsRow(modes: options.modes, selected: options.mode) { apply(.init(mode: $0)) }
+                    } header: {
+                        Text("Permissions")
+                    } footer: {
+                        // The risky choice says what it means, only once it's chosen.
+                        if options.modes.first(where: { $0.id == options.mode })?.isUnrestricted == true {
+                            Label("Runs commands and changes files without asking you first.", systemImage: "exclamationmark.triangle.fill")
+                                .foregroundStyle(Color.attention)
+                                .accessibilityIdentifier("permissions-caution")
+                        }
                     }
                 }
 
@@ -192,8 +200,19 @@ extension ChatSettingsForm where Leading == EmptyView {
 
 enum ChatSettingsLabels {
     /// "xhigh" → "Extra High", the way the Mac names them.
-    static func effort(_ effort: String) -> String {
-        effort == "xhigh" ? "Extra High" : effort.capitalized
+    static func effort(_ effort: String) -> String { EffortNames.label(effort) }
+
+    /// The model chip, as the Mac's reads: "Opus 5.5 · Medium". Nil without the options (an
+    /// older Mac): its settings line instead.
+    static func chip(_ options: Companion.ChatOptions?) -> String? {
+        guard let options else { return nil }
+        if let open = options.openModel { return "\(open) \u{00B7} PC" }
+        let models = options.backend == "codex" ? options.codexModels : options.claudeModels
+        guard let model = models.first(where: { $0.id == options.model }) else { return nil }
+        guard !model.efforts.isEmpty else { return model.name }
+        // With none chosen, the level the model uses by default.
+        let level = options.effort.isEmpty ? model.defaultEffort.map(effort) ?? "Default effort" : effort(options.effort)
+        return "\(model.name) \u{00B7} \(level)"
     }
 }
 
@@ -244,7 +263,7 @@ private struct EffortSlider: View {
                 .accessibilityValue(label(shown))
                 HStack {
                     ForEach(efforts.indices, id: \.self) { index in
-                        Text(efforts[index] == "xhigh" ? "X-High" : ChatSettingsLabels.effort(efforts[index]))
+                        Text(ChatSettingsLabels.effort(efforts[index]))
                             .font(.caption2)
                             .lineLimit(1)
                             .minimumScaleFactor(0.6)
@@ -261,51 +280,44 @@ private struct EffortSlider: View {
     }
 }
 
-/// The four access levels as one row of equal icon-only buttons; the chosen one is filled
-/// (orange when unrestricted), and its name and meaning sit underneath.
+
+
+/// The access levels as a list of named choices, each with what it means; the chosen one is
+/// checked. None is filled or loud: an unrestricted one is marked by its warning-tinted icon,
+/// and when chosen, its name takes the tint and the section's footer says what it means.
 private struct PermissionsRow: View {
     let modes: [Companion.ModeOption]
     let selected: String
     let choose: (String) -> Void
 
-    private var current: Companion.ModeOption? { modes.first { $0.id == selected } }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                ForEach(modes) { mode in
-                    let isOn = mode.id == selected
-                    let color: Color = mode.isUnrestricted ? .orange : .accentColor
-                    Button { if !isOn { choose(mode.id) } } label: {
-                        Image(systemName: mode.systemImage)
-                            .font(.title3.weight(.semibold))
-                            .frame(maxWidth: .infinity, minHeight: 52)
-                            .foregroundStyle(isOn ? Color.white : (mode.isUnrestricted ? Color.orange : Color.primary))
-                            .background(
-                                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                    .fill(isOn ? color : Color(.tertiarySystemFill))
-                            )
-                            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        ForEach(modes) { mode in
+            let isOn = mode.id == selected
+            Button { if !isOn { choose(mode.id) } } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: mode.systemImage)
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(mode.isUnrestricted ? Color.attention : Color.metadata)
+                        .frame(width: 24)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(mode.title)
+                            .foregroundStyle(isOn && mode.isUnrestricted ? Color.attention : Color.primary)
+                            .fontWeight(isOn ? .semibold : .regular)
+                        if !mode.detail.isEmpty {
+                            Text(mode.detail).font(.caption).foregroundStyle(Color.metadata).lineLimit(2)
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(mode.title)
-                    .accessibilityHint(mode.detail)
-                    .accessibilityAddTraits(isOn ? [.isButton, .isSelected] : .isButton)
+                    Spacer(minLength: 8)
+                    if isOn { Image(systemName: "checkmark").font(.body.weight(.semibold)).foregroundStyle(.tint) }
                 }
+                .contentShape(Rectangle())
             }
-            if let current {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(current.title)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(current.isUnrestricted ? .orange : .primary)
-                    if !current.detail.isEmpty {
-                        Text(current.detail).font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-                .accessibilityElement(children: .combine)
-            }
+            .buttonStyle(.plain)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(mode.title)
+            .accessibilityHint(mode.detail)
+            .accessibilityAddTraits(isOn ? [.isButton, .isSelected] : .isButton)
+            .accessibilityIdentifier("permission-\(mode.id)")
         }
-        .padding(.vertical, 4)
     }
 }
-

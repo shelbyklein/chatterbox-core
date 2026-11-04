@@ -756,6 +756,7 @@ struct ChatView: View {
                     ItemView(item: item, agent: session.record.backend,
                              onApproval: session.resolveApproval, onAnswer: session.answerQuestions)
                         .environment(\.cardFillsWidth, true)
+                        .environment(\.approvalContext, DeskText.context(of: session, in: model))
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .id(item.id)
                 }
@@ -1147,7 +1148,8 @@ struct ChatView: View {
         ModePicker(
             modes: PermissionModes.modes(for: session.record.backend),
             current: session.mode,
-            header: session.record.backend == .claude ? "Mode" : "How should Codex actions be approved?",
+            // Named as New Chat and Session Settings name it, on the phone too.
+            header: "Permissions",
             showsIcons: session.record.backend == .codex,
             openRequest: commands.modePopoverRequests,
             handlesKeyboardRequest: { handlesKeyboard },
@@ -1174,29 +1176,25 @@ struct ChatView: View {
             // With no pick, show what Codex will actually use.
             let resolved = current ?? models.first(where: \.isDefault)
             let name = resolved.map { CodexModelCatalog.name($0.model, models: models) } ?? codex.model.map { CodexModelCatalog.name($0, models: models) } ?? "Codex default"
-            let modelName = current == nil && resolved != nil ? "\(name) (default)" : name
             let effort = codex.effort ?? resolved?.defaultEffort
-            let effortFull = codex.effort.map { Self.effortLabel($0) } ?? effort.map { "\(Self.effortLabel($0)) (default)" }
-            return ("Codex \u{00B7} \(modelName)" + (effortFull.map { " \u{00B7} \($0) effort" } ?? ""),
-                    name + (effort.map { " \u{00B7} \(Self.effortLabel($0))" } ?? ""))
+            // One format on every chip, the phone's too: "GPT-6.1-Sol · Medium".
+            let chip = name + (effort.map { " \u{00B7} \(Self.effortLabel($0))" } ?? "")
+            return (chip, chip)
         }
         let catalog = ClaudeModels.shared
         let current = catalog.info(session.record.model)
         // "Default" points at a real model; name that one rather than the alias.
         let target = current.value == "default"
-            ? catalog.models.first { $0.value != "default" && $0.resolvedModel == current.resolvedModel }?.displayName
+            ? catalog.models.first { $0.value != "default" && $0.resolvedModel == current.resolvedModel }?.fullName
             : nil
-        let name = target ?? current.displayName
-        let modelName = target != nil ? "\(name) (default)" : name
-        let effort = session.record.effort.isEmpty ? nil : Self.effortLabel(session.record.effort)
-        guard !current.efforts.isEmpty else { return ("Claude \u{00B7} \(modelName)", name) }
-        return ("Claude \u{00B7} \(modelName) \u{00B7} \(effort ?? "Default") effort",
-                name + " \u{00B7} " + (effort ?? "Default"))
+        // Its full name ("Opus 5.5"), in one format on every chip, the phone's too: "Opus 5.5 · Medium".
+        let name = target ?? current.fullName
+        guard !current.efforts.isEmpty else { return (name, name) }
+        let chip = name + " \u{00B7} " + (session.record.effort.isEmpty ? "Default effort" : Self.effortLabel(session.record.effort))
+        return (chip, chip)
     }
 
-    static func effortLabel(_ effort: String) -> String {
-        effort == "xhigh" ? "Extra High" : effort.capitalized
-    }
+    static func effortLabel(_ effort: String) -> String { EffortNames.label(effort) }
 
     private func codexBanner(_ status: String) -> some View {
         HStack {

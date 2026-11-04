@@ -392,7 +392,8 @@ struct ChatDetailView: View {
                         VStack(spacing: 0) {
                             Text(summary.project ?? summary.title).font(.headline).lineLimit(1).foregroundStyle(.primary)
                             HStack(spacing: 3) {
-                                Text(settings).lineLimit(1)
+                                // The model and effort, as the Mac's chip says them; its agent's color marks whose.
+                                Text(ChatSettingsLabels.chip(detail?.options) ?? settings).lineLimit(1)
                                 Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold))
                             }
                             .font(.caption2).foregroundStyle(.secondary)
@@ -478,12 +479,21 @@ struct ChatDetailView: View {
 
     // MARK: - Actions
 
+    /// "USA Archery › Deploy the site", as the Desk names it: the Studio or project, then the session.
+    private var approvalContext: String {
+        let group = store.chatList?.groups.first { $0.chats.contains { $0.id == chat.id } }
+        let place = summary.project ?? (group?.kind == .studio ? group?.title : nil)
+        let title = summary.worktreeBranch ?? summary.title
+        return place.map { $0 == title ? title : "\($0) \u{203A} \(title)" } ?? title
+    }
+
     private var actions: ItemActions {
         ItemActions(
             decide: { item, decision in perform { try await store.decide(decision, item: item, in: chat.id) } },
             answer: { item, answers in perform { try await store.answer(answers, item: item, in: chat.id) } },
             sendQueuedNow: { item in perform { try await store.sendQueuedNow(item, in: chat.id) } },
-            markUp: { image in sketch = SketchRequest(background: image) }
+            markUp: { image in sketch = SketchRequest(background: image) },
+            context: approvalContext
         )
     }
 
@@ -868,7 +878,7 @@ private struct ItemRow: View {
 
         case .approval:
             if let approval = item.approval {
-                ApprovalCard(item: item, approval: approval) { actions.decide(item.id, $0) }
+                ApprovalCard(item: item, approval: approval, context: actions.context) { actions.decide(item.id, $0) }
             }
 
         case .questions:

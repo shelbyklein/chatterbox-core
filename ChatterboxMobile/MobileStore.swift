@@ -32,6 +32,12 @@ final class MobileStore {
     private(set) var problem: String?
     /// Cached sessions stay visible while the first live list is on its way.
     private(set) var hasRefreshedChats = false
+    /// When the Mac last answered with the session list (kept across launches): what a cached
+    /// list is as of, while the Mac can't be reached.
+    private(set) var chatsUpdatedAt: Date? = AppPreferences.defaults.object(forKey: "chatsUpdatedAt") as? Date
+    /// The Mac didn't answer the last call: what's shown is as of `chatsUpdatedAt`, so nothing
+    /// shows as running live (no spinners).
+    var isStale: Bool { problem != nil }
     @ObservationIgnored private var listRefresh: Task<Void, Never>?
     @ObservationIgnored private var listRefreshID = UUID()
     @ObservationIgnored private var token: String?
@@ -162,6 +168,8 @@ final class MobileStore {
         chatList = nil
         latestDesk = nil
         AppPreferences.defaults.removeObject(forKey: "connection")
+        chatsUpdatedAt = nil
+        AppPreferences.defaults.removeObject(forKey: "chatsUpdatedAt")
     }
 
     // MARK: - Calls
@@ -183,6 +191,8 @@ final class MobileStore {
             let fresh: Companion.ChatList = try await call("/v1/chats")
             guard !Task.isCancelled, isPaired else { return }
             chatList = fresh
+            chatsUpdatedAt = Date()
+            AppPreferences.defaults.set(chatsUpdatedAt, forKey: "chatsUpdatedAt")
             hasRefreshedChats = true
             MobileTranscriptCache.saveList(fresh)
             prefetchRecent()
@@ -470,6 +480,14 @@ final class MobileStore {
     func silenceDesk(_ item: Companion.DeskWaiting) async throws -> Companion.Desk {
         let body = try JSONEncoder().encode(Companion.DeskSilenceRequest(chatID: item.chatID, id: item.id, text: item.text))
         return try await changeDesk { try await self.call("/v1/desk/silence", method: "POST", body: body) }
+    }
+
+    /// Unsilences: back on the Desk, on every device (Undo, and the silenced list). An older Mac
+    /// answers 404.
+    @discardableResult
+    func unsilenceDesk(_ item: Companion.DeskWaiting) async throws -> Companion.Desk {
+        let body = try JSONEncoder().encode(Companion.DeskSilenceRequest(chatID: item.chatID, id: item.id, text: item.text))
+        return try await changeDesk { try await self.call("/v1/desk/unsilence", method: "POST", body: body) }
     }
 
     /// Silences a session Ready to mark complete: off the board until something new happens in it.

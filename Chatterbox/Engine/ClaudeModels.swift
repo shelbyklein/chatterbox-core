@@ -13,6 +13,18 @@ struct ClaudeCodeModel: Identifiable, Hashable {
     /// Effort levels the model accepts, weakest first. Empty means no effort control.
     var efforts: [String]
 
+    /// Its full name, "Opus 5.5": Claude Code's description starts with it ("Opus 5.5 · Best
+    /// for everyday, complex tasks · …"); else the display name ("Opus").
+    var fullName: String { Self.split(displayName, detail).name }
+    /// The description without that name: "Best for everyday, complex tasks · $4/$20 per Mtok".
+    var summary: String { Self.split(displayName, detail).rest }
+
+    private static func split(_ name: String, _ detail: String) -> (name: String, rest: String) {
+        let parts = detail.components(separatedBy: " \u{00B7} ")
+        guard let first = parts.first, first.count > name.count, first.lowercased().hasPrefix(name.lowercased()) else { return (name, detail) }
+        return (first, parts.dropFirst().joined(separator: " \u{00B7} "))
+    }
+
     static func unknown(_ value: String) -> ClaudeCodeModel {
         ClaudeCodeModel(value: value, resolvedModel: value, displayName: value, detail: "",
                         efforts: ["low", "medium", "high", "xhigh", "max"])

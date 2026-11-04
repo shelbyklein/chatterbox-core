@@ -378,7 +378,7 @@ struct ModelPopover: View {
                 // Labels under each stop, spread to match the slider's ticks.
                 HStack(spacing: 0) {
                     ForEach(Array(stops.enumerated()), id: \.offset) { i, stop in
-                        Text(stop.isEmpty ? "Default" : ChatView.effortLabel(stop).replacingOccurrences(of: "Extra High", with: "X-High"))
+                        Text(stop.isEmpty ? "Default" : ChatView.effortLabel(stop))
                             .font(.system(size: 9))
                             .foregroundStyle(i == Int(index) ? Color.primary : Color.secondary)
                             .frame(maxWidth: .infinity, alignment: i == 0 ? .leading : i == stops.count - 1 ? .trailing : .center)

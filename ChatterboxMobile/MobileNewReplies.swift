@@ -147,18 +147,19 @@ struct MobileNewReplies: View {
                             Image(systemName: "chevron.right").font(.caption2.weight(.bold))
                                 .rotationEffect(.degrees(expanded ? 90 : 0))
                             Spacer()
-                            if !working.isEmpty { Text("\(working.count) working") }
+                            // Cached while the Mac can't be reached: as last seen, not live.
+                            if !working.isEmpty { Text(store.isStale ? "\(working.count) last seen working" : "\(working.count) working") }
                             if !replies.isEmpty { Text("\(replies.count) new").foregroundStyle(.blue) }
                         }
                         .font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
                         .textCase(nil).padding(.horizontal, headingInset).contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Activity, \(replies.count) new replies, \(working.count) working")
+                    .accessibilityLabel("Activity, \(replies.count) new replies, \(working.count) \(store.isStale ? "last seen working" : "working")")
                     .accessibilityValue(expanded ? "Expanded" : "Collapsed")
                     if expanded {
                         TimelineView(.periodic(from: .now, by: 60)) { context in
-                            MobileActivityRows(entries: entries, busy: busy, now: context.date, open: open, rename: rename, dismiss: dismiss,
+                            MobileActivityRows(entries: entries, busy: busy, now: context.date, stale: store.isStale, open: open, rename: rename, dismiss: dismiss,
                                                archive: { manage($0, deleting: false) }, delete: { manage($0, deleting: true) })
                                 .fixedSize(horizontal: false, vertical: true)
                                 .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -226,6 +227,8 @@ private struct MobileActivityRows: UIViewRepresentable {
     let entries: [MobileActivityEntry]
     let busy: Set<UUID>
     let now: Date
+    /// The Mac can't be reached: working rows show as last seen, not spinning.
+    let stale: Bool
     let open: (Companion.ChatSummary) -> Void
     let rename: (Companion.ChatSummary) -> Void
     let dismiss: (MobileActivityEntry) -> Void
@@ -250,7 +253,7 @@ private struct MobileActivityRows: UIViewRepresentable {
         context.coordinator.parent = self
         if previous.entries.map(\.id) != entries.map(\.id) || table.numberOfRows(inSection: 0) != entries.count {
             table.reloadData()
-        } else if previous.entries != entries || previous.busy != busy || previous.now != now {
+        } else if previous.entries != entries || previous.busy != busy || previous.now != now || previous.stale != stale {
             for path in table.indexPathsForVisibleRows ?? [] {
                 if let cell = table.cellForRow(at: path) { context.coordinator.configure(cell, at: path) }
             }
@@ -281,7 +284,7 @@ private struct MobileActivityRows: UIViewRepresentable {
         func configure(_ cell: UITableViewCell, at indexPath: IndexPath) {
             let entry = parent.entries[indexPath.row]
             let busy = parent.busy.contains(entry.chat.id)
-            (cell as? MobileActivityCell)?.configure(entry, busy: busy, now: parent.now)
+            (cell as? MobileActivityCell)?.configure(entry, busy: busy, now: parent.now, stale: parent.stale)
             cell.accessibilityCustomActions = [
                 UIAccessibilityCustomAction(name: "Rename Session") { [weak self] _ in self?.parent.rename(entry.chat); return true },
                 UIAccessibilityCustomAction(name: "Dismiss from Activity") { [weak self] _ in self?.parent.dismiss(entry); return true },
@@ -350,6 +353,8 @@ private final class MobileActivityCell: UITableViewCell {
     private let status = UIView()
     private let dot = UIView()
     private let spinner = UIActivityIndicatorView(style: .medium)
+    /// In place of the spinner while the Mac can't be reached: last seen working.
+    private let lastSeen = UIImageView(image: UIImage(systemName: "clock"))
     private let provider = UIImageView()
     private let name = UILabel()
     private let sidequest = UIImageView(image: UIImage(systemName: "point.topleft.down.to.point.bottomright.curvepath"))
@@ -363,8 +368,10 @@ private final class MobileActivityCell: UITableViewCell {
         isAccessibilityElement = true
         accessibilityTraits = .button
         dot.backgroundColor = .systemBlue; dot.layer.cornerRadius = 4
-        status.addSubview(dot); status.addSubview(spinner)
-        for view in [dot, spinner] {
+        status.addSubview(dot); status.addSubview(spinner); status.addSubview(lastSeen)
+        lastSeen.tintColor = .secondaryLabel; lastSeen.isHidden = true
+        lastSeen.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .caption1)
+        for view in [dot, spinner, lastSeen] {
             view.translatesAutoresizingMaskIntoConstraints = false
             NSLayoutConstraint.activate([view.centerXAnchor.constraint(equalTo: status.centerXAnchor), view.centerYAnchor.constraint(equalTo: status.centerYAnchor)])
         }
@@ -401,7 +408,7 @@ private final class MobileActivityCell: UITableViewCell {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    func configure(_ entry: MobileActivityEntry, busy: Bool, now: Date) {
+    func configure(_ entry: MobileActivityEntry, busy: Bool, now: Date, stale: Bool = false) {
         let chat = entry.chat
         name.text = entry.title
         sidequest.isHidden = !chat.isSidequest
@@ -410,13 +417,15 @@ private final class MobileActivityCell: UITableViewCell {
         provider.image = UIImage(named: (Backend(rawValue: entry.backend) ?? .claude).iconName)?.withRenderingMode(.alwaysTemplate)
         provider.tintColor = accent; spinner.color = accent
         dot.isHidden = entry.reply == nil
-        if entry.reply == nil { spinner.startAnimating() } else { spinner.stopAnimating() }
+        let working = entry.reply == nil
+        lastSeen.isHidden = !(working && stale)
+        if working && !stale { spinner.startAnimating() } else { spinner.stopAnimating() }
         if busy { time.text = "Updating…" }
         else if let reply = entry.reply {
             let formatter = RelativeDateTimeFormatter(); formatter.unitsStyle = .short
             time.text = formatter.localizedString(for: reply.endedAt, relativeTo: now)
-        } else { time.text = "Working" }
-        accessibilityLabel = "\(entry.reply == nil ? "Working" : "New reply"): \(chat.isSidequest ? entry.title + " · Sidequest" : chat.title)"
+        } else { time.text = stale ? "Last seen working" : "Working" }
+        accessibilityLabel = "\(working ? (stale ? "Last seen working" : "Working") : "New reply"): \(chat.isSidequest ? entry.title + " · Sidequest" : chat.title)"
         accessibilityValue = [entry.subtitle, time.text].compactMap { $0 }.joined(separator: ", ")
         accessibilityHint = "Opens the chat. Swipe left to clear it from Activity, right to archive or delete."
         accessibilityTraits = busy ? [.button, .notEnabled] : .button

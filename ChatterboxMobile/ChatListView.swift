@@ -430,7 +430,7 @@ struct ChatListView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 18) {
                 loadingStatus
-                if let problem = store.problem { MobileProblemCard(problem) }
+                if let problem = store.problem { MobileProblemCard(problem, updated: store.chatsUpdatedAt) { await store.loadChats() } }
                 if let list = store.chatList {
                     if search.isEmpty { MobileNewReplies(activity: list.activity ?? [], chats: allChats, summary: summary(for:), open: open, rename: beginRename) }
                     if search.isEmpty, let pins = list.pins, !pins.isEmpty { MobilePinPills(pins: pins) }
@@ -480,7 +480,7 @@ struct ChatListView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 16) {
                 loadingStatus
-                if let problem = store.problem { MobileProblemCard(problem) }
+                if let problem = store.problem { MobileProblemCard(problem, updated: store.chatsUpdatedAt) { await store.loadChats() } }
                 if let list = store.chatList {
                     if search.isEmpty {
                         MobileNewReplies(activity: list.activity ?? [], chats: allChats, summary: summary(for:), open: open, rename: beginRename)
@@ -555,7 +555,7 @@ struct ChatListView: View {
         List {
             loadingStatus.listRowBackground(Color.clear)
             if let problem = store.problem {
-                MobileProblemCard(problem)
+                MobileProblemCard(problem, updated: store.chatsUpdatedAt) { await store.loadChats() }
                     .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16)).listRowBackground(Color.clear).listRowSeparator(.hidden)
             }
             if let list = store.chatList {
@@ -766,16 +766,16 @@ private struct ChatRow: View {
                         if let subtitle = chat.subtitle ?? (chat.project != nil ? chat.title : nil) {
                             Text(subtitle)
                                 .font(.caption)
-                                .foregroundStyle(chat.isWaitingOnYou ? .yellow : .secondary)
+                                .foregroundStyle(chat.isWaitingOnYou ? Color.attention : Color.secondary)
                                 .lineLimit(2)
                         }
                         if let activity { Label(activity, systemImage: "flame").font(.caption2).foregroundStyle(.orange) }
                     }
                     Spacer(minLength: 0)
                     if chat.isWaitingOnYou {
-                        Circle().fill(.yellow).frame(width: 8, height: 8)
+                        Circle().fill(Color.attention).frame(width: 8, height: 8)
                     } else if chat.isRunning {
-                        ProgressView().controlSize(.small)
+                        MobileWorkingMark()
                     }
                 }
                 .contentShape(Rectangle())
@@ -824,9 +824,9 @@ private struct ChatCard: View {
                     }
                     Spacer(minLength: 0)
                     if chat.isWaitingOnYou {
-                        Circle().fill(.yellow).frame(width: 8, height: 8).accessibilityLabel("Waiting on you")
+                        Circle().fill(Color.attention).frame(width: 8, height: 8).accessibilityLabel("Waiting on you")
                     } else if chat.isRunning {
-                        ProgressView().controlSize(.mini)
+                        MobileWorkingMark(size: .mini)
                     }
                 }
                 Text(chat.worktreeBranch ?? chat.project ?? chat.title)
@@ -836,7 +836,7 @@ private struct ChatCard: View {
                 if let line = chat.subtitle ?? (chat.project != nil ? chat.title : nil) {
                     Text(line)
                         .font(.caption)
-                        .foregroundStyle(chat.isWaitingOnYou ? .yellow : .secondary)
+                        .foregroundStyle(chat.isWaitingOnYou ? Color.attention : Color.secondary)
                         .lineLimit(3)
                         .multilineTextAlignment(.leading)
                 }
@@ -907,8 +907,8 @@ private struct ChatCard: View {
                         Circle().fill(.orange).frame(width: 6, height: 6)
                         Text("Needs you").foregroundStyle(.orange)
                     } else if chat.isRunning {
-                        ProgressView().controlSize(.mini).tint(MobileConversationStyle.accent(for: chat.backend))
-                        Text("Working").foregroundStyle(MobileConversationStyle.accent(for: chat.backend))
+                        MobileWorkingMark(size: .mini, tint: MobileConversationStyle.accent(for: chat.backend))
+                        Text(store.isStale ? "Last seen working" : "Working").foregroundStyle(store.isStale ? Color.metadata : MobileConversationStyle.accent(for: chat.backend))
                     } else if isNew {
                         Circle().fill(.blue).frame(width: 6, height: 6)
                         Text("New reply").foregroundStyle(.blue)
@@ -976,29 +976,80 @@ private struct StudioIndexCard: View {
     }
 }
 
-/// Trouble reaching the Mac, as a small card: its first sentence as the title, the rest under it.
+/// A session working, as of the Mac's last answer: a spinner; while the Mac can't be reached,
+/// a still grey clock ("last seen working"), so nothing spins on old news.
+struct MobileWorkingMark: View {
+    @Environment(MobileStore.self) private var store
+    var size: ControlSize = .small
+    var tint: Color? = nil
+
+    var body: some View {
+        if store.isStale {
+            Image(systemName: "clock").font(size == .mini ? .caption2 : .footnote).foregroundStyle(Color.metadata)
+                .accessibilityLabel("Last seen working")
+        } else {
+            ProgressView().controlSize(size).tint(tint)
+        }
+    }
+}
+
+/// Trouble reaching the Mac, as a small card: its first sentence as the title, the rest under it,
+/// when what's shown was last updated, and Retry.
 struct MobileProblemCard: View {
     private let title: String
     private let detail: String
+    private let updated: Date?
+    private let retry: (() async -> Void)?
+    @State private var retrying = false
 
-    init(_ problem: String) {
+    /// `updated`: when what's still shown came from the Mac. `retry`: tries again now.
+    init(_ problem: String, updated: Date? = nil, retry: (() async -> Void)? = nil) {
         let parts = problem.split(separator: ". ", maxSplits: 1)
         title = String(parts[0]).trimmingCharacters(in: CharacterSet(charactersIn: "."))
         detail = parts.count > 1 ? String(parts[1]) : ""
+        self.updated = updated
+        self.retry = retry
+    }
+
+    /// "Last updated 9:12", or with its day when it isn't today.
+    static func lastUpdated(_ date: Date) -> String {
+        "Last updated " + (Calendar.current.isDateInToday(date) ? date.formatted(date: .omitted, time: .shortened)
+                                                                 : date.formatted(.dateTime.month(.abbreviated).day().hour().minute()))
     }
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: title.hasPrefix("Can't reach") ? "wifi.exclamationmark" : "exclamationmark.triangle").foregroundStyle(.orange).font(.body.weight(.semibold))
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.subheadline.weight(.semibold))
-                if !detail.isEmpty { Text(detail).font(.footnote).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
+                if !detail.isEmpty { Text(detail).font(.footnote).foregroundStyle(Color.metadata).fixedSize(horizontal: false, vertical: true) }
+                if let updated {
+                    Text(Self.lastUpdated(updated)).font(.footnote.weight(.medium)).foregroundStyle(Color.metadata)
+                        .padding(.top, 2)
+                        .accessibilityIdentifier("problem-updated")
+                }
             }
+            .accessibilityElement(children: .combine)
             Spacer(minLength: 0)
+            if let retry {
+                Button {
+                    guard !retrying else { return }
+                    retrying = true
+                    Task { await retry(); retrying = false }
+                } label: {
+                    if retrying { ProgressView().controlSize(.small).frame(minWidth: 44) } else { Text("Retry").fontWeight(.semibold) }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(retrying)
+                .accessibilityLabel(retrying ? "Retrying" : "Retry")
+                .accessibilityIdentifier("problem-retry")
+            }
         }
         .padding(.horizontal, 14).padding(.vertical, 10)
         .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
     }
 }
 

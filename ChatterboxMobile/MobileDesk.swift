@@ -49,6 +49,10 @@ struct MobileDeskView: View {
     @State private var settled = Set<UUID>()
     /// Waiting things being silenced (silenceKey), hidden until the Mac answers.
     @State private var silencing = Set<String>()
+    /// Silenced things being put back (silenceKey), off the silenced list until the Mac answers.
+    @State private var unsilencing = Set<String>()
+    /// The last thing silenced here: a few seconds to Undo it.
+    @State private var silencedNote: Companion.DeskWaiting?
     /// Sessions being marked complete or reopened here, hidden until the Mac answers.
     @State private var completing = Set<UUID>()
     @State private var reopening = Set<UUID>()
@@ -105,6 +109,8 @@ struct MobileDeskView: View {
         (desk?.ready ?? []).filter { !completing.contains($0.id) && !silencing.contains(Self.silenceKey($0)) }
     }
     private var done: [Companion.DeskDone] { (desk?.done ?? []).filter { !reopening.contains($0.id) } }
+    /// Silenced, still waiting in their sessions: the quiet row at the foot of Needs you.
+    private var silenced: [Companion.DeskWaiting] { (desk?.silenced ?? []).filter { !unsilencing.contains(Self.silenceKey($0)) } }
 
     private func count(_ column: MobileDeskColumn) -> Int {
         switch column {
@@ -155,24 +161,45 @@ struct MobileDeskView: View {
             }
         }
         .overlay(alignment: .bottom) {
-            if let started {
-                HStack(spacing: 10) {
-                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                    Text("\(started.continued ? "Continued" : "Started") in \(started.name)").font(.subheadline.weight(.medium)).lineLimit(1)
-                    Spacer(minLength: 4)
-                    Button("Open") { open(started.chat); self.started = nil }.font(.subheadline.weight(.semibold))
+            VStack(spacing: 8) {
+                // Silenced: a few seconds to take it back.
+                if let note = silencedNote {
+                    HStack(spacing: 10) {
+                        Image(systemName: "bell.slash.fill").foregroundStyle(.indigo)
+                        Text("Silenced \(deskContext(title: note.title, place: note.place, subtitle: note.subtitle))").font(.subheadline.weight(.medium)).lineLimit(1)
+                        Spacer(minLength: 4)
+                        Button("Undo") { unsilence(note) }.font(.subheadline.weight(.semibold))
+                            .accessibilityIdentifier("desk-undo-silence")
+                    }
+                    .padding(.horizontal, 16).padding(.vertical, 12)
+                    .background(.regularMaterial, in: Capsule())
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("desk-silenced-note")
+                    .task(id: Self.silenceKey(note)) {
+                        try? await Task.sleep(for: .seconds(6))
+                        withAnimation { if silencedNote.map(Self.silenceKey) == Self.silenceKey(note) { silencedNote = nil } }
+                    }
                 }
-                .padding(.horizontal, 16).padding(.vertical, 12)
-                .background(.regularMaterial, in: Capsule())
-                .padding(.horizontal, 16).padding(.bottom, 12)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-                .accessibilityElement(children: .combine)
-                .accessibilityIdentifier("desk-started")
-                .task(id: started.chat) {
-                    try? await Task.sleep(for: .seconds(5))
-                    withAnimation { self.started = nil }
+                if let started {
+                    HStack(spacing: 10) {
+                        Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                        Text("\(started.continued ? "Continued" : "Started") in \(started.name)").font(.subheadline.weight(.medium)).lineLimit(1)
+                        Spacer(minLength: 4)
+                        Button("Open") { open(started.chat); self.started = nil }.font(.subheadline.weight(.semibold))
+                    }
+                    .padding(.horizontal, 16).padding(.vertical, 12)
+                    .background(.regularMaterial, in: Capsule())
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("desk-started")
+                    .task(id: started.chat) {
+                        try? await Task.sleep(for: .seconds(5))
+                        withAnimation { self.started = nil }
+                    }
                 }
             }
+            .padding(.horizontal, 16).padding(.bottom, 12)
         }
         .alert("Couldn't update the Desk", isPresented: Binding(get: { actionProblem != nil }, set: { if !$0 { actionProblem = nil } })) {
             Button("OK", role: .cancel) { actionProblem = nil }
@@ -195,7 +222,9 @@ struct MobileDeskView: View {
 
     /// What's above the board: a problem reaching the Mac, the ask box, or that it's loading.
     @ViewBuilder private var top: some View {
-        if let problem = store.problem ?? loadProblem { MobileProblemCard(problem) }
+        if let problem = store.problem ?? loadProblem {
+            MobileProblemCard(problem, updated: store.chatsUpdatedAt) { await refresh() }
+        }
         // Nothing to ask of a Mac without the Desk, or one not reached yet.
         if desk != nil || (loadProblem == nil && store.problem == nil) { askBox }
         if desk == nil, loadProblem == nil, store.problem == nil { loading }
@@ -234,9 +263,9 @@ struct MobileDeskView: View {
                 Button { withAnimation(.snappy(duration: 0.2)) { self.column = column } } label: {
                     VStack(spacing: 1) {
                         Text("\(count)").font(.headline.monospacedDigit())
-                            .foregroundStyle(column == .needsYou && count > 0 ? Color.yellow : on ? Color.primary : Color.secondary)
+                            .foregroundStyle(column == .needsYou && count > 0 ? Color.attention : on ? Color.primary : Color.metadata)
                         Text(column.short).font(.caption2.weight(on ? .semibold : .medium)).lineLimit(1).minimumScaleFactor(0.8)
-                            .foregroundStyle(on ? Color.primary : Color.secondary)
+                            .foregroundStyle(on ? Color.primary : Color.metadata)
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 6)
@@ -296,9 +325,9 @@ struct MobileDeskView: View {
             HStack(spacing: 8) {
                 Text(column.title).font(.subheadline.weight(.semibold))
                 Text("\(count(column))").font(.caption.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(column == .needsYou && count(column) > 0 ? Color.black : Color.secondary)
+                    .foregroundStyle(column == .needsYou && count(column) > 0 ? Color(uiColor: .systemBackground) : Color.metadata)
                     .padding(.horizontal, 7).padding(.vertical, 2)
-                    .background(Capsule().fill(column == .needsYou && count(column) > 0 ? Color.yellow : Color.primary.opacity(0.08)))
+                    .background(Capsule().fill(column == .needsYou && count(column) > 0 ? Color.attention : Color.primary.opacity(0.08)))
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 10)
@@ -334,13 +363,16 @@ struct MobileDeskView: View {
                                 ignore: { ignore(request) })
             }
         case .working:
-            ForEach(working) { item in DeskWorkingCard(item: item, open: { open(item.id) }) }
+            ForEach(working) { item in DeskWorkingCard(item: item, open: { open(item.id) }, stale: store.isStale || loadProblem != nil) }
         case .needsYou:
             ForEach(needsYou) { item in
                 DeskWaitingCard(item: item, busy: busy.contains(item.id), swipes: !wide,
                                 open: { open(item.chatID) },
                                 decide: { decide($0, item) },
                                 silence: { silence(item) })
+            }
+            if !silenced.isEmpty {
+                DeskSilencedList(items: silenced, busy: unsilencing) { unsilence($0) }
             }
         case .ready:
             ForEach(ready) { item in
@@ -366,7 +398,7 @@ struct MobileDeskView: View {
     /// A column with nothing in it.
     private func empty(_ column: MobileDeskColumn) -> some View {
         Text(column.empty)
-            .font(.subheadline).foregroundStyle(.secondary)
+            .font(.subheadline).foregroundStyle(Color.metadata)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 4).padding(.vertical, 10)
             .accessibilityIdentifier("desk-empty-\(column.id)")
@@ -375,7 +407,7 @@ struct MobileDeskView: View {
     private var loading: some View {
         HStack(spacing: 8) {
             ProgressView().controlSize(.small)
-            Text("Reading the Desk…").font(.footnote).foregroundStyle(.secondary)
+            Text("Reading the Desk…").font(.footnote).foregroundStyle(Color.metadata)
         }
         .accessibilityElement(children: .combine)
     }
@@ -407,7 +439,7 @@ struct MobileDeskView: View {
             .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .strokeBorder(asking ? Color.accentColor.opacity(0.6) : Color.primary.opacity(0.06), lineWidth: asking ? 1.5 : 1))
             Text("The Desk suggests a place before anything starts.")
-                .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 6)
+                .font(.caption).foregroundStyle(Color.metadata).padding(.horizontal, 6)
         }
     }
 
@@ -475,8 +507,26 @@ struct MobileDeskView: View {
             defer { silencing.remove(key) }
             do {
                 _ = try await store.silenceDesk(item)
+                // A few seconds to take it back; it's also listed under "silenced".
+                withAnimation { silencedNote = item }
             } catch let error as MobileError where error.status == 404 {
                 actionProblem = "Silencing needs the newest Chatterbox on the Mac. Update it there to use it."
+            } catch { actionProblem = Self.describe(error) }
+        }
+    }
+
+    /// Unsilence (Undo, or the silenced list): back on the Desk on every device.
+    private func unsilence(_ item: Companion.DeskWaiting) {
+        let key = Self.silenceKey(item)
+        guard unsilencing.insert(key).inserted else { return }
+        if silencedNote.map(Self.silenceKey) == key { withAnimation { silencedNote = nil } }
+        Task {
+            defer { unsilencing.remove(key) }
+            do {
+                _ = try await store.unsilenceDesk(item)
+                withAnimation { column = .needsYou }
+            } catch let error as MobileError where error.status == 404 {
+                actionProblem = "Unsilencing needs the newest Chatterbox on the Mac. Update it there to use it."
             } catch { actionProblem = Self.describe(error) }
         }
     }
@@ -585,7 +635,7 @@ private struct DeskPlaceTag: View {
     let name: String
     var body: some View {
         Text(name)
-            .font(.caption.weight(.medium)).foregroundStyle(.secondary).lineLimit(1)
+            .font(.caption.weight(.medium)).foregroundStyle(Color.metadata).lineLimit(1)
             .padding(.horizontal, 8).padding(.vertical, 3)
             .background(Capsule().fill(Color.primary.opacity(0.06)))
     }
@@ -601,8 +651,15 @@ private extension View {
     }
 }
 
-/// A session waiting on you: what it asks; approve or deny in place, open it, or swipe it left
-/// (or long-press it) to silence it.
+/// Where a waiting session is, as its approval card says it everywhere: "USA Archery › Deploy
+/// the site", or "SDHQ › Cache rules" for a project's session.
+func deskContext(title: String, place: String?, subtitle: String?) -> String {
+    [place.flatMap { $0 == title ? nil : $0 }, title, subtitle].compactMap { $0 }.joined(separator: " \u{203A} ")
+}
+
+/// A session waiting on you. An approval or plan is the one approval card (ApprovalPanel): Allow,
+/// Allow for Session or Deny in place. Questions and a reply that asks: Open. The top of the
+/// card opens the session; swipe it left (then tap Silence) or long-press it to silence it.
 private struct DeskWaitingCard: View {
     let item: Companion.DeskWaiting
     let busy: Bool
@@ -613,70 +670,47 @@ private struct DeskWaitingCard: View {
     let silence: () -> Void
 
     private var decides: Bool { item.kind == "approval" || item.kind == "plan" }
-    private var kind: (title: String, icon: String) {
-        switch item.kind {
-        case "approval": ("Permission needed", "hand.raised.fill")
-        case "plan": ("Plan ready", "list.bullet.clipboard")
-        case "questions": ("Questions", "questionmark.bubble")
-        case "reply": ("Waiting on your reply", "text.bubble")
-        default: ("Needs you", "exclamationmark.circle")
-        }
-    }
+    private var context: String { deskContext(title: item.title, place: item.place, subtitle: item.subtitle) }
 
     var body: some View {
-        DeskSwipe(action: .silence, id: item.id.uuidString, enabled: swipes, perform: silence) { taps in card(taps) }
+        DeskSwipe(action: .silence, id: item.id.uuidString, enabled: swipes, fullSwipe: false, perform: silence) { taps in card(taps) }
     }
 
     /// The card; its buttons go through `taps`, so letting go of a swipe doesn't press them.
     private func card(_ taps: DeskSwipeTaps) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Button(action: taps(open)) {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 8) {
-                        Label(kind.title, systemImage: kind.icon)
-                            .font(.caption.weight(.semibold)).foregroundStyle(.yellow)
-                        Spacer(minLength: 8)
-                        if let place = item.place, place != item.title { DeskPlaceTag(name: place) }
+        let id = item.id.uuidString
+        return VStack(alignment: .leading, spacing: 12) {
+            if decides {
+                ApprovalPanel(context: context, ask: item.text, command: item.detail, isPlan: item.kind == "plan", busy: busy,
+                              identifier: { $0 == "open-card" ? "desk-waiting-\(id)" : "desk-\($0)-\(id)" },
+                              decide: decide, taps: { taps($0) }, open: open)
+                    .accessibilityAction(named: "Silence", silence)
+            } else {
+                Button(action: taps(open)) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Label(WaitingKind.title(item.kind), systemImage: WaitingKind.icon(item.kind))
+                            .font(.caption.weight(.semibold)).foregroundStyle(Color.attention)
+                        Text(context).font(.subheadline.weight(.semibold)).lineLimit(2).multilineTextAlignment(.leading)
+                            .accessibilityIdentifier("desk-context-\(id)")
+                        Text(item.text).font(.callout).lineLimit(4).multilineTextAlignment(.leading)
+                        if let questions = item.questions, questions.count > 1 {
+                            Text("\(questions.count) questions").font(.caption).foregroundStyle(Color.metadata)
+                        }
                     }
-                    Text(item.title).font(.headline).lineLimit(2).multilineTextAlignment(.leading)
-                    // A project's session: its own title under the project's name.
-                    if let subtitle = item.subtitle {
-                        Text(subtitle).font(.subheadline.weight(.medium)).lineLimit(2).multilineTextAlignment(.leading)
-                            .accessibilityIdentifier("desk-subtitle-\(item.id.uuidString)")
-                    }
-                    Text(item.text).font(.subheadline).foregroundStyle(.secondary)
-                        .lineLimit(4).multilineTextAlignment(.leading)
-                    if let questions = item.questions, questions.count > 1 {
-                        Text("\(questions.count) questions").font(.caption).foregroundStyle(.secondary)
-                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityHint("Opens the session")
-            .accessibilityAction(named: "Silence", silence)
-            .accessibilityIdentifier("desk-waiting-\(item.id.uuidString)")
-            HStack(spacing: 8) {
-                if busy {
-                    ProgressView().controlSize(.small)
-                    Text("Sending…").font(.footnote).foregroundStyle(.secondary)
-                } else if decides {
-                    Button("Approve", action: taps { decide("approved") })
-                        .buttonStyle(.borderedProminent)
-                        .accessibilityIdentifier("desk-approve-\(item.id.uuidString)")
-                    Button("Deny", role: .destructive, action: taps { decide("denied") })
-                        .buttonStyle(.bordered)
-                        .accessibilityIdentifier("desk-deny-\(item.id.uuidString)")
-                } else {
-                    Button("Open", action: taps(open))
-                        .buttonStyle(.bordered)
-                        .accessibilityIdentifier("desk-open-\(item.id.uuidString)")
-                }
-                Spacer(minLength: 0)
+                .buttonStyle(.plain)
+                .accessibilityHint("Opens the session")
+                .accessibilityAction(named: "Silence", silence)
+                .accessibilityIdentifier("desk-waiting-\(id)")
+                Button("Open", action: taps(open))
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("desk-open-\(id)")
             }
         }
-        .deskCard(stroke: Color.yellow.opacity(0.5), width: 1.5)
+        // Visible in both modes: the amber that reads on white, yellow on dark.
+        .deskCard(stroke: Color.attention.opacity(0.8), width: 1.5)
         .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 16, style: .continuous))
         .contextMenu {
             Button("Open", systemImage: "arrow.up.forward.square", action: open)
@@ -685,19 +719,77 @@ private struct DeskWaitingCard: View {
     }
 }
 
+/// The foot of Needs you: what was silenced, folded into one quiet row ("2 silenced"); opened,
+/// each with Unsilence, which puts it back on the Desk on every device.
+private struct DeskSilencedList: View {
+    let items: [Companion.DeskWaiting]
+    let busy: Set<String>
+    let unsilence: (Companion.DeskWaiting) -> Void
+    @State private var open = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button { withAnimation(.easeOut(duration: 0.2)) { open.toggle() } } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "bell.slash")
+                    Text("\(items.count) silenced")
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right").font(.caption.weight(.semibold)).rotationEffect(.degrees(open ? 90 : 0))
+                }
+                .font(.subheadline.weight(.medium)).foregroundStyle(Color.metadata)
+                .padding(.horizontal, 14).padding(.vertical, 11)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(items.count) silenced")
+            .accessibilityValue(open ? "Shown" : "Hidden")
+            .accessibilityHint("Things taken off the Desk that still wait in their sessions")
+            .accessibilityIdentifier("desk-silenced-row")
+            if open {
+                ForEach(items) { item in
+                    Divider().padding(.leading, 14)
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(deskContext(title: item.title, place: item.place, subtitle: item.subtitle)).font(.subheadline.weight(.medium)).lineLimit(1)
+                            Text("\(WaitingKind.title(item.kind)): \(item.text)").font(.caption).foregroundStyle(Color.metadata).lineLimit(2)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityElement(children: .combine)
+                        Button("Unsilence") { unsilence(item) }
+                            .buttonStyle(.bordered).controlSize(.small)
+                            .disabled(busy.contains(MobileDeskView.silenceKey(item)))
+                            .accessibilityIdentifier("desk-unsilence-\(item.id.uuidString)")
+                    }
+                    .padding(.horizontal, 14).padding(.vertical, 9)
+                }
+            }
+        }
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.primary.opacity(0.04)))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Color.primary.opacity(0.08)))
+        .padding(.top, 6)
+    }
+}
+
 /// A session working now: its name, place and what it's doing; a tap (or Open) opens it.
 private struct DeskWorkingCard: View {
     let item: Companion.DeskWorking
     let open: () -> Void
+    /// The Mac can't be reached: as last seen, not spinning.
+    var stale = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Button(action: open) {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 8) {
-                        ProgressView().controlSize(.mini)
-                        Text(item.since.map { "Working · \(MobileDeskView.ago($0))" } ?? "Working")
-                            .font(.caption.weight(.semibold)).foregroundStyle(.blue).lineLimit(1)
+                        if stale {
+                            Label("Last seen working", systemImage: "clock")
+                                .font(.caption.weight(.semibold)).foregroundStyle(Color.metadata).lineLimit(1)
+                        } else {
+                            ProgressView().controlSize(.mini)
+                            Text(item.since.map { "Working · \(MobileDeskView.ago($0))" } ?? "Working")
+                                .font(.caption.weight(.semibold)).foregroundStyle(Color.metadata).lineLimit(1)
+                        }
                         Spacer(minLength: 8)
                         if let place = item.place, place != item.title { DeskPlaceTag(name: place) }
                     }
@@ -706,14 +798,14 @@ private struct DeskWorkingCard: View {
                         Text(subtitle).font(.subheadline.weight(.medium)).lineLimit(2).multilineTextAlignment(.leading)
                     }
                     if let activity = item.activity, !activity.isEmpty {
-                        Text(activity).font(.subheadline).foregroundStyle(.secondary).lineLimit(2).multilineTextAlignment(.leading)
+                        Text(activity).font(.subheadline).foregroundStyle(Color.metadata).lineLimit(2).multilineTextAlignment(.leading)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("\(item.title)\(item.subtitle.map { ", " + $0 } ?? ""), working\(item.place.flatMap { $0 != item.title ? ", in \($0)" : nil } ?? "")\(item.activity.map { ": " + $0 } ?? "")")
+            .accessibilityLabel("\(item.title)\(item.subtitle.map { ", " + $0 } ?? ""), \(stale ? "last seen working" : "working")\(item.place.flatMap { $0 != item.title ? ", in \($0)" : nil } ?? "")\(item.activity.map { ": " + $0 } ?? "")")
             .accessibilityHint("Opens the session")
             .accessibilityIdentifier("desk-working-\(item.id.uuidString)")
             Button("Open", action: open)
@@ -743,8 +835,11 @@ private struct DeskReadyCard: View {
             Button(action: taps(open)) {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 8) {
-                        Label("Finished \(MobileDeskView.ago(item.finishedAt))", systemImage: "checkmark.circle")
-                            .font(.caption.weight(.semibold)).foregroundStyle(.green).lineLimit(1)
+                        // The icon carries the color; the words stay readable in light mode.
+                        Label { Text("Finished \(MobileDeskView.ago(item.finishedAt))").foregroundStyle(Color.metadata) } icon: {
+                            Image(systemName: "checkmark.circle").foregroundStyle(.green)
+                        }
+                        .font(.caption.weight(.semibold)).lineLimit(1)
                         Spacer(minLength: 8)
                         if let place = item.place, place != item.title { DeskPlaceTag(name: place) }
                     }
@@ -752,7 +847,7 @@ private struct DeskReadyCard: View {
                     if let subtitle = item.subtitle {
                         Text(subtitle).font(.subheadline.weight(.medium)).lineLimit(2).multilineTextAlignment(.leading)
                     }
-                    Text(item.text).font(.subheadline).foregroundStyle(.secondary).lineLimit(3).multilineTextAlignment(.leading)
+                    Text(item.text).font(.subheadline).foregroundStyle(Color.metadata).lineLimit(3).multilineTextAlignment(.leading)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
@@ -793,10 +888,10 @@ private struct DeskDoneCard: View {
         HStack(alignment: .top, spacing: 10) {
             VStack(alignment: .leading, spacing: 4) {
                 Label("Completed \(MobileDeskView.ago(item.completedAt))", systemImage: "checkmark.circle.fill")
-                    .font(.caption.weight(.medium)).foregroundStyle(.secondary).lineLimit(1)
-                Text(item.title).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary).lineLimit(2)
+                    .font(.caption.weight(.medium)).foregroundStyle(Color.metadata).lineLimit(1)
+                Text(item.title).font(.subheadline.weight(.semibold)).foregroundStyle(Color.metadata).lineLimit(2)
                 if let subtitle = item.subtitle {
-                    Text(subtitle).font(.footnote).foregroundStyle(.secondary).lineLimit(1)
+                    Text(subtitle).font(.footnote).foregroundStyle(Color.metadata).lineLimit(1)
                 }
                 if let place = item.place, place != item.title { DeskPlaceTag(name: place).padding(.top, 2) }
             }
@@ -826,10 +921,11 @@ final class DeskSwipeTaps {
     }
 }
 
-/// Swipe a card left to show its main action (Silence on Needs you, Mark Complete on Ready), or
-/// all the way to do it, as a list row's swipe actions do (the Desk is a scroll view of cards,
-/// not a list). A tap on an open card closes it. Only one column at a time (a phone): side by
-/// side, sideways drags scroll the board.
+/// Swipe a card left to show its main action (Silence on Needs you, Mark Complete on Ready); a
+/// tap on it does it. Mark Complete also goes all the way across to do it, as a list row's swipe
+/// actions do (the Desk is a scroll view of cards, not a list); Silence never does. A tap on an
+/// open card closes it. Only one column at a time (a phone): side by side, sideways drags
+/// scroll the board.
 private struct DeskSwipe<Content: View>: View {
     enum Action {
         case silence, complete
@@ -843,6 +939,9 @@ private struct DeskSwipe<Content: View>: View {
     let id: String
     /// Off: just the card (the long-press menu still has the action).
     var enabled = true
+    /// All the way across does it, without a tap. Off for Silence: it takes something waiting off
+    /// the Desk, so it needs the tap (and has Undo).
+    var fullSwipe = true
     let perform: () -> Void
     @ViewBuilder let content: (DeskSwipeTaps) -> Content
     @State private var taps = DeskSwipeTaps()
@@ -899,9 +998,10 @@ private struct DeskSwipe<Content: View>: View {
                 if sideways == nil { sideways = abs(value.translation.width) > abs(value.translation.height) * 1.2 }
                 guard sideways == true else { return }
                 taps.swiping = true
-                let x = min(0, resting + value.translation.width)
+                // Without a full swipe, it stops a little past the button.
+                let x = max(fullSwipe ? -.infinity : -(reveal + 36), min(0, resting + value.translation.width))
                 offset = x
-                armed = -x > commit
+                armed = fullSwipe && -x > commit
             }
             .onEnded { value in
                 defer { sideways = nil }
@@ -909,7 +1009,7 @@ private struct DeskSwipe<Content: View>: View {
                 taps.swiping = false
                 taps.endedAt = Date()
                 let x = resting + value.translation.width
-                if -x > commit {
+                if fullSwipe, -x > commit {
                     now()
                 } else if -x > reveal / 2 || -(resting + value.predictedEndTranslation.width) > reveal {
                     withAnimation(.spring(duration: 0.25)) { offset = -reveal; resting = -reveal }
@@ -963,7 +1063,7 @@ private struct DeskRequestCard: View {
                 .font(.body).lineLimit(6)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Text("\(source) · \(request.createdAt.formatted(.relative(presentation: .named)))")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.caption).foregroundStyle(Color.metadata)
             Button(action: change) {
                 HStack(spacing: 6) {
                     Image(systemName: MobileDeskPlaces.icon(place))
@@ -971,7 +1071,7 @@ private struct DeskRequestCard: View {
                     Image(systemName: "chevron.up.chevron.down").font(.caption2.weight(.semibold))
                 }
                 .font(.subheadline.weight(.medium))
-                .foregroundStyle(place == nil ? Color.secondary : Color.accentColor)
+                .foregroundStyle(place == nil ? Color.metadata : Color.accentColor)
                 .padding(.horizontal, 12).padding(.vertical, 7)
                 .background(Capsule().fill(place == nil ? Color.primary.opacity(0.06) : Color.accentColor.opacity(0.12)))
             }
@@ -980,13 +1080,13 @@ private struct DeskRequestCard: View {
             .accessibilityHint("Shows the Studios and projects it could go to")
             .accessibilityIdentifier("desk-place-\(request.id.uuidString)")
             if let note = request.note, !note.isEmpty {
-                Text(note).font(.footnote).foregroundStyle(.secondary)
+                Text(note).font(.footnote).foregroundStyle(Color.metadata)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if busy {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
-                    Text("Working on it…").font(.footnote).foregroundStyle(.secondary)
+                    Text("Working on it…").font(.footnote).foregroundStyle(Color.metadata)
                 }
             } else {
                 // In a narrow column, Ignore goes under the others.
@@ -1013,7 +1113,7 @@ private struct DeskRequestCard: View {
     private var ignoreButton: some View {
         Button("Ignore", action: ignore)
             .buttonStyle(.borderless)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(Color.metadata)
             .accessibilityIdentifier("desk-ignore-\(request.id.uuidString)")
     }
 }

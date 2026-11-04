@@ -197,10 +197,10 @@ struct SettingsView: View {
                     }
                 }
                 .help("Where Claude Code and Codex work in sessions that aren't bound to a project folder.")
-                Picker("Claude mode", selection: $claudeDefaultMode) {
+                Picker("Claude permissions", selection: $claudeDefaultMode) {
                     ForEach(PermissionModes.claude) { Text($0.title).tag($0.id) }
                 }
-                Picker("Codex mode", selection: $codexDefaultMode) {
+                Picker("Codex permissions", selection: $codexDefaultMode) {
                     ForEach(PermissionModes.codex) { Text($0.title).tag($0.id) }
                 }
             }

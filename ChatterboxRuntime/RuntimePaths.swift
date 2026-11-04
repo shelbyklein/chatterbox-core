@@ -7,7 +7,7 @@ enum RuntimePaths {
         return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Chatterbox", isDirectory: true)
     }
     static func normalize(_ folder: String) -> String { URL(fileURLWithPath: folder).standardizedFileURL.resolvingSymlinksInPath().path }
-    static func effortLabel(_ effort: String) -> String { effort == "xhigh" ? "Extra High" : effort.capitalized }
+    static func effortLabel(_ effort: String) -> String { EffortNames.label(effort) }
 }
 
 /// Runtime emits domain activity; each process supplies its own side effects.

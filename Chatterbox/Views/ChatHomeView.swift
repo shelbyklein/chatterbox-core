@@ -12,6 +12,26 @@ extension EnvironmentValues {
     }
 }
 
+/// Selected and needs-you, kept apart on every session card and row (the sidebar, Home,
+/// Studio lists): selected is a quiet accent tint, the same in light and dark; needs you is a
+/// bar down the leading edge in the attention color, beside the card's own "Needs you" word or
+/// dot. Never a full-card tint or an outline, which read as selection.
+enum SessionMarks {
+    static let selectedFill = Color.accentColor.opacity(0.2)
+}
+
+extension View {
+    /// The needs-you bar, inside the leading edge.
+    func needsYouBar(_ on: Bool) -> some View {
+        overlay(alignment: .leading) {
+            if on {
+                Capsule().fill(Color.attention).frame(width: 4).padding(.vertical, 8).padding(.leading, 2)
+                    .accessibilityHidden(true)
+            }
+        }
+    }
+}
+
 struct ThreadCard: View {
     let session: ChatSession
     var expanded = false
@@ -39,10 +59,10 @@ struct ThreadCard: View {
     private var tint: Color { appearance.style.color(for: session) }
     private var activityIndicator: some View { SessionActivityIndicator(session: session) }
     // Cards are also used outside List, where listRowBackground cannot highlight them.
-    // Waiting on the user takes priority over the selected-card appearance.
+    // Selection is a quiet accent tint; needs you is the leading bar (needsYouBar), never a fill.
     private var cardBackground: Color {
-        if session.isWaitingOnYou { return Color.yellow.opacity(colorScheme == .dark ? 0.22 : 0.18) }
-        return selected ? .white : Color.primary.opacity(hovered ? 0.10 : 0.055)
+        if selected { return SessionMarks.selectedFill }
+        return Color.primary.opacity(hovered ? 0.10 : 0.055)
     }
     private var preview: String {
         if let summary = session.listSummary { return summary.preview ?? "No messages yet" }
@@ -105,7 +125,8 @@ struct ThreadCard: View {
                             .frame(width: 64 * scale, height: 64 * scale)
                             .background(cardBackground, in: RoundedRectangle(cornerRadius: 14))
                             .clipShape(RoundedRectangle(cornerRadius: 14))
-                            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(session.isWaitingOnYou ? Color.orange : Color.primary.opacity(0.16), lineWidth: session.isWaitingOnYou ? 2 : 1))
+                            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.primary.opacity(0.16)))
+                            .needsYouBar(session.isWaitingOnYou)
                         activityIndicator.padding(8)
                     }
                     Text(title).font(.system(size: 8.5 * scale, weight: .medium)).lineLimit(2)
@@ -113,7 +134,7 @@ struct ThreadCard: View {
                     if model.isPinnedThread(session) { SessionOriginLabel(session: session) }
                 }.frame(width: 80 * scale, height: 94 * scale)
                     .task(id: session.record.projectFolder) { ProjectIcons.shared.load(session.record.projectFolder) }
-                    .background(selected && !session.isWaitingOnYou ? Color.white : Color.clear, in: RoundedRectangle(cornerRadius: 14))
+                    .background(selected ? SessionMarks.selectedFill : Color.clear, in: RoundedRectangle(cornerRadius: 14))
                     .contentShape(Rectangle())
             } else {
             VStack(alignment: .leading, spacing: expanded ? 12 : 7) {
@@ -137,7 +158,7 @@ struct ThreadCard: View {
                 if model.isPinnedThread(session) { SessionOriginLabel(session: session) }
                 if let relation {
                     Label(relation, systemImage: session.record.sidechatOf != nil ? "bubble.left.and.bubble.right" : "arrow.triangle.branch")
-                        .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                        .font(.caption2).foregroundStyle(Color.metadata).lineLimit(1)
                 }
                 if expanded, let parentID = session.record.sidechatOf {
                     ParentThreadLabel(parentID: parentID)
@@ -157,7 +178,7 @@ struct ThreadCard: View {
                         .help("\(today) turn\(today == 1 ? "" : "s") started in the last 24 hours")
                         .foregroundStyle(today == 0 ? Color.secondary : Color.orange)
                 }
-                Text(preview).font(.system(size: (expanded ? 13 : 10.5) * scale)).foregroundStyle(.secondary)
+                Text(preview).font(.system(size: (expanded ? 13 : 10.5) * scale)).foregroundStyle(Color.metadata)
                     .lineLimit(expanded ? 4 : 2).frame(maxWidth: .infinity, alignment: .leading)
                 let children = model.childChats(of: session)
                 if !children.isEmpty {
@@ -171,7 +192,7 @@ struct ThreadCard: View {
                         Text("\(session.record.backend.label) · \(messageCount) \(messageCount == 1 ? "message" : "messages")").font(.caption).lineLimit(1)
                         Spacer(minLength: 8)
                     }
-                    Text(ShortAge.string(since: session.lastActivity)).font(.caption2).foregroundStyle(.secondary)
+                    Text(ShortAge.string(since: session.lastActivity)).font(.caption2).foregroundStyle(Color.metadata)
                     if !expanded { Spacer(minLength: 0) }
                 }
             }
@@ -181,7 +202,7 @@ struct ThreadCard: View {
             .frame(minHeight: (expanded ? 250 : 144) * scale)
             .background(cardBackground, in: RoundedRectangle(cornerRadius: 12))
             .overlay {
-                RoundedRectangle(cornerRadius: 12).strokeBorder(session.isWaitingOnYou ? Color.orange : Color.primary.opacity(hovered ? 0.28 : 0.12), lineWidth: session.isWaitingOnYou ? 2 : 1)
+                RoundedRectangle(cornerRadius: 12).strokeBorder(Color.primary.opacity(hovered ? 0.28 : 0.12))
             }
             .contentShape(RoundedRectangle(cornerRadius: 12))
             }
@@ -195,7 +216,7 @@ struct ThreadCard: View {
                 LinkedStudioShortcut(folder: session.record.projectFolder).padding(10 * scale)
             }
         }
-        .environment(\.colorScheme, selected && !session.isWaitingOnYou ? .light : colorScheme)
+        .needsYouBar(!iconOnly && session.isWaitingOnYou)
         #if DEBUG
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { MacHomeDebug.cards[session.id] = $0 }
         #endif

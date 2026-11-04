@@ -202,44 +202,121 @@ private struct MessageTimestampHelp: ViewModifier {
     }
 }
 
+/// The one approval card, on the Desk and in the session, as on the phone: its kind, where it
+/// is (place › session), what it asks, the exact command in monospace (one line cut in the
+/// middle; click it for all of it), then Allow (filled, the accent), Allow for Session, and
+/// Deny (red). A plan: Start Building, Start and Accept Edits, Keep Planning. The surface
+/// around it is the caller's.
+struct ApprovalPanel: View {
+    /// "USA Archery › Deploy the site"; nil leaves it out.
+    var context: String?
+    let ask: String
+    /// The command or files; nil for a plan.
+    var command: String?
+    var isPlan = false
+    /// A plan's text, to read before building (the session's card).
+    var plan: String?
+    var pending = true
+    /// For tests: where each part is ("allow", "allowSession", "deny", "command").
+    var frame: (String, CGRect) -> Void = { _, _ in }
+    let decide: (DisplayItem.ApprovalState) -> Void
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(isPlan ? "Plan" : "Permission", systemImage: isPlan ? "list.bullet.clipboard" : "hand.raised.fill")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(pending ? Color.attention : Color.metadata)
+            if let context {
+                Text(context).font(.headline).lineLimit(2)
+            }
+            Text(ask).font(.callout).fixedSize(horizontal: false, vertical: true)
+            if let command, !command.isEmpty { commandBlock(command) }
+            if let plan, !plan.isEmpty {
+                ScrollView {
+                    MarkdownText(text: plan)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 320)
+                .padding(8)
+                .background(RoundedRectangle(cornerRadius: 6).fill(.quaternary.opacity(0.6)))
+            }
+            if pending {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) { allow; allowForSession; deny }
+                    VStack(alignment: .leading, spacing: 6) { HStack(spacing: 8) { allow; allowForSession }; deny }
+                }
+                .padding(.top, 2)
+            }
+        }
+    }
+
+    /// The command: one line, cut in the middle so both ends show; a click shows all of it.
+    private func commandBlock(_ command: String) -> some View {
+        let long = command.count > 48 || command.contains("\n")
+        return HStack(alignment: .top, spacing: 6) {
+            Group {
+                if expanded {
+                    Text(command).lineLimit(nil).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                } else {
+                    Text(command.split(whereSeparator: \.isNewline).joined(separator: " \u{23CE} ")).lineLimit(1).truncationMode(.middle)
+                }
+            }
+            .font(.system(.callout, design: .monospaced))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            if long {
+                Image(systemName: expanded ? "chevron.up" : "chevron.down").font(.caption.weight(.semibold)).foregroundStyle(Color.metadata)
+                    .padding(.top, 3)
+            }
+        }
+        .padding(.horizontal, 8).padding(.vertical, 6)
+        .background(RoundedRectangle(cornerRadius: 6).fill(.quaternary.opacity(0.6)))
+        .contentShape(Rectangle())
+        .onTapGesture { if long { withAnimation(.easeOut(duration: 0.15)) { expanded.toggle() } } }
+        .help(long ? (expanded ? "Click to show one line" : "Click to show the whole command") : command)
+        .contextMenu { Button("Copy Command") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(command, forType: .string) } }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Command: \(command)")
+        .accessibilityAddTraits(long ? .isButton : [])
+        .accessibilityAction { if long { expanded.toggle() } }
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame("command", $0) }
+    }
+
+    private var allow: some View {
+        Button(isPlan ? "Start Building" : "Allow") { decide(.approved) }
+            .buttonStyle(.accent)
+            .help(isPlan ? "Start building, asking before edits" : "Allow it this once")
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame("allow", $0) }
+    }
+    private var allowForSession: some View {
+        Button(isPlan ? "Start and Accept Edits" : "Allow for Session") { decide(.approvedForSession) }
+            .help(isPlan ? "Start building, accepting edits without asking" : "Allow it, and ones like it, for the rest of this session")
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame("allowSession", $0) }
+    }
+    /// Secondary, in red: it's the other answer, not a warning.
+    private var deny: some View {
+        Button(role: .destructive) { decide(.denied) } label: { Text(isPlan ? "Keep Planning" : "Deny").foregroundStyle(.red) }
+            .help(isPlan ? "Keep planning" : "Don't allow it")
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame("deny", $0) }
+    }
+}
+
 private struct ApprovalCard: View {
     let item: DisplayItem
     let decide: (DisplayItem.ApprovalState) -> Void
     @Environment(\.cardFillsWidth) private var fillsWidth
+    @Environment(\.approvalContext) private var context
 
     private var isPlan: Bool { item.approvalStyle == .plan }
+    private var pending: Bool { (item.approvalState ?? .expired) == .pending }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label(item.text, systemImage: "hand.raised")
-                .font(.callout.weight(.medium))
-            if let detail = item.detail, !detail.isEmpty {
-                if isPlan {
-                    ScrollView {
-                        MarkdownText(text: detail)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .frame(maxHeight: 320)
-                    .padding(8)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(.quaternary.opacity(0.6)))
-                } else {
-                    Text(detail)
-                        .font(.system(.callout, design: .monospaced))
-                        .textSelection(.enabled)
-                        .lineLimit(6)
-                        .padding(8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(RoundedRectangle(cornerRadius: 6).fill(.quaternary.opacity(0.6)))
-                }
-            }
+            ApprovalPanel(context: context, ask: item.text, command: isPlan ? nil : item.detail, isPlan: isPlan,
+                          plan: isPlan ? item.detail : nil, pending: pending, decide: decide)
             switch item.approvalState ?? .expired {
             case .pending:
-                HStack {
-                    Button(isPlan ? "Start Building" : "Allow") { decide(.approved) }
-                    Button(isPlan ? "Start and Accept Edits" : "Allow for This Session") { decide(.approvedForSession) }
-                    Button(isPlan ? "Keep Planning" : "Deny", role: .destructive) { decide(.denied) }
-                }
-                .controlSize(.small)
+                EmptyView()
             case .approved:
                 outcome(isPlan ? "Building, asking before edits" : "Allowed", "checkmark.circle", .green)
             case .approvedForSession:
@@ -252,7 +329,8 @@ private struct ApprovalCard: View {
         }
         .padding(12)
         .frame(maxWidth: fillsWidth ? .infinity : 520, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.highlight.opacity(item.approvalState == .pending ? 0.6 : 0.2)))
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.attention.opacity(pending ? 0.07 : 0)))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.attention.opacity(pending ? 0.75 : 0.2), lineWidth: pending ? 1.5 : 1))
     }
 
     private func outcome(_ text: String, _ icon: String, _ color: Color) -> some View {
@@ -782,10 +860,19 @@ private struct CardFillsWidthKey: EnvironmentKey {
     static let defaultValue = false
 }
 
+/// Where the chat is, for its approval cards' header: "USA Archery › Deploy the site".
+private struct ApprovalContextKey: EnvironmentKey {
+    static let defaultValue: String? = nil
+}
+
 extension EnvironmentValues {
     var cardFillsWidth: Bool {
         get { self[CardFillsWidthKey.self] }
         set { self[CardFillsWidthKey.self] = newValue }
+    }
+    var approvalContext: String? {
+        get { self[ApprovalContextKey.self] }
+        set { self[ApprovalContextKey.self] = newValue }
     }
 }
 
