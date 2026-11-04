@@ -11,10 +11,15 @@ struct MenuBarLabel: View {
         let waiting = model.activeSessions.contains { $0.isWaitingOnYou }
         let replies = !Attention.shared.finishedChats(in: model).isEmpty
         let working = !Attention.shared.workingChats(in: model).isEmpty
-        Image(systemName: waiting ? "exclamationmark.bubble.fill"
+        let name = Flavor.current.appName
+        let icon = Image(systemName: waiting ? "exclamationmark.bubble.fill"
               : replies ? "bubble.left.and.bubble.right.fill"
               : working ? "ellipsis.bubble" : "bubble.left.and.bubble.right")
-            .accessibilityLabel(waiting ? "Chatterbox: a session is waiting on you" : replies ? "Chatterbox: new replies" : working ? "Chatterbox: working" : "Chatterbox")
+        // Chatterbox Dev's icon says so, beside the real one's.
+        Group {
+            if Flavor.current.isDev { HStack(spacing: 2) { icon; Text("DEV") } } else { icon }
+        }
+            .accessibilityLabel(waiting ? "\(name): a session is waiting on you" : replies ? "\(name): new replies" : working ? "\(name): working" : name)
     }
 }
 
@@ -31,7 +36,7 @@ struct MenuBarPanel: View {
         let recent = Array(Attention.shared.recentChats(in: model).filter { !$0.isWaitingOnYou && $0.hasMessages }.prefix(5))
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Chatterbox").font(.headline)
+                Text(Flavor.current.appName).font(.headline)
                 Spacer()
                 Button { newChat() } label: { Image(systemName: "square.and.pencil") }
                     .buttonStyle(.borderless).help("New Chat")

@@ -12,8 +12,7 @@ enum HostPaths {
         if let dir = ProcessInfo.processInfo.environment["CHATTERBOX_HOST_DIR"], !dir.isEmpty {
             return URL(fileURLWithPath: dir, isDirectory: true)
         }
-        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Chatterbox/Host", isDirectory: true)
+        return Flavor.current.hostDirectory
     }
 
     static let socketName = "host.sock"

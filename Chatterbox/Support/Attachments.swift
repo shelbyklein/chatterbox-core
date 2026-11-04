@@ -33,8 +33,7 @@ enum Attachments {
     static let maxImageBytes = 5 * 1024 * 1024
 
     static let directory: URL = {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let root = ProcessInfo.processInfo.environment["CHATTERBOX_DATA_DIR"].map { URL(fileURLWithPath: $0) } ?? base.appendingPathComponent("Chatterbox", isDirectory: true)
+        let root = ProcessInfo.processInfo.environment["CHATTERBOX_DATA_DIR"].map { URL(fileURLWithPath: $0) } ?? Flavor.current.dataDirectory
         let dir = root.appendingPathComponent("Attachments", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir

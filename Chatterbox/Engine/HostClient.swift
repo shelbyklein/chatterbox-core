@@ -174,6 +174,11 @@ final class HostClient {
         var attributes: posix_spawnattr_t?
         posix_spawnattr_init(&attributes)
         defer { posix_spawnattr_destroy(&attributes) }
+        // Only stdin, stdout and stderr (the file actions below) go to the host. Otherwise a host
+        // started by the service kept the service's descriptors open (its runtime.lock, its
+        // daemon.sock listener, the app's connection), so a restarted service couldn't take the
+        // lock and the app never noticed the old one had gone.
+        posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_CLOEXEC_DEFAULT))
         typealias Disclaim = @convention(c) (UnsafeMutablePointer<posix_spawnattr_t?>, Bool) -> Int32
         if let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "responsibility_spawnattrs_setdisclaim") {
             _ = unsafeBitCast(symbol, to: Disclaim.self)(&attributes, true)

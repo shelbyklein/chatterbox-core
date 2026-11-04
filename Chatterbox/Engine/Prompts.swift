@@ -21,8 +21,7 @@ enum Prompts {
 
     /// Your instructions for every chat, kept as a Markdown file you can also edit elsewhere.
     static let userInstructionsFile: URL = {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return base.appendingPathComponent("Chatterbox/AGENTS.md")
+        Flavor.current.dataDirectory.appendingPathComponent("AGENTS.md")
     }()
 
     static var userInstructions: String {

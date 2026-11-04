@@ -46,7 +46,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
     private let bridge: ChatToolbarBridge
     private let toolbar = NSToolbar(identifier: "chatterbox.main")
     private let titleLabel: NSTextField = {
-        let label = NSTextField(labelWithString: "Chatterbox")
+        let label = NSTextField(labelWithString: Flavor.current.appName)
         label.font = .boldSystemFont(ofSize: NSFont.systemFontSize + 2)
         label.lineBreakMode = .byTruncatingTail
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -183,7 +183,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         let session = overview ? nil : bridge.session
         let desk = model.showingDesk
         let title = model.showingSettings ? "Settings" : model.showingAutomations ? "Automations" : model.showingCommandCenter ? "Command Center"
-            : model.showingHome ? (desk ? "Desk" : "Studios") : model.selected?.title ?? session?.title ?? "Chatterbox"
+            : model.showingHome ? (desk ? "Desk" : "Studios") : model.selected?.title ?? session?.title ?? Flavor.current.appName
         if window?.title != title { window?.title = title }
         if titleLabel.stringValue != title { titleLabel.stringValue = title }
         titleLabel.toolTip = title

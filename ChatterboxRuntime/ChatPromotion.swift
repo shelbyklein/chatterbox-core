@@ -65,7 +65,7 @@ extension ConversationRuntime {
                     let name = try ChatPromotion.folderName(request.name ?? "")
                     let base = ProcessInfo.processInfo.environment["CHATTERBOX_DATA_DIR"].map {
                         URL(fileURLWithPath: $0).appendingPathComponent("Studios", isDirectory: true)
-                    } ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Chatterbox/Studios", isDirectory: true)
+                    } ?? Flavor.current.studiosDirectory
                     try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
                     var url = base.appendingPathComponent(name, isDirectory: true), number = 2
                     while FileManager.default.fileExists(atPath: url.path) {

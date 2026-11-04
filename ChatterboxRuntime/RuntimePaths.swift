@@ -4,7 +4,7 @@ import Foundation
 enum RuntimePaths {
     static var data: URL {
         if let path = ProcessInfo.processInfo.environment["CHATTERBOX_DATA_DIR"] { return URL(fileURLWithPath: path, isDirectory: true) }
-        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Chatterbox", isDirectory: true)
+        return Flavor.current.dataDirectory
     }
     static func normalize(_ folder: String) -> String { URL(fileURLWithPath: folder).standardizedFileURL.resolvingSymlinksInPath().path }
     static func effortLabel(_ effort: String) -> String { EffortNames.label(effort) }

@@ -23,8 +23,7 @@ final class ProjectIcons {
         if let dir = ProcessInfo.processInfo.environment["CHATTERBOX_DATA_DIR"], !dir.isEmpty {
             base = URL(fileURLWithPath: dir, isDirectory: true)
         } else {
-            base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent("Chatterbox", isDirectory: true)
+            base = Flavor.current.dataDirectory
         }
         return base.appendingPathComponent("ProjectIcons", isDirectory: true)
     }

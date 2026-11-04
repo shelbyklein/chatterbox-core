@@ -4,9 +4,9 @@ import Foundation
 /// serves this over HTTP on the home network and Tailscale; every call but pairing carries
 /// the token the phone got when it paired.
 enum Companion {
-    static let port: UInt16 = 47_321
+    static let port: UInt16 = Flavor.current.companionPort
     /// Bonjour service type, for finding the Mac on the same Wi-Fi.
-    static let serviceType = "_chatterbox._tcp"
+    static let serviceType = Flavor.current.bonjourType
     static let tokenHeader = "X-Chatterbox-Token"
     /// The newest items a chat sends at once; older ones are left out.
     static let itemLimit = 300

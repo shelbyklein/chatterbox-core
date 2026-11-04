@@ -27,8 +27,8 @@ final class EasyCLIProxy {
 
     /// PC ports for the tunnel back to the proxy: one for the PC's shared Codex server, and a
     /// range for Claude agents, one each (by chat id), so one ending doesn't cut off another.
-    static let pcCodexPort = 47390
-    static func pcClaudePort(for id: UUID) -> Int { 47400 + (Int(id.uuid.0) << 8 | Int(id.uuid.1)) % 500 }
+    static let pcCodexPort = Flavor.current.pcCodexPort
+    static func pcClaudePort(for id: UUID) -> Int { Flavor.current.pcClaudeBasePort + (Int(id.uuid.0) << 8 | Int(id.uuid.1)) % 500 }
 
     /// The proxy if it's answering, whether or not it's on for this agent in Settings (a
     /// session that picked EasyCLIProxy as its connection).

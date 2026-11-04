@@ -19,7 +19,7 @@ import Darwin
     private var launchProblem: String?
 
     init(scriptURL: URL? = Bundle.main.url(forResource: "restart-service", withExtension: "sh"),
-         diagnostics: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Chatterbox/Diagnostics"),
+         diagnostics: URL = Flavor.current.dataDirectory.appendingPathComponent("Diagnostics"),
          isolated: Bool = ProcessInfo.processInfo.environment["CHATTERBOX_DATA_DIR"] != nil,
          launch: @escaping (URL) async throws -> Void = BackgroundServiceRestart.runScript) {
         self.scriptURL = scriptURL; self.isolated = isolated; self.launch = launch
@@ -90,7 +90,8 @@ import Darwin
     nonisolated static func runScript(_ script: URL) async throws {
         try await Task.detached(priority: .userInitiated) {
             let process = Process(); process.executableURL = URL(fileURLWithPath: "/bin/bash")
-            process.arguments = [script.path] // No --now, --host, --codex, or app lifecycle flags.
+            // No --now, --host, --codex, or app lifecycle flags. Chatterbox Dev restarts its own service.
+            process.arguments = [script.path] + (Flavor.current.isDev ? ["--dev"] : [])
             let output = Pipe(); process.standardOutput = output; process.standardError = output
             try process.run()
             let data = output.fileHandleForReading.readDataToEndOfFile()

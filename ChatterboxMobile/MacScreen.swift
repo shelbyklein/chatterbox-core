@@ -11,7 +11,7 @@ import UIKit
 
 /// The Mac's user name and password for Screen Sharing, kept in this phone's Keychain only.
 enum MacScreenLogin {
-    private static let service = "com.shelbyklein.Chatterbox.macscreen"
+    private static let service = Flavor.current.keychainPrefix + ".macscreen"
     private struct Stored: Codable { var user: String; var password: String }
 
     static func load() -> (user: String, password: String)? {

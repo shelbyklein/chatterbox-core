@@ -12,11 +12,11 @@ final class ConnectorServer {
     static let shared = ConnectorServer()
 
     /// The Mac end of the tunnel. CHATTERBOX_CONNECTOR_PORT keeps tests off it.
-    nonisolated static let port = UInt16(ProcessInfo.processInfo.environment["CHATTERBOX_CONNECTOR_PORT"] ?? "") ?? 47331
+    nonisolated static let port = UInt16(ProcessInfo.processInfo.environment["CHATTERBOX_CONNECTOR_PORT"] ?? "") ?? Flavor.current.connectorPort
     /// Where Claude reaches it (the tunnel's hostname); "connectorURL" overrides.
     static var publicURL: String {
         let set = AppPreferences.defaults.string(forKey: "connectorURL")?.trimmingCharacters(in: .whitespaces) ?? ""
-        let url = set.isEmpty ? (ProcessInfo.processInfo.environment["CHATTERBOX_CONNECTOR_URL"] ?? "https://chatterbox-mcp.shelbyklein.com") : set
+        let url = set.isEmpty ? (ProcessInfo.processInfo.environment["CHATTERBOX_CONNECTOR_URL"] ?? Flavor.current.connectorPublicURL) : set
         return url.hasSuffix("/") ? String(url.dropLast()) : url
     }
     /// Where Claude's sign-in may return to. Tests add their own.

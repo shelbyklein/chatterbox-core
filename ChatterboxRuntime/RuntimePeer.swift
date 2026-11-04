@@ -17,7 +17,7 @@ enum RuntimePeerIdentity {
               SecCodeCopyStaticCode(code,[],&staticCode)==errSecSuccess,let staticCode,
               SecCodeCopySigningInformation(staticCode,SecCSFlags(rawValue:kSecCSSigningInformation),&info)==errSecSuccess,let data=info as? [String:Any],
               let id=data[kSecCodeInfoIdentifier as String] as? String else{return false}
-        return role=="ui" && id=="com.shelbyklein.Chatterbox"
+        return role=="ui" && id==Flavor.current.appBundleID
     }
     static func trustedUI(_ fd:Int32, root:URL,allowDaemon:Bool=false) -> Bool {
         #if DEBUG
@@ -35,8 +35,8 @@ enum RuntimePeerIdentity {
         let signing=SecCodeCopySigningInformation(staticCode,SecCSFlags(rawValue:kSecCSSigningInformation),&info)
         guard validity==errSecSuccess,extraction==errSecSuccess,signing==errSecSuccess,
               let data=info as? [String:Any],let id=data[kSecCodeInfoIdentifier as String] as? String,
-              let team=data[kSecCodeInfoTeamIdentifier as String] as? String,team=="9F3MKVW9C5" else {return false}
-        return id=="com.shelbyklein.Chatterbox" || (allowDaemon && id=="com.shelbyklein.Chatterbox.Daemon")
+              let team=data[kSecCodeInfoTeamIdentifier as String] as? String,team==Flavor.teamID else {return false}
+        return id==Flavor.current.appBundleID || (allowDaemon && id==Flavor.current.daemonBundleID)
     }
 }
 

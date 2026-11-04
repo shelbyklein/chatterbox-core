@@ -9,7 +9,7 @@ struct PushCredentials: Codable, Sendable {
     var pem: String
     // The app creates this entry, so its stable signing identity owns the ACL.
     // The original entry may have been created by a one-off setup helper.
-    static let service = "com.shelbyklein.Chatterbox.apns.app"
+    static let service = Flavor.current.keychainPrefix + ".apns.app"
     static func read(allowInteraction: Bool = false) throws -> PushCredentials {
         // This item lives in the login keychain, so a quiet read needs the classic Keychain
         // switch too (KeychainQuietly); authentication UI options alone aren't enough.
@@ -27,7 +27,7 @@ struct PushCredentials: Codable, Sendable {
         var status = SecItemCopyMatching(query as CFDictionary, &value)
         let migrating = status == errSecItemNotFound
         if migrating {
-            query[kSecAttrService] = "com.shelbyklein.Chatterbox.apns"
+            query[kSecAttrService] = Flavor.current.keychainPrefix + ".apns"
             status = SecItemCopyMatching(query as CFDictionary, &value)
         }
         guard status == errSecSuccess, let data = value as? Data else {
@@ -83,7 +83,7 @@ actor APNsProvider {
     private var cachedJWT: String?
     private var cachedAt = Date.distantPast
     private var cachedKey = ""
-    static let topic = "com.shelbyklein.Chatterbox.mobile"
+    static let topic = Flavor.current.mobileBundleID
     static func request(token: String, environment: String, jwt: String, payload: Data, collapse: String) -> URLRequest {
         let host = environment == "production" ? "api.push.apple.com" : "api.sandbox.push.apple.com"
         var request = URLRequest(url: URL(string: "https://\(host)/3/device/\(token)")!, timeoutInterval: 20)

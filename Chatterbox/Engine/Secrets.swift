@@ -61,7 +61,7 @@ extension SecretEntry {
 @Observable
 final class SecretVault {
     static let shared = SecretVault()
-    private nonisolated static let service = "com.shelbyklein.Chatterbox.secrets"
+    private nonisolated static let service = Flavor.current.keychainPrefix + ".secrets"
 
     private(set) var entries: [SecretEntry] = []
     /// Values, read from Keychain once; never shown in the app.
@@ -76,15 +76,14 @@ final class SecretVault {
     /// The service explicitly sets the *production* data directory. Only an isolated
     /// directory uses test files; setting the environment variable alone isn't test mode.
     static func usesFixtureStorage(_ directory: URL) -> Bool {
-        let production = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Chatterbox")
+        let production = Flavor.current.dataDirectory
         return directory.resolvingSymlinksInPath().standardizedFileURL.path != production.resolvingSymlinksInPath().standardizedFileURL.path
     }
 
     init(directory: URL? = nil) {
         self.directory = directory ?? ProcessInfo.processInfo.environment["CHATTERBOX_DATA_DIR"]
             .flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
-            ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Chatterbox")
+            ?? Flavor.current.dataDirectory
         try? reload()
     }
 

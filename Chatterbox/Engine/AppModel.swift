@@ -367,8 +367,7 @@ final class AppModel {
         if let dir = ProcessInfo.processInfo.environment["CHATTERBOX_DATA_DIR"], !dir.isEmpty {
             directory = URL(fileURLWithPath: dir, isDirectory: true).appendingPathComponent("Conversations", isDirectory: true)
         } else {
-            let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            directory = base.appendingPathComponent("Chatterbox/Conversations", isDirectory: true)
+            directory = Flavor.current.dataDirectory.appendingPathComponent("Conversations", isDirectory: true)
         }
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         // The UI can crash or hang even when the daemon owns its conversations.
@@ -376,7 +375,7 @@ final class AppModel {
         if RuntimeClient.usesDaemon {
             restoreNavigationCache()
             // The Desk is new: the app's first start with it opens Home on the Desk, once.
-            if Bundle.main.bundleIdentifier == "com.shelbyklein.Chatterbox", !AppPreferences.defaults.bool(forKey: "deskIntroduced") {
+            if Bundle.main.bundleIdentifier == Flavor.current.appBundleID, !AppPreferences.defaults.bool(forKey: "deskIntroduced") {
                 AppPreferences.defaults.set(true, forKey: "deskIntroduced")
                 StudioSelection.save(.desk)
                 showingHome = true

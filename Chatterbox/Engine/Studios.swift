@@ -36,12 +36,12 @@ extension AppModel {
         return family
     }
 
-    /// Where new Studio folders go: ~/Chatterbox/Studios (inside the data folder under tests).
+    /// Where new Studio folders go: ~/Chatterbox/Studios (Dev: ~/Chatterbox Dev/Studios; inside the data folder under tests).
     static var studiosBase: URL {
         if let dir = ProcessInfo.processInfo.environment["CHATTERBOX_DATA_DIR"], !dir.isEmpty {
             return URL(fileURLWithPath: dir, isDirectory: true).appendingPathComponent("Studios", isDirectory: true)
         }
-        return URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true).appendingPathComponent("Chatterbox/Studios", isDirectory: true)
+        return Flavor.current.studiosDirectory
     }
 
     /// Makes a Studio with its own new folder (or `folder`, if given) and opens its first chat.

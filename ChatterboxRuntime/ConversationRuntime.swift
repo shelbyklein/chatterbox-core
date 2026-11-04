@@ -6,7 +6,8 @@ final class RuntimeOwnership {
     private let fd: Int32
     init(root: URL) throws {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        fd = open(root.appendingPathComponent("runtime.lock").path, O_CREAT | O_RDWR, 0o600)
+        // Close-on-exec: a process the writer starts must never carry its lock.
+        fd = open(root.appendingPathComponent("runtime.lock").path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
         guard fd >= 0 else { throw RuntimeFailure("Cannot open conversation ownership lock") }
         guard flock(fd, LOCK_EX | LOCK_NB) == 0 else { close(fd); throw RuntimeFailure("Conversation storage already has an active writer") }
     }

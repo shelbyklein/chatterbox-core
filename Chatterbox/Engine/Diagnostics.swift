@@ -20,7 +20,7 @@ import UserNotifications
 final class Diagnostics {
     static let shared = Diagnostics()
     /// Marks in Instruments (Points of Interest) for timing chat switches; see scripts/test-chat-switch-perf.sh.
-    nonisolated static let signposts = OSSignposter(subsystem: "com.shelbyklein.Chatterbox", category: .pointsOfInterest)
+    nonisolated static let signposts = OSSignposter(subsystem: Flavor.current.signpostSubsystem, category: .pointsOfInterest)
 
     struct Report: Identifiable, Hashable {
         var id: URL { url }
@@ -36,7 +36,7 @@ final class Diagnostics {
         if let dir = ProcessInfo.processInfo.environment["CHATTERBOX_DATA_DIR"], !dir.isEmpty {
             base = URL(fileURLWithPath: dir)
         } else {
-            base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Chatterbox")
+            base = Flavor.current.dataDirectory
         }
         let folder = base.appendingPathComponent("Diagnostics", isDirectory: true)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -205,7 +205,7 @@ final class Diagnostics {
         let folder = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/DiagnosticReports")
         let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
         return files.filter { url in
-            url.lastPathComponent.hasPrefix("Chatterbox")
+            Flavor.current.ownsCrashReport(named: url.lastPathComponent)
                 && ((try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast) >= since
         }
     }

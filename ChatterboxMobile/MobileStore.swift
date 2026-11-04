@@ -721,7 +721,7 @@ private final class Once: @unchecked Sendable {
 
 /// The pairing token, kept in the Keychain.
 enum Keychain {
-    private static let service = "com.shelbyklein.Chatterbox.mobile"
+    private static let service = Flavor.current.keychainPrefix + ".mobile"
 
     static func save(_ key: String, _ value: String) {
         delete(key)

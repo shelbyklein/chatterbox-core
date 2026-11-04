@@ -31,7 +31,7 @@ struct RemoteMachine: Hashable, Sendable {
 
     /// Where copies of this machine's files live on the Mac.
     var mirrorRoot: URL {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Chatterbox/PC", isDirectory: true)
+        Flavor.current.pcMirrorDirectory
     }
 
     /// The Mac copy of a file in one of this machine's workspaces, if it's in one.
@@ -174,7 +174,7 @@ final class PCModels {
     /// Ollama's own port on the PC, which listens there only.
     nonisolated static let ollamaPort = 11434
     /// The Mac end of the SSH tunnel to it. Tests set their own, away from the live tunnel.
-    nonisolated static let tunnelPort = Int(ProcessInfo.processInfo.environment["CHATTERBOX_PC_TUNNEL_PORT"] ?? "") ?? 47340
+    nonisolated static let tunnelPort = Int(ProcessInfo.processInfo.environment["CHATTERBOX_PC_TUNNEL_PORT"] ?? "") ?? Flavor.current.pcTunnelPort
     /// Fits the PC's GPU entirely, and the fastest that handles agent tools (see plans/pc-worker.md).
     nonisolated static let recommended = "qwen3.5:9b"
 

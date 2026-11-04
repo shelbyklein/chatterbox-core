@@ -14,7 +14,7 @@ struct WidgetSnapshot: Codable, Equatable {
         /// When it finished, started working, or started waiting.
         var date: Date
         var id: UUID { chatID }
-        var link: URL { URL(string: "chatterbox://chat/\(chatID.uuidString)")! }
+        var link: URL { URL(string: "\(Flavor.current.urlScheme)://chat/\(chatID.uuidString)")! }
     }
 
     var updatedAt: Date
@@ -25,9 +25,9 @@ struct WidgetSnapshot: Codable, Equatable {
 
     static let empty = WidgetSnapshot(updatedAt: .distantPast, macName: "", waiting: [], newReplies: [], working: [])
 
-    static let appGroup = "group.com.shelbyklein.Chatterbox"
+    static let appGroup = Flavor.current.appGroup
     private static var file: URL? {
-        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup)?
+        appGroup.flatMap { FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: $0) }?
             .appendingPathComponent("widget-snapshot.json")
     }
 
