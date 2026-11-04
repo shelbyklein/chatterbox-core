@@ -207,7 +207,7 @@ struct CommandReceipt: Codable {
         var record = record
         // The Mac may have only a sidebar summary or a few visible rows. Capture context
         // here, from the authoritative parent, before saving/publishing the new child.
-        if record.sidechatOf != nil, record.items.isEmpty, record.automationID == nil, record.forkedFrom == nil,
+        if record.sidechatOf != nil, record.items.isEmpty, record.automationID == nil, record.workOf == nil, record.forkedFrom == nil,
            let source = record.parentContext?.sourceID ?? record.sidequestOf ?? record.sidechatOf,
            let parent = session(source) {
             record.prepareParentContext(from: parent)

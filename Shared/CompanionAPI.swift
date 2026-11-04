@@ -159,6 +159,8 @@ enum Companion {
         var brief: String? = nil
         /// Pinned on the Mac (Pin to Top): its place among the pins, first is 0.
         var pinnedRank: Int? = nil
+        /// A work thread (plans/work-threads.md): the front thread it reports to. Older Macs omit it.
+        var workOf: UUID? = nil
     }
 
     /// One chat, with its recent transcript.
@@ -186,6 +188,38 @@ enum Companion {
         var commands: [Command]? = nil
         /// Next Steps (a Chatterbox plugin): up to three prompts you might send next.
         var nextSteps: [String]? = nil
+        /// A front thread's work threads (its Work strip), newest first; done ones for a week.
+        /// Nil with none, or from an older Mac.
+        var work: [WorkThread]? = nil
+        /// In a work thread: its front thread's title, for the "Work for" header.
+        var workOfTitle: String? = nil
+    }
+
+    // MARK: - Work threads (plans/work-threads.md)
+
+    /// A work thread as its front thread shows it: a fresh thread in the same project, doing
+    /// one task, that reports its result back.
+    struct WorkThread: Codable, Identifiable, Hashable {
+        /// The work thread's session.
+        var id: UUID
+        var title: String
+        /// "working", "needsYou", "ready" (finished, its result reported) or "done" (marked
+        /// complete: archived).
+        var state: String
+        /// The task it carries on the Desk.
+        var task: UUID? = nil
+        var backend: String
+        var updatedAt: Date
+    }
+
+    /// POST /v1/chats/<id>/work (socket: operation "work", action "start"): a work thread for
+    /// this front thread, started with `brief` as its first message, on the front thread's agent
+    /// and model unless `agent` or `model` say otherwise. Answers the work thread's ChatDetail.
+    struct WorkStartRequest: Codable {
+        var title: String
+        var brief: String
+        var agent: String? = nil
+        var model: String? = nil
     }
 
     /// A chat's settings and the choices for each, as on the Mac.
@@ -313,9 +347,21 @@ enum Companion {
         /// Sessions that finished their reply and ask nothing, newest first: to mark complete.
         /// Nil from a service older than the board.
         var ready: [DeskReady]? = nil
-        /// Sessions marked complete from the board in the last week, newest first. Nil from a
+        /// Tasks marked complete from the board in the last week, newest first. Nil from a
         /// service older than the board.
         var done: [DeskDone]? = nil
+        /// Every task linked to a thread (open, and done this week): which thread carries which
+        /// task, for thread menus and the Mac's own Working. Nil from a service older than tasks.
+        var linked: [DeskTask]? = nil
+    }
+
+    /// A task linked to its thread (plans/work-threads.md). One task per thread, one thread per task.
+    struct DeskTask: Codable, Identifiable, Hashable {
+        var id: UUID
+        var text: String
+        var chatID: UUID
+        /// When it was marked complete (its thread archived); nil while open.
+        var completedAt: Date? = nil
     }
 
     /// A session waiting on Shelby, with what it asks.
@@ -339,6 +385,10 @@ enum Companion {
         /// An approval's exact command or files, as its session's card shows them. Nil for
         /// plans, questions and replies, and from a service older than it.
         var detail: String? = nil
+        /// The task its thread carries, and what it says; nil: a thread that isn't a task
+        /// (shown here only because it needs you), or a service older than tasks.
+        var task: UUID? = nil
+        var taskText: String? = nil
     }
 
     /// Where work goes: a Studio, a project (its work starts as a Sidechat of it), or loose.
@@ -376,12 +426,15 @@ enum Companion {
         var activity: String? = nil
         /// When its reply started.
         var since: Date? = nil
+        /// The task it's doing (Working shows only threads that carry one).
+        var task: UUID? = nil
+        var taskText: String? = nil
     }
 
-    /// A session that finished its reply and asks nothing: Ready to mark complete. Only
-    /// sessions not archived whose last reply finished in the last week; never sidequests or
-    /// automation runs. Silencing it (DeskSilenceRequest with its id and text) hides it until
-    /// something new happens in it.
+    /// A task whose thread finished its reply and asks nothing: Ready to mark complete. Only
+    /// threads that carry a task (plans/work-threads.md), however long ago they finished.
+    /// Silencing it (DeskSilenceRequest with its id and text) hides it until something new
+    /// happens in it.
     struct DeskReady: Codable, Identifiable, Hashable {
         /// The session.
         var id: UUID
@@ -392,9 +445,12 @@ enum Companion {
         /// What its last reply says, its first sentence.
         var text: String
         var finishedAt: Date
+        var task: UUID? = nil
+        var taskText: String? = nil
     }
 
-    /// A session marked complete from the board (archived); Reopen unarchives it.
+    /// A task marked complete (its thread archived, from the board or elsewhere); Reopen
+    /// unarchives the thread and reopens the task.
     struct DeskDone: Codable, Identifiable, Hashable {
         /// The session.
         var id: UUID
@@ -403,12 +459,31 @@ enum Companion {
         var place: String?
         var subtitle: String? = nil
         var completedAt: Date
+        var task: UUID? = nil
+        var taskText: String? = nil
     }
 
-    /// POST /v1/desk/complete (socket: action "complete"): archives the session and puts it in
-    /// Done. POST /v1/desk/reopen (socket: action "reopen"): unarchives it. Both answer the Desk.
+    /// POST /v1/desk/complete (socket: action "complete"): archives the session, completing the
+    /// task it carries (into Done). POST /v1/desk/reopen (socket: action "reopen"): unarchives
+    /// it and reopens its task. Both answer the Desk.
     struct DeskSessionRequest: Codable {
         var chatID: UUID
+    }
+
+    /// POST /v1/desk/<task id>/link (socket: action "link", with `id`): the task is done in that
+    /// thread. A thread carrying another open task is refused (409) unless `replace`: then that
+    /// task goes back to To do. POST /v1/desk/<task id>/unlink (socket: "unlink"): back to To do.
+    /// Both answer the Desk.
+    struct DeskLinkRequest: Codable {
+        var chatID: UUID
+        var replace: Bool? = nil
+    }
+
+    /// POST /v1/desk/task (socket: action "makeTask"): Make this a task: a new task, already
+    /// linked to the thread, named `text` or else the thread's title. Answers the Desk.
+    struct DeskTaskRequest: Codable {
+        var chatID: UUID
+        var text: String? = nil
     }
 
     /// POST /v1/desk: a new request. `place` names a Studio or project to propose instead of
@@ -431,11 +506,15 @@ enum Companion {
         var effort: String? = nil
         var openModel: String? = nil
         var continueChat: UUID? = nil
+        /// Continuing a thread that already carries another open task: that task goes back to
+        /// To do (else 409).
+        var replace: Bool? = nil
     }
 
     /// GET /v1/desk/<id>/threads?place=<id or "loose"> (socket: action "threads", with `place`):
     /// sessions already in that place that look like the same work, best first. Continuing
-    /// one sends the request there instead of starting a new session.
+    /// one sends the request there instead of starting a new session. With all=1 (socket:
+    /// `all` true), every open thread there, best matches first: Link a thread's choices.
     struct DeskThread: Codable, Identifiable, Hashable {
         /// The session.
         var id: UUID
@@ -448,8 +527,10 @@ enum Companion {
         var updatedAt: Date
         var isRunning: Bool
         /// "clear": very likely the same work, chosen unless you pick otherwise; "possible":
-        /// it shares some of the request's words.
+        /// it shares some of the request's words; "other" (asked for with all=1): it doesn't.
         var match: String
+        /// The open task it already carries; linking this request to it sends that one back to To do.
+        var task: String? = nil
     }
 
     /// POST /v1/desk/silence (socket: action "silence"): takes one waiting thing off the Desk,

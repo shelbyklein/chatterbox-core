@@ -14,7 +14,13 @@ import SwiftUI
 // complete, reopen, places, threads or options, with the HTTP API's bodies and replies), which
 // sends "desk.changed" when they change. Start opens a step
 // (DeskStartPopover): the place, a session already there doing the same work to continue, or
-// the agent and model for a new one. What starts runs in the background, with a note to open it.
+// the agent and model for a new one (in a project, a work thread of its session). What starts
+// runs in the background, with a note to open it.
+//
+// Tasks (plans/work-threads.md): a request stays a task once started, linked to its thread.
+// Working, Ready and Done show only threads carrying a task (the service's `linked`); Needs you
+// shows every thread, marking those that aren't tasks, with Make this a task. To do cards can
+// Link a thread; task cards Unlink.
 
 /// A session waiting on you, with what it asks.
 struct DeskNeed: Identifiable, Equatable {
@@ -118,6 +124,9 @@ final class DeskModel {
     private(set) var reopening: Set<UUID> = []
     /// Silenced things being put back (DeskNeed.silenceKey), off the silenced list until the service answers.
     private(set) var unsilencing: Set<String> = []
+    /// Tasks being unlinked here, and threads being made tasks, until the service answers.
+    private(set) var unlinking: Set<UUID> = []
+    private(set) var tasking: Set<UUID> = []
     /// The last thing silenced here: a few seconds to Undo it.
     var silencedNote: DeskNeed?
     private(set) var adding = false
@@ -225,6 +234,7 @@ final class DeskModel {
     /// again leaves Ready before the service says so; a done one unarchived leaves Done.
     func sections(in model: AppModel, now: Date = Date()) -> DeskSections {
         let sessions = model.activeSessions
+        let carried = openTasks
         var needs: [(date: Date, need: DeskNeed)] = []
         var waiting = Set<UUID>()
         // Silenced on any device: the service keeps them (its replies already leave them out).
@@ -238,7 +248,10 @@ final class DeskModel {
                 !recentlyAnswered(item.id, now: now) && !silenced.contains(item.id)
                     && !silencing.contains(DeskNeed.silenceKey(chatID: session.id, id: item.id))
             }) {
-                needs.append((item.timestamp ?? session.record.updatedAt, Self.need(item, in: session, model: model)))
+                var need = Self.need(item, in: session, model: model)
+                need.waiting.task = carried?[session.id]?.id
+                need.waiting.taskText = carried?[session.id]?.text
+                needs.append((item.timestamp ?? session.record.updatedAt, need))
             }
         }
         // The service decides which replies ask you something, as it does for the phone.
@@ -250,6 +263,8 @@ final class DeskModel {
                 reply.title = name.title
                 reply.subtitle = name.subtitle
                 reply.place = Self.placeName(of: session, in: model)
+                reply.task = carried?[session.id]?.id
+                reply.taskText = carried?[session.id]?.text
                 waiting.insert(session.id)
                 let need = DeskNeed(waiting: reply)
                 guard !silencing.contains(need.silenceKey) else { continue }
@@ -257,10 +272,12 @@ final class DeskModel {
             }
         }
         needs.sort { $0.date == $1.date ? $0.need.id.uuidString < $1.need.id.uuidString : $0.date > $1.date }
-        let working = Attention.shared.workingChats(in: model).filter { !waiting.contains($0.id) }.map { session in
+        // Only threads carrying a task (all of them from a service older than tasks).
+        let working = Attention.shared.workingChats(in: model).filter { !waiting.contains($0.id) && (carried == nil || carried?[$0.id] != nil) }.map { session in
             let name = CompanionMapper.heading(session)
             return Companion.DeskWorking(id: session.id, title: name.title, place: Self.placeName(of: session, in: model), subtitle: name.subtitle,
-                                         activity: session.lastActionSummary, since: session.record.turnStartedAt)
+                                         activity: session.lastActionSummary, since: session.record.turnStartedAt,
+                                         task: carried?[session.id]?.id, taskText: carried?[session.id]?.text)
         }
         let all = Dictionary(model.sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let ready = (snapshot?.ready ?? []).filter { item in
@@ -277,6 +294,20 @@ final class DeskModel {
 
     /// What silencing a ready session hides: the session, as its last reply says.
     static func readyKey(_ item: Companion.DeskReady) -> String { "ready|\(item.id.uuidString)|\(item.text)" }
+
+    /// The open task each thread carries, by thread; nil from a service older than tasks.
+    var openTasks: [UUID: Companion.DeskTask]? {
+        guard let linked = snapshot?.linked else { return nil }
+        var tasks: [UUID: Companion.DeskTask] = [:]
+        for task in linked where task.completedAt == nil && !unlinking.contains(task.id) { tasks[task.chatID] = tasks[task.chatID] ?? task }
+        return tasks
+    }
+
+    /// The open task a thread carries (its menu's Unlink), if the service has tasks.
+    func task(of chatID: UUID) -> Companion.DeskTask? { openTasks?[chatID] }
+
+    /// Whether the service keeps tasks (Make this a task, Link, Unlink).
+    var hasTasks: Bool { snapshot?.linked != nil && !unsupported }
 
     private func recentlyAnswered(_ id: UUID, now: Date) -> Bool {
         answered[id].map { now.timeIntervalSince($0) < 15 } ?? false
@@ -395,6 +426,53 @@ final class DeskModel {
                      doing: "reopen it", older: "Reopen works once the background service restarts with this version of Chatterbox.")
     }
 
+    /// Make this a task: a new task, already linked to the thread, named for it (or `text`).
+    func makeTask(_ chatID: UUID, text: String? = nil) async {
+        guard canSilence, tasking.insert(chatID).inserted else { return }
+        defer { tasking.remove(chatID) }
+        var body: [String: JSON] = ["action": "makeTask", "chatID": .string(chatID.uuidString)]
+        if let text { body["text"] = .string(text) }
+        await change(body, doing: "make it a task", older: "Tasks work once the background service restarts with this version of Chatterbox.")
+    }
+
+    /// Unlink: the task goes back to To do; its thread carries on.
+    func unlink(_ task: UUID) async {
+        guard canSilence, unlinking.insert(task).inserted else { return }
+        defer { unlinking.remove(task) }
+        await change(["action": "unlink", "id": .string(task.uuidString)], doing: "unlink it",
+                     older: "Tasks work once the background service restarts with this version of Chatterbox.")
+    }
+
+    /// Link a thread to a task (a To do card's Link, or a thread's Link to a Task). With
+    /// `replace`, a task the thread already carries goes back to To do; without it, that's
+    /// refused and false comes back, for the caller to ask first.
+    @discardableResult func link(_ task: UUID, to chatID: UUID, replace: Bool = false) async -> Bool {
+        guard canSilence, !busy.contains(task) else { return false }
+        busy.insert(task)
+        defer { busy.remove(task) }
+        var body: [String: JSON] = ["action": "link", "id": .string(task.uuidString), "chatID": .string(chatID.uuidString)]
+        if replace { body["replace"] = true }
+        do {
+            load(try await send(body).decode(Companion.Desk.self))
+            problem = nil
+            return true
+        } catch let error where error.localizedDescription.contains("already carries a task") {
+            return false
+        } catch let error where error.localizedDescription.contains("unsupported_operation") {
+            problem = "Tasks work once the background service restarts with this version of Chatterbox."
+        } catch { note(error, "link it") }
+        return false
+    }
+
+    /// Link a thread's choices: every open thread in `place`, best matches first, each with the
+    /// task it already carries.
+    func allThreads(for request: Companion.DeskRequest, in place: Companion.DeskPlace) async -> [Companion.DeskThread] {
+        guard canReachService, !unsupported else { return [] }
+        var body: [String: JSON] = ["action": "threads", "id": .string(request.id.uuidString), "all": true]
+        if let value = try? JSON.value(place) { body["place"] = value }
+        return (try? await send(body).decode([Companion.DeskThread].self)) ?? []
+    }
+
     /// Sends a change the service answers with the Desk. From an older service, `older` says
     /// so; the rest of the Desk still works.
     private func change(_ body: [String: JSON], doing: String, older: String) async {
@@ -449,6 +527,8 @@ final class DeskModel {
         if let value = try? JSON.value(place) { body["place"] = value }
         if let continuing {
             body["continueChat"] = .string(continuing.id.uuidString)
+            // Its step said so: the task it carries goes back to To do.
+            if continuing.task != nil { body["replace"] = true }
         } else if let settings {
             for (key, value) in [("agent", settings.backend), ("model", settings.model), ("effort", settings.effort), ("openModel", settings.openModel)] {
                 if let value, !value.isEmpty { body[key] = .string(value) }
@@ -858,6 +938,7 @@ private struct DeskNeedRow: View {
                     .padding(.top, 4)
                     .deskFrame("open:\(need.id)")
             }
+            DeskTaskLine(chatID: waiting.chatID, task: waiting.task, text: waiting.taskText, desk: desk)
         }
         .deskCard(fill: Color.attention.opacity(hovered ? 0.08 : 0.045), stroke: Color.attention.opacity(0.8), width: 1.5)
         .overlay(alignment: .topTrailing) {
@@ -875,6 +956,7 @@ private struct DeskNeedRow: View {
         .onHover { hovered = $0 }
         .contextMenu {
             Button("Open Session") { desk.open(waiting.chatID, in: model) }
+            DeskTaskMenuItems(chatID: waiting.chatID, task: waiting.task, desk: desk)
             if desk.canSilence {
                 Divider()
                 Button("Silence", systemImage: "bell.slash") { Task { await desk.silence(need) } }
@@ -965,6 +1047,7 @@ private struct DeskRequestRow: View {
     let desk: DeskModel
     @State private var choosing = false
     @State private var starting = false
+    @State private var linking = false
 
     var body: some View {
         let place = desk.place(for: request)
@@ -996,6 +1079,15 @@ private struct DeskRequestRow: View {
                         DeskStartPopover(step: DeskStartStep(request: request, desk: desk)) { starting = false }
                     }
                     .deskFrame("start:\(request.id)")
+                if desk.hasTasks, let place {
+                    Button("Link\u{2026}") { linking = true }
+                        .disabled(busy)
+                        .help("Link a thread already in \(place.name): this task is done there")
+                        .popover(isPresented: $linking, arrowEdge: .bottom) {
+                            DeskLinkPopover(request: request, place: place, desk: desk) { linking = false }
+                        }
+                        .deskFrame("link:\(request.id)")
+                }
                 Spacer(minLength: 0)
                 Button("Remove") { Task { await desk.ignore(request) } }
                     .buttonStyle(.borderless)
@@ -1054,6 +1146,12 @@ final class DeskStartStep {
 
     var place: Companion.DeskPlace? { desk.place(for: request) }
     var continued: Companion.DeskThread? { threads?.first { $0.id == continuing } }
+    /// Starting new: in a project, a work thread of its session (plans/work-threads.md).
+    var newTitle: String { place?.kind == "project" ? "New work thread for \(place?.name ?? "the project")" : "New session" }
+    var newDetail: String {
+        place?.kind == "project" ? "A fresh thread in \(place?.name ?? "the project"); its result goes back to the project's session"
+            : "In \(place?.name ?? "this place")"
+    }
     /// The provider in use: an open model's, or the agent's.
     var provider: String { options.map { $0.openModel != nil ? "open" : $0.backend } ?? "claude" }
 
@@ -1141,6 +1239,10 @@ struct DeskStartPopover: View {
                 }
             }
             threadChoices
+            if step.threads?.isEmpty != false, step.place?.kind == "project" {
+                Label(step.newDetail, systemImage: "arrow.triangle.branch").font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if step.continuing == nil { modelChoice }
             HStack {
                 if !step.loaded { ProgressView().controlSize(.small) }
@@ -1167,11 +1269,12 @@ struct DeskStartPopover: View {
                 Text("Already in \(step.place?.name ?? "this place")").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
                 ForEach(threads) { thread in
                     DeskStartChoice(title: "Continue in \(thread.title)",
-                                    detail: [thread.isRunning ? "Working now; it goes next" : nil, thread.settings].compactMap { $0 }.joined(separator: " \u{00B7} "),
+                                    detail: [thread.task.map { "Its task \u{201C}\($0)\u{201D} goes back to To do" },
+                                             thread.isRunning ? "Working now; it goes next" : nil, thread.settings].compactMap { $0 }.joined(separator: " \u{00B7} "),
                                     selected: step.continuing == thread.id) { step.continuing = thread.id }
                         .deskFrame("thread:\(thread.id)")
                 }
-                DeskStartChoice(title: "New session", detail: "In \(step.place?.name ?? "this place")", selected: step.continuing == nil) { step.continuing = nil }
+                DeskStartChoice(title: step.newTitle, detail: step.newDetail, selected: step.continuing == nil) { step.continuing = nil }
                     .deskFrame("thread:new")
             }
         }
@@ -1317,6 +1420,135 @@ private struct DeskPlaceOption: View {
     }
 }
 
+// MARK: - Tasks (plans/work-threads.md)
+
+/// What a card's thread is doing, as its task says it, when that says more than its name.
+private struct DeskTaskText: View {
+    let text: String?
+    let title: String
+    let subtitle: String?
+    var quiet = false
+
+    var body: some View {
+        if let text, ![title, subtitle].contains(where: { $0?.caseInsensitiveCompare(text) == .orderedSame }) {
+            Label { Text(text).lineLimit(2) } icon: { Image(systemName: "checklist") }
+                .font(quiet ? .caption : .subheadline).foregroundStyle(Color.metadata)
+        }
+    }
+}
+
+/// Under a Needs you card: its task, or that it isn't one, with Make this a task.
+private struct DeskTaskLine: View {
+    let chatID: UUID
+    let task: UUID?
+    let text: String?
+    let desk: DeskModel
+
+    var body: some View {
+        if desk.hasTasks {
+            HStack(spacing: 6) {
+                if let text, task != nil {
+                    Label { Text(text).lineLimit(1) } icon: { Image(systemName: "checklist") }
+                        .font(.caption).foregroundStyle(Color.metadata)
+                } else {
+                    Text("Not a task").font(.caption).foregroundStyle(Color.metadata)
+                    Button("Make this a task") { Task { await desk.makeTask(chatID) } }
+                        .buttonStyle(.link).font(.caption)
+                        .disabled(desk.tasking.contains(chatID))
+                        .help("Put this thread on the board as a task, so it moves across it until you mark it complete")
+                        .deskFrame("makeTask:\(chatID)")
+                }
+                Spacer(minLength: 0)
+            }
+        }
+    }
+}
+
+/// A card's menu: Unlink its task, or Make this a task.
+private struct DeskTaskMenuItems: View {
+    let chatID: UUID
+    let task: UUID?
+    let desk: DeskModel
+
+    var body: some View {
+        if desk.hasTasks {
+            if let task {
+                Button("Unlink Task", systemImage: "link.badge.plus") { Task { await desk.unlink(task) } }
+            } else {
+                Button("Make This a Task", systemImage: "checklist") { Task { await desk.makeTask(chatID) } }
+            }
+        }
+    }
+}
+
+/// A To do card's Link: every thread already in its place, best matches first; picking one
+/// links the task to it. One carrying another task asks first (that task goes back to To do).
+struct DeskLinkPopover: View {
+    let request: Companion.DeskRequest
+    let place: Companion.DeskPlace
+    let desk: DeskModel
+    let done: () -> Void
+    @State private var threads: [Companion.DeskThread]?
+    /// A thread carrying another task, waiting for Link Anyway.
+    @State private var confirming: Companion.DeskThread?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Link a thread").font(.headline)
+                Text("In \(place.name). This task moves with the thread you pick.").font(.caption).foregroundStyle(.secondary)
+            }
+            if let threads {
+                if threads.isEmpty {
+                    Text("No threads in \(place.name) yet.").foregroundStyle(.secondary).padding(.vertical, 8)
+                } else {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 2) {
+                            ForEach(threads) { thread in
+                                DeskStartChoice(title: thread.title,
+                                                detail: [thread.match == "clear" ? "Best match" : thread.match == "possible" ? "Similar work" : nil,
+                                                         thread.task.map { "Has a task: \($0)" }, thread.isRunning ? "Working now" : nil]
+                                                    .compactMap { $0 }.joined(separator: " \u{00B7} "),
+                                                selected: confirming?.id == thread.id) { pick(thread) }
+                                    .deskFrame("linkThread:\(thread.id)")
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 320)
+                }
+            } else {
+                ProgressView().frame(maxWidth: .infinity).padding(16)
+            }
+            if let confirming {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("\u{201C}\(confirming.title)\u{201D} already carries a task\(confirming.task.map { ": \u{201C}\($0)\u{201D}" } ?? ""). Linking this one sends that back to To do.")
+                        .font(.caption).fixedSize(horizontal: false, vertical: true)
+                    HStack {
+                        Spacer()
+                        Button("Cancel") { self.confirming = nil }
+                        Button("Link Anyway") { link(confirming, replace: true) }.buttonStyle(.accent)
+                            .deskFrame("linkAnyway")
+                    }
+                }
+                .padding(8).background(Color.attention.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+            }
+        }
+        .padding(14)
+        .frame(width: 380)
+        .task { threads = await desk.allThreads(for: request, in: place) }
+    }
+
+    private func pick(_ thread: Companion.DeskThread) {
+        if thread.task != nil { confirming = thread } else { link(thread, replace: false) }
+    }
+
+    private func link(_ thread: Companion.DeskThread, replace: Bool) {
+        Task {
+            if await desk.link(request.id, to: thread.id, replace: replace) { done() } else { confirming = thread }
+        }
+    }
+}
+
 // MARK: - Working, Ready to mark complete, Done
 
 /// A session working now: its name, place and what it's doing; a click opens it.
@@ -1339,6 +1571,7 @@ private struct DeskWorkingCard: View {
             }
             Text(item.title).font(.headline).lineLimit(2)
             if let subtitle = item.subtitle { Text(subtitle).font(.subheadline.weight(.medium)).lineLimit(2) }
+            DeskTaskText(text: item.taskText, title: item.title, subtitle: item.subtitle)
             if let activity = item.activity, !activity.isEmpty {
                 Text(activity).font(.subheadline).foregroundStyle(Color.metadata).lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1351,6 +1584,10 @@ private struct DeskWorkingCard: View {
         .contentShape(Rectangle())
         .onTapGesture { desk.openWorking(item.id, in: model) }
         .onHover { hovered = $0 }
+        .contextMenu {
+            Button("Open Session") { desk.openWorking(item.id, in: model) }
+            DeskTaskMenuItems(chatID: item.id, task: item.task, desk: desk)
+        }
         .help("\(item.title)\(item.subtitle.map { " · " + $0 } ?? "")\(item.place.flatMap { $0 != item.title ? " · " + $0 : nil } ?? "") is working. Click to open it.")
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(item.title), working\(item.activity.map { ": " + $0 } ?? "")")
@@ -1383,13 +1620,14 @@ private struct DeskReadyRow: View {
             }
             Text(item.title).font(.headline).lineLimit(2)
             if let subtitle = item.subtitle { Text(subtitle).font(.subheadline.weight(.medium)).lineLimit(2) }
+            DeskTaskText(text: item.taskText, title: item.title, subtitle: item.subtitle)
             Text(item.text).font(.subheadline).foregroundStyle(Color.metadata).lineLimit(3)
                 .frame(maxWidth: .infinity, alignment: .leading)
             HStack(spacing: 8) {
                 Button("Mark complete") { Task { await desk.complete(item) } }
                     .buttonStyle(.accent)
                     .disabled(!desk.canSilence)
-                    .help("Archive the session. It shows in Done for a week, where Reopen brings it back.")
+                    .help("Archive the session, completing its task. It shows in Done for a week, where Reopen brings it back.")
                     .deskFrame("complete:\(item.id)")
                 Button("Open") { desk.open(item.id, in: model) }
                     .deskFrame("readyOpen:\(item.id)")
@@ -1402,6 +1640,7 @@ private struct DeskReadyRow: View {
             Button("Open Session") { desk.open(item.id, in: model) }
             if desk.canSilence {
                 Button("Mark Complete", systemImage: "checkmark.circle") { Task { await desk.complete(item) } }
+                DeskTaskMenuItems(chatID: item.id, task: item.task, desk: desk)
                 Divider()
                 Button("Silence", systemImage: "bell.slash") { Task { await desk.silence(item) } }
             }
@@ -1428,13 +1667,14 @@ private struct DeskDoneRow: View {
                 .font(.caption.weight(.medium)).foregroundStyle(Color.metadata)
                 Text(item.title).font(.subheadline.weight(.semibold)).foregroundStyle(Color.metadata).lineLimit(2)
                 if let subtitle = item.subtitle { Text(subtitle).font(.caption).foregroundStyle(Color.metadata).lineLimit(1) }
+                DeskTaskText(text: item.taskText, title: item.title, subtitle: item.subtitle, quiet: true)
                 if let place = item.place, place != item.title { DeskPlaceLabel(name: place).padding(.top, 2) }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             Button("Reopen") { Task { await desk.reopen(item) } }
                 .controlSize(.small)
                 .disabled(!desk.canSilence || desk.reopening.contains(item.id))
-                .help("Unarchive the session")
+                .help("Unarchive the session and reopen its task")
                 .deskFrame("reopen:\(item.id)")
         }
         .deskCard(fill: Color.primary.opacity(0.03), stroke: Color.primary.opacity(0.07))

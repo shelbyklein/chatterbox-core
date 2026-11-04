@@ -831,7 +831,8 @@ extension ConversationRecord {
     /// At creation only. Recent conversation is bounded so starting a child stays cheap;
     /// captured paths and the parent's Brief survive even when its UI history is unloaded.
     @MainActor mutating func prepareParentContext(from parent: ChatSession) {
-        guard automationID == nil else { return }
+        // Automation runs and work threads start with what they're for, not the transcript.
+        guard automationID == nil, workOf == nil else { return }
         let limit = 24_000
         var recent: [String] = []
         var remaining = limit

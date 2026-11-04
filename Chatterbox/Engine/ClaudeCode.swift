@@ -35,13 +35,22 @@ enum BinaryLocator {
         return fm.isExecutableFile(atPath: path) ? path : nil
     }
 
-    /// The app's environment with the usual tool folders added to PATH.
+    /// The app's environment with the usual tool folders added to PATH. Chatterbox Dev's chats
+    /// get its own bundle's commands (bin/: desk, sidequest, work…) first, since only the real
+    /// app links them into ~/.local/bin (plans/dev-environment.md).
     static var environment: [String: String] {
         var env = ProcessInfo.processInfo.environment
-        let extraPath = ["\(NSHomeDirectory())/.local/bin", "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]
+        let extraPath = (devBin.map { [$0] } ?? []) + ["\(NSHomeDirectory())/.local/bin", "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]
         env["PATH"] = (extraPath + [env["PATH"] ?? ""]).joined(separator: ":")
         return env
     }
+
+    /// Chatterbox Dev's bin folder (Contents/Resources/bin), from the app or its service inside it.
+    static let devBin: String? = {
+        guard Flavor.current.isDev, let executable = Bundle.main.executableURL?.resolvingSymlinksInPath() else { return nil }
+        let bin = executable.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Resources/bin").path
+        return FileManager.default.fileExists(atPath: bin) ? bin : nil
+    }()
 }
 
 /// One `claude` (Claude Code) process in stream-json mode, owned by one chat. It runs in

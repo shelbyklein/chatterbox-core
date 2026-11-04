@@ -294,6 +294,35 @@ final class AppModel {
         quest.beginSidequest(from: parent)
     }
 
+    /// A work thread of `front` (plans/work-threads.md), as the service builds them: what
+    /// DeskStore uses when this app runs its own conversations.
+    func newWorkThread(of front: ChatSession, title: String) throws -> ChatSession {
+        let anchor = front.record.sidechatOf.flatMap { id in sessions.first { $0.id == id } } ?? front
+        return insertSession(ChatSession.workThreadRecord(of: front, anchor: anchor, title: title))
+    }
+
+    /// "Start a Work Thread" from a session's menu: the service starts it (its brief is its
+    /// first message, its task goes on the Desk) and you stay where you are. Throws what the
+    /// service says, for the sheet to show.
+    func startWorkThread(of front: ChatSession, title: String, brief: String, agent: Backend?) async throws {
+        var body: [String: JSON] = ["action": "start", "chatID": .string(front.id.uuidString), "title": .string(title), "brief": .string(brief)]
+        if let agent { body["agent"] = .string(agent.rawValue) }
+        if RuntimeClient.usesDaemon {
+            _ = try await RuntimeClient.shared.request("work", body: .object(body), timeout: .seconds(30))
+            return
+        }
+        _ = try DeskStore.shared.startWork(from: front, .init(title: title, brief: brief, agent: agent?.rawValue), source: "you")
+    }
+
+    /// The work threads `front` started, newest first: open ones, and those done this week.
+    func workThreads(of front: ChatSession) -> [ChatSession] {
+        let now = Date()
+        return sessions.filter { session in
+            session.record.workOf == front.id && session.record.archivedAt.map { now.timeIntervalSince($0) < DeskStore.doneWindow } ?? true
+        }
+        .sorted { $0.record.createdAt > $1.record.createdAt }
+    }
+
     /// "Do that on the PC" from the session menu: the service sends `files` to Shelby-PC and
     /// starts the errand there (see DaemonContext.newPCErrand). Needs the background service.
     func newPCErrand(of parent: ChatSession, task: String, files: [String], backend: Backend?) {
@@ -417,6 +446,9 @@ final class AppModel {
             NextSteps.shared.turnEnded(session, commands: session.availableSlashCommands)
             if let parent = session.record.sidequestOf {
                 DispatchQueue.main.async { [weak self] in session.sidequestTurnEnded(parent: self?.sessions.first { $0.id == parent }) }
+            }
+            if let front = session.record.workOf {
+                DispatchQueue.main.async { [weak self] in session.workTurnEnded(front: self?.sessions.first { $0.id == front }) }
             }
             if session.automaticTurn { session.automaticTurn = false }
         }

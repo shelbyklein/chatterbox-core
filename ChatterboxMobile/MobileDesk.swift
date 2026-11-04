@@ -2,6 +2,9 @@ import SwiftUI
 
 // The Desk on the phone and iPad: a board of what's to do, working, needing you, ready to mark
 // complete, and done. plans/front-desk.md, plans/desk-board.md
+// Tasks linked to threads (plans/work-threads.md): Working, Ready and Done are tasks by their
+// thread's state; Needs you marks threads that aren't tasks (Make this a task); To do cards Link
+// a thread; task cards Unlink from their menu.
 
 /// The board's columns, left to right.
 enum MobileDeskColumn: String, CaseIterable, Identifiable {
@@ -70,6 +73,8 @@ struct MobileDeskView: View {
     @State private var startAfterChoosing: Companion.DeskRequest?
     /// The request in Start's step (MobileDeskStartSheet).
     @State private var starting: Companion.DeskRequest?
+    /// The request whose Link a thread sheet is open.
+    @State private var linking: Companion.DeskRequest?
     /// Why the Desk couldn't be read, shown until it can.
     @State private var loadProblem: String?
     /// An action that didn't go through.
@@ -155,6 +160,12 @@ struct MobileDeskView: View {
         }) { request in
             MobileDeskPlacePicker(current: place(for: request)) { chosen[request.id] = $0 }
                 .environment(store)
+        }
+        .sheet(item: $linking) { request in
+            if let place = place(for: request) {
+                MobileDeskLinkSheet(request: request, place: place) { actionProblem = $0 }
+                    .environment(store)
+            }
         }
         .sheet(item: $starting) { request in
             if let place = place(for: request) {
@@ -364,23 +375,31 @@ struct MobileDeskView: View {
                                 busy: busy.contains(request.id), swipes: !wide,
                                 start: { start(request) },
                                 change: { choosing = request },
-                                ignore: { ignore(request) })
+                                ignore: { ignore(request) },
+                                link: hasTasks && place(for: request) != nil ? { linking = request } : nil)
             }
         case .working:
-            ForEach(working) { item in DeskWorkingCard(item: item, open: { open(item.id) }, stale: store.isStale || loadProblem != nil) }
+            ForEach(working) { item in
+                DeskWorkingCard(item: item, open: { open(item.id) }, stale: store.isStale || loadProblem != nil,
+                                unlink: item.task.map { task in { unlink(task) } })
+            }
         case .needsYou:
             ForEach(needsYou) { item in
                 DeskWaitingCard(item: item, busy: busy.contains(item.id), swipes: !wide,
                                 open: { open(item.chatID) },
                                 decide: { decide($0, item) },
-                                silence: { silence(item) })
+                                silence: { silence(item) },
+                                hasTasks: hasTasks,
+                                makeTask: { makeTask(item.chatID) },
+                                unlink: item.task.map { task in { unlink(task) } })
             }
             if !silenced.isEmpty {
                 DeskSilencedList(items: silenced, busy: unsilencing) { unsilence($0) }
             }
         case .ready:
             ForEach(ready) { item in
-                DeskReadyCard(item: item, swipes: !wide, open: { open(item.id) }, complete: { complete(item) }, silence: { silence(item) })
+                DeskReadyCard(item: item, swipes: !wide, open: { open(item.id) }, complete: { complete(item) }, silence: { silence(item) },
+                              unlink: item.task.map { task in { unlink(task) } })
             }
         case .done:
             ForEach(done) { item in
@@ -607,6 +626,27 @@ struct MobileDeskView: View {
         chosen[request.id] ?? request.proposed
     }
 
+    /// Whether the Mac keeps tasks (an older one sends no `linked`).
+    private var hasTasks: Bool { desk?.linked != nil }
+
+    /// Make this a task: the thread goes on the board as a task, already linked.
+    private func makeTask(_ chat: UUID) {
+        guard busy.insert(chat).inserted else { return }
+        Task {
+            defer { busy.remove(chat) }
+            do { _ = try await store.makeTask(chat) } catch { actionProblem = Self.describe(error) }
+        }
+    }
+
+    /// Unlink: the task goes back to To do; its thread carries on.
+    private func unlink(_ task: UUID) {
+        guard busy.insert(task).inserted else { return }
+        Task {
+            defer { busy.remove(task) }
+            do { _ = try await store.unlinkDesk(task); withAnimation { column = .todo } } catch { actionProblem = Self.describe(error) }
+        }
+    }
+
     static func describe(_ error: Error) -> String {
         if let error = error as? MobileError, error.status == 404 {
             return "The Desk isn't on this Mac yet. Update Chatterbox on the Mac to use it."
@@ -673,6 +713,10 @@ private struct DeskWaitingCard: View {
     let open: () -> Void
     let decide: (String) -> Void
     let silence: () -> Void
+    /// The Mac keeps tasks: a thread that isn't one says so, with Make this a task.
+    var hasTasks = false
+    var makeTask: () -> Void = {}
+    var unlink: (() -> Void)? = nil
 
     private var decides: Bool { item.kind == "approval" || item.kind == "plan" }
     private var context: String { deskContext(title: item.title, place: item.place, subtitle: item.subtitle) }
@@ -713,12 +757,26 @@ private struct DeskWaitingCard: View {
                     .buttonStyle(.bordered)
                     .accessibilityIdentifier("desk-open-\(id)")
             }
+            if let task = item.taskText, item.task != nil {
+                DeskTaskLine(text: task)
+            } else if hasTasks {
+                HStack(spacing: 8) {
+                    Text("Not a task").font(.caption).foregroundStyle(Color.metadata)
+                    Button("Make this a task", action: taps(makeTask))
+                        .font(.caption.weight(.semibold))
+                        .buttonStyle(.borderless)
+                        .accessibilityIdentifier("desk-make-task-\(item.chatID.uuidString)")
+                    Spacer(minLength: 0)
+                }
+            }
         }
         // Visible in both modes: the amber that reads on white, yellow on dark.
         .deskCard(stroke: Color.attention.opacity(0.8), width: 1.5)
         .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 16, style: .continuous))
         .contextMenu {
             Button("Open", systemImage: "arrow.up.forward.square", action: open)
+            if let unlink { Button("Unlink Task", systemImage: "link", action: unlink) }
+            else if hasTasks { Button("Make This a Task", systemImage: "checklist", action: makeTask) }
             Button("Silence", systemImage: "bell.slash", action: silence)
         }
     }
@@ -781,6 +839,7 @@ private struct DeskWorkingCard: View {
     let open: () -> Void
     /// The Mac can't be reached: as last seen, not spinning.
     var stale = false
+    var unlink: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -802,6 +861,7 @@ private struct DeskWorkingCard: View {
                     if let subtitle = item.subtitle {
                         Text(subtitle).font(.subheadline.weight(.medium)).lineLimit(2).multilineTextAlignment(.leading)
                     }
+                    if let task = item.taskText, ![item.title, item.subtitle].contains(task) { DeskTaskLine(text: task) }
                     if let activity = item.activity, !activity.isEmpty {
                         Text(activity).font(.subheadline).foregroundStyle(Color.metadata).lineLimit(2).multilineTextAlignment(.leading)
                     }
@@ -818,6 +878,10 @@ private struct DeskWorkingCard: View {
                 .accessibilityIdentifier("desk-working-open-\(item.id.uuidString)")
         }
         .deskCard()
+        .contextMenu {
+            Button("Open", systemImage: "arrow.up.forward.square", action: open)
+            if let unlink { Button("Unlink Task", systemImage: "link", action: unlink) }
+        }
     }
 }
 
@@ -830,6 +894,7 @@ private struct DeskReadyCard: View {
     let open: () -> Void
     let complete: () -> Void
     let silence: () -> Void
+    var unlink: (() -> Void)? = nil
 
     var body: some View {
         DeskSwipe(action: .complete, id: item.id.uuidString, enabled: swipes, perform: complete) { taps in card(taps) }
@@ -852,6 +917,7 @@ private struct DeskReadyCard: View {
                     if let subtitle = item.subtitle {
                         Text(subtitle).font(.subheadline.weight(.medium)).lineLimit(2).multilineTextAlignment(.leading)
                     }
+                    if let task = item.taskText, ![item.title, item.subtitle].contains(task) { DeskTaskLine(text: task) }
                     Text(item.text).font(.subheadline).foregroundStyle(Color.metadata).lineLimit(3).multilineTextAlignment(.leading)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -878,6 +944,7 @@ private struct DeskReadyCard: View {
         .contextMenu {
             Button("Open", systemImage: "arrow.up.forward.square", action: open)
             Button("Mark Complete", systemImage: "checkmark.circle", action: complete)
+            if let unlink { Button("Unlink Task", systemImage: "link", action: unlink) }
             Button("Silence", systemImage: "bell.slash", action: silence)
         }
     }
@@ -898,6 +965,7 @@ private struct DeskDoneCard: View {
                 if let subtitle = item.subtitle {
                     Text(subtitle).font(.footnote).foregroundStyle(Color.metadata).lineLimit(1)
                 }
+                if let task = item.taskText, ![item.title, item.subtitle].contains(task) { DeskTaskLine(text: task) }
                 if let place = item.place, place != item.title { DeskPlaceTag(name: place).padding(.top, 2) }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1065,6 +1133,8 @@ private struct DeskRequestCard: View {
     let change: () -> Void
     /// Takes it off the Desk (the service's ignore).
     let ignore: () -> Void
+    /// Link a thread already in its place; nil from a Mac older than tasks, or with no place.
+    var link: (() -> Void)? = nil
 
     private var source: String {
         switch request.source {
@@ -1111,7 +1181,17 @@ private struct DeskRequestCard: View {
                     Text("Working on it…").font(.footnote).foregroundStyle(Color.metadata)
                 }
             } else {
-                HStack(spacing: 8) { startButton(taps); Spacer(minLength: 0); removeButton(taps) }
+                HStack(spacing: 8) {
+                    startButton(taps)
+                    if let link {
+                        Button("Link\u{2026}", action: taps(link))
+                            .buttonStyle(.bordered)
+                            .accessibilityLabel("Link a thread")
+                            .accessibilityIdentifier("desk-link-\(request.id.uuidString)")
+                    }
+                    Spacer(minLength: 0)
+                    removeButton(taps)
+                }
             }
         }
         .deskCard()
@@ -1218,16 +1298,26 @@ private struct MobileDeskStartSheet: View {
         } else if let threads, !threads.isEmpty {
             Section {
                 ForEach(threads) { thread in
-                    choice("Continue in \(thread.title)", detail: [thread.isRunning ? "Working now; it goes next" : nil, thread.detail].compactMap { $0 }.joined(separator: " \u{00B7} "),
+                    choice("Continue in \(thread.title)", detail: [thread.task.map { "Its task \u{201C}\($0)\u{201D} goes back to To do" },
+                                                                    thread.isRunning ? "Working now; it goes next" : nil, thread.detail].compactMap { $0 }.joined(separator: " \u{00B7} "),
                            isOn: continuing == thread.id, id: "desk-thread-\(thread.id.uuidString)") { continuing = thread.id }
                 }
-                choice("New session", detail: "In \(place.name)", isOn: continuing == nil, id: "desk-thread-new") { continuing = nil }
+                choice(newTitle, detail: newDetail, isOn: continuing == nil, id: "desk-thread-new") { continuing = nil }
             } header: {
                 Text("Already in \(place.name)")
             } footer: {
                 if let continued { Text("It goes to that session as its next message, on its own model (\(continued.settings ?? "as it is")).") }
             }
+        } else if place.kind == "project" {
+            Section { Text(newDetail).font(.footnote).foregroundStyle(.secondary) }
+                .accessibilityIdentifier("desk-start-work-thread")
         }
+    }
+
+    /// Starting new: in a project, a work thread of its session (plans/work-threads.md).
+    private var newTitle: String { place.kind == "project" ? "New work thread for \(place.name)" : "New session" }
+    private var newDetail: String {
+        place.kind == "project" ? "A fresh thread in \(place.name); its result goes back to the project's session." : "In \(place.name)"
     }
 
     private var modelSection: some View {
@@ -1291,6 +1381,8 @@ private struct MobileDeskStartSheet: View {
         if !MobileDeskPlaces.same(request.proposed, place) { body.place = place }
         if let continued {
             body.continueChat = continued.id
+            // Its row said so: the task it carries goes back to To do.
+            if continued.task != nil { body.replace = true }
         } else if !picks.isEmpty, let options {
             // Only what was changed: otherwise it starts as a new session there would.
             body.agent = options.backend
@@ -1372,5 +1464,95 @@ private struct MobileDeskPlacePicker: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("desk-place-option-\(place.name)")
+    }
+}
+
+// MARK: - Tasks (plans/work-threads.md)
+
+/// The task a card's thread carries, quietly.
+private struct DeskTaskLine: View {
+    let text: String
+    var body: some View {
+        Label { Text(text).lineLimit(2) } icon: { Image(systemName: "checklist") }
+            .font(.footnote).foregroundStyle(Color.metadata)
+    }
+}
+
+/// Link a thread (from a To do card): every thread already in the task's place, best matches
+/// first; picking one links the task to it. One carrying another task asks first, since that
+/// task goes back to To do.
+private struct MobileDeskLinkSheet: View {
+    let request: Companion.DeskRequest
+    let place: Companion.DeskPlace
+    let failed: (String) -> Void
+    @Environment(MobileStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
+    @State private var threads: [Companion.DeskThread]?
+    @State private var confirming: Companion.DeskThread?
+    @State private var linking = false
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Text(request.text).lineLimit(3)
+                } footer: {
+                    Text("Pick the thread doing this. The task moves across the board with it.")
+                }
+                if let threads {
+                    Section("In \(place.name)") {
+                        if threads.isEmpty { Text("No threads there yet.").foregroundStyle(.secondary) }
+                        ForEach(threads) { thread in
+                            Button { pick(thread) } label: {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(thread.title).foregroundStyle(.primary).lineLimit(2)
+                                    let detail = [thread.match == "clear" ? "Best match" : thread.match == "possible" ? "Similar work" : nil,
+                                                  thread.task.map { "Has a task: \($0)" }, thread.isRunning ? "Working now" : nil].compactMap { $0 }
+                                    if !detail.isEmpty { Text(detail.joined(separator: " \u{00B7} ")).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(linking)
+                            .accessibilityIdentifier("desk-link-thread-\(thread.id.uuidString)")
+                        }
+                    }
+                } else {
+                    HStack(spacing: 8) { ProgressView().controlSize(.small); Text("Looking in \(place.name)\u{2026}").foregroundStyle(.secondary) }
+                }
+            }
+            .navigationTitle("Link a Thread")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+            .task { threads = (try? await store.deskAllThreads(request.id, place: place)) ?? [] }
+            .alert("Link anyway?", isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } }), presenting: confirming) { thread in
+                Button("Link Anyway") { link(thread, replace: true) }
+                Button("Cancel", role: .cancel) { confirming = nil }
+            } message: { thread in
+                Text("\u{201C}\(thread.title)\u{201D} already carries a task\(thread.task.map { ", \u{201C}\($0)\u{201D}" } ?? ""). Linking this one sends that back to To do.")
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func pick(_ thread: Companion.DeskThread) {
+        if thread.task != nil { confirming = thread } else { link(thread, replace: false) }
+    }
+
+    private func link(_ thread: Companion.DeskThread, replace: Bool) {
+        linking = true
+        Task {
+            defer { linking = false }
+            do {
+                _ = try await store.linkDesk(request.id, to: thread.id, replace: replace)
+                dismiss()
+            } catch where error.localizedDescription.contains("already carries a task") {
+                confirming = thread
+            } catch {
+                dismiss()
+                failed(MobileDeskView.describe(error))
+            }
+        }
     }
 }

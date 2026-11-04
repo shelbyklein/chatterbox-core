@@ -374,8 +374,37 @@ final class CompanionServer {
                 if parts[2] == "complete" { try DeskStore.shared.complete(body.chatID) } else { try DeskStore.shared.reopen(body.chatID) }
             } catch { return failure(error) }
             return .json(DeskStore.shared.snapshot())
+        case ("POST", 3) where parts[1] == "desk" && parts[2] == "task":
+            // Make this a task (from a thread): a new task, already linked to it.
+            guard let body = try? Companion.decoder.decode(Companion.DeskTaskRequest.self, from: request.body) else { return .error(400, "Say which session.") }
+            do { try DeskStore.shared.makeTask(body) } catch { return failure(error) }
+            return .json(DeskStore.shared.snapshot())
+        case ("POST", 4) where parts[1] == "desk" && (parts[3] == "link" || parts[3] == "unlink"):
+            // Link a thread to a task, or unlink it (back to To do).
+            guard let id = UUID(uuidString: parts[2]) else { return .error(404, "That task is gone.") }
+            do {
+                if parts[3] == "unlink" {
+                    try DeskStore.shared.unlink(id)
+                } else {
+                    guard let body = try? Companion.decoder.decode(Companion.DeskLinkRequest.self, from: request.body) else { return .error(400, "Say which session.") }
+                    try DeskStore.shared.link(id, body)
+                }
+            } catch { return failure(error) }
+            return .json(DeskStore.shared.snapshot())
+        case ("GET", 4) where parts[1] == "chats" && parts[3] == "work":
+            guard let session = session(parts[2]) else { return .error(404, "That session is gone.") }
+            let front = session.record.workOf.flatMap { id in model.sessions.first { $0.id == id } } ?? session
+            return .json(DeskStore.shared.workThreads(of: front))
+        case ("POST", 4) where parts[1] == "chats" && parts[3] == "work":
+            // Start a work thread (plans/work-threads.md): you stay in the front thread.
+            guard let session = session(parts[2]) else { return .error(404, "That session is gone.") }
+            guard let body = try? Companion.decoder.decode(Companion.WorkStartRequest.self, from: request.body) else {
+                return .error(400, "Name the work thread and give it a brief.")
+            }
+            do { return .json(CompanionMapper.detail(try DeskStore.shared.startWork(from: session, body, source: "you"), model: model)) }
+            catch { return failure(error) }
         case ("GET", 4) where parts[1] == "desk" && parts[3] == "threads":
-            // ?place=<a Studio's or project's id, or "loose">; else where it was proposed.
+            // ?place=<a Studio's or project's id, or "loose">; else where it was proposed. all=1: every thread there.
             guard let id = UUID(uuidString: parts[2]) else { return .error(404, "That request is gone.") }
             var place: Companion.DeskPlace?
             if let wanted = request.query["place"] {
@@ -384,7 +413,7 @@ final class CompanionServer {
                 }
                 place = found
             }
-            do { return .json(try DeskStore.shared.threads(for: id, place: place)) } catch { return failure(error) }
+            do { return .json(try DeskStore.shared.threads(for: id, place: place, all: request.query["all"] == "1")) } catch { return failure(error) }
         case ("POST", 4) where parts[1] == "desk" && (parts[3] == "start" || parts[3] == "ignore"):
             guard let id = UUID(uuidString: parts[2]) else { return .error(404, "That request is gone.") }
             do {
@@ -925,7 +954,8 @@ enum CompanionMapper {
                      turnsToday: activity.day, turnsThisWeek: activity.week, turnsPerDay: activity.perDay,
                      thumbnail: thumbnail(session), turnStartedAt: session.isRunning ? session.record.turnStartedAt : nil,
                      canPromote: ChatPromotion.eligible(session), brief: session.record.brief,
-                     pinnedRank: (AppPreferences.defaults.stringArray(forKey: "macPinnedThreads") ?? []).firstIndex(of: session.id.uuidString))
+                     pinnedRank: (AppPreferences.defaults.stringArray(forKey: "macPinnedThreads") ?? []).firstIndex(of: session.id.uuidString),
+                     workOf: session.record.workOf)
     }
 
     private static func thumbnail(_ session: ChatSession) -> Companion.File? {
@@ -964,7 +994,9 @@ enum CompanionMapper {
                      contextTokens: session.contextUsage[session.record.backend]?.used,
                      folder: session.workingFolder,
                      commands: commands(session).map { .init(name: $0.name, detail: $0.description, argumentHint: $0.argumentHint) },
-                     nextSteps: NextSteps.shared.suggestions(for: session).nilIfEmpty)
+                     nextSteps: NextSteps.shared.suggestions(for: session).nilIfEmpty,
+                     work: session.record.workOf == nil ? DeskStore.shared.workThreads(of: session).nilIfEmpty : nil,
+                     workOfTitle: session.record.workOf.flatMap { id in model.sessions.first { $0.id == id }?.title })
     }
 
     /// The chat's slash commands, or its Codex skills, as the Mac's "/" menu lists them.

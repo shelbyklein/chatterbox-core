@@ -29,6 +29,8 @@ struct ContentView: View {
     @State private var sidequestFrom: ChatSession?
     @State private var sidequestTask = ""
     @State private var errandFrom: ChatSession?
+    /// "Start a Work Thread…" from a session's menu: the front thread it starts from.
+    @State private var workFrom: ChatSession?
     @State private var errandTask = ""
     @State private var errandFiles: [URL] = []
     @State private var errandAgent: Backend = .claude
@@ -241,6 +243,9 @@ struct ContentView: View {
             let window = (NSApp.mainWindow ?? NSApp.keyWindow)?.contentLayoutRect.size ?? NSSize(width: 1200, height: 800)
             ImageReviewView(attachment: shot, feedback: true) { text, files in model.placeFeedback(text: text, attachments: files) }
                 .frame(width: max(900, window.width - 40), height: max(600, window.height - 40))
+        }
+        .sheet(item: $workFrom) { front in
+            WorkThreadForm(front: front) { workFrom = nil }.environment(model)
         }
         .sheet(item: $errandFrom) { parent in
             PCErrandForm(task: $errandTask, files: $errandFiles, agent: $errandAgent) {
@@ -671,6 +676,10 @@ extension ContentView {
         }
         if session.record.archivedAt == nil {
             NewSidechatControl(parent: session)
+            if !session.isSidequest, !session.isWorkThread, session.record.automationID == nil {
+                Button("Start a Work Thread\u{2026}", systemImage: "arrow.triangle.branch") { workFrom = session }
+            }
+            ThreadTaskMenu(session: session)
             if !session.isSidequest {
                 Button("Sidequest to \(session.record.backend == .claude ? "Codex" : "Claude")\u{2026}", systemImage: "point.topleft.down.to.point.bottomright.curvepath") {
                     sidequestTask = ""; sidequestFrom = session

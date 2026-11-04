@@ -113,6 +113,9 @@ struct ChatDetailView: View {
     @State private var briefText = ""
     @State private var askingSidequest = false
     @State private var sidequestTask = ""
+    /// Start a Work Thread's sheet (plans/work-threads.md), and Link to a Task's list.
+    @State private var startingWork = false
+    @State private var linkingTask = false
 
     private var summary: Companion.ChatSummary { detail?.summary ?? chat }
     #if DEBUG
@@ -128,14 +131,20 @@ struct ChatDetailView: View {
     var body: some View {
         transcript
         .safeAreaInset(edge: .top, spacing: 0) {
-            MobileSidequestStrip(summary: summary, chats: store.chatList?.groups.flatMap(\.chats) ?? [], open: open) {
-                let parent = summary.sidequestOf.flatMap { id in store.chatList?.groups.flatMap(\.chats).first { $0.id == id } }
-                perform { try await store.setArchived(true, chat: chat.id) }
-                if let parent { open(parent) }
+            VStack(spacing: 0) {
+                MobileSidequestStrip(summary: summary, chats: store.chatList?.groups.flatMap(\.chats) ?? [], open: open) {
+                    let parent = summary.sidequestOf.flatMap { id in store.chatList?.groups.flatMap(\.chats).first { $0.id == id } }
+                    perform { try await store.setArchived(true, chat: chat.id) }
+                    if let parent { open(parent) }
+                }
+                // Work threads: the ones this front thread started, or whom this one works for.
+                MobileWorkStrip(summary: summary, detail: detail, chats: store.chatList?.groups.flatMap(\.chats) ?? [], open: open)
             }
         }
         // Opening a chat here, from anywhere, clears it from New replies.
         .onAppear { MobileSeenReplies.shared.markSeen(chat.id) }
+        // The Desk says which task this session carries (its menu's task items).
+        .task(id: chat.id) { _ = try? await store.desk() }
         .onDisappear { MobileSeenReplies.shared.markSeen(chat.id) }
         .safeAreaInset(edge: .bottom) { composer }
         .environment(\.openURL, OpenURLAction { url in
@@ -207,6 +216,18 @@ struct ChatDetailView: View {
         } message: {
             Text("\(summary.otherAgentLabel) reads this session, does the task in its own sidequest, and its answer comes back here.")
         }
+        .sheet(isPresented: $startingWork) {
+            MobileWorkStartSheet(summary: summary) { request in
+                _ = try await store.startWork(from: chat.id, request)
+                await refresh(force: true)
+            }
+        }
+        .confirmationDialog("Link to a Task", isPresented: $linkingTask, titleVisibility: .visible) {
+            ForEach(store.latestDesk?.incoming ?? []) { request in
+                Button(request.text.count > 60 ? String(request.text.prefix(59)) + "\u{2026}" : request.text) { linkTask(request.id) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("This session does the task you pick, and it moves across the Desk with it.") }
         .alert("Rename Session", isPresented: $renaming) {
             TextField("Title", text: $newTitle)
             Button("Rename") {
@@ -437,6 +458,11 @@ struct ChatDetailView: View {
                     Label("Sidequest to \(summary.otherAgentLabel)…", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
                 }
             }
+            if !summary.isSidequest, summary.workOf == nil, detail?.isArchived != true {
+                Button { startingWork = true } label: { Label("Start a Work Thread\u{2026}", systemImage: "arrow.triangle.branch") }
+                    .accessibilityIdentifier("menu-start-work")
+            }
+            taskMenuItems
             if summary.canPromote == true, detail?.isArchived != true {
                 Button { promoting = .init(chat: summary, kind: .studio) } label: { Label("Move to Studio…", systemImage: "paintpalette") }
                     .disabled(summary.isRunning || controllingSession)
@@ -465,6 +491,40 @@ struct ChatDetailView: View {
             Image(systemName: "ellipsis.circle")
         }
         .accessibilityLabel("Session Menu")
+    }
+
+    /// The Desk task this session carries, if the Mac keeps tasks.
+    private var carriedTask: Companion.DeskTask? {
+        store.latestDesk?.linked?.first { $0.chatID == chat.id && $0.completedAt == nil }
+    }
+
+    /// Make This a Task, Link to a Task, or Unlink (plans/work-threads.md); nothing from a Mac
+    /// older than tasks, or for a sidequest.
+    @ViewBuilder private var taskMenuItems: some View {
+        if store.latestDesk?.linked != nil, !summary.isSidequest, detail?.isArchived != true {
+            if let task = carriedTask {
+                Button { deskChange { try await store.unlinkDesk(task.id) } } label: { Label("Unlink from Task", systemImage: "link") }
+                    .accessibilityIdentifier("menu-unlink-task")
+            } else {
+                Button { deskChange { try await store.makeTask(chat.id) } } label: { Label("Make This a Task", systemImage: "checklist") }
+                    .accessibilityIdentifier("menu-make-task")
+                if !(store.latestDesk?.incoming ?? []).isEmpty {
+                    Button { linkingTask = true } label: { Label("Link to a Task\u{2026}", systemImage: "link.badge.plus") }
+                        .accessibilityIdentifier("menu-link-task")
+                }
+            }
+        }
+    }
+
+    private func linkTask(_ task: UUID) {
+        deskChange { try await store.linkDesk(task, to: chat.id) }
+    }
+
+    /// A Desk change from this session's menu; problems show as the session's.
+    private func deskChange(_ call: @escaping () async throws -> Companion.Desk) {
+        Task {
+            do { _ = try await call(); error = nil } catch { self.error = error.localizedDescription }
+        }
     }
 
     private func forkChat() {

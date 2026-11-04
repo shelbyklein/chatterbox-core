@@ -1,29 +1,33 @@
 import Foundation
 
-// The Desk: incoming requests (desk.json), place proposals, and what needs Shelby. plans/front-desk.md
+// The Desk: tasks (desk.json), place proposals, and what needs Shelby. plans/front-desk.md
 // The board's Ready to mark complete and Done: plans/desk-board.md
+// Tasks linked to threads, and work threads: plans/work-threads.md
 
 /// The Desk: what needs Shelby, work waiting to be placed, and what's working. It never does
 /// work itself: starting a request opens a session in its Studio or project (or continues one
 /// already there doing the same work), so work stays in its compartment. The service owns it; the phone and Claude's connector reach it through
 /// the companion API (/v1/desk), the Mac app through the service socket (operation "desk").
 ///
-/// Only the requests, what was silenced and what was marked complete are kept (desk.json in
-/// the data folder). What needs Shelby, what's working and what's ready to mark complete come
-/// from the sessions each time they're asked for.
+/// A request is a **task**: it stays on the Desk once started, linked to the thread doing it
+/// (one task per thread, one thread per task), and moves across the board with that thread:
+/// To do (not linked), Working, Needs you, Ready to mark complete, Done (its thread archived,
+/// for a week). Threads with no task show only when they need Shelby.
+///
+/// Only the tasks and what was silenced are kept (desk.json in the data folder). What needs
+/// Shelby, what's working and what's ready come from the sessions each time they're asked for.
 @MainActor
 final class DeskStore {
     static let shared = DeskStore()
     typealias Failure = CompanionServer.Failure
 
-    /// Requests waiting to be placed and started, newest first.
-    private(set) var requests: [Companion.DeskRequest] = []
+    /// Every task, newest first: To do, linked to a thread, or done this week.
+    private(set) var tasks: [TaskRecord] = []
+    /// To do: tasks waiting to be placed and started (or linked), newest first.
+    var requests: [Companion.DeskRequest] { tasks.filter(isToDo).map(\.request) }
     /// Waiting things Shelby silenced: off the Desk, still waiting in their sessions. Each goes
     /// once it no longer waits.
     private(set) var silences: [Silence] = []
-    /// Sessions marked complete from the board (archived), newest first. Each goes from Done
-    /// after a week, or once its session is unarchived or gone.
-    private(set) var completions: [Completion] = []
     /// Goes up whenever anything the Desk shows changes, including what sessions are doing.
     private(set) var revision = 1
     /// After the Desk changed, with what it shows now: the service tells the app (desk.changed).
@@ -32,7 +36,7 @@ final class DeskStore {
     /// continued (queued while it works, as the phone's send is). Tests replace it, so no agent starts.
     var sendFirstMessage: (ChatSession, String) -> Void = { session, text in session.send(text) }
 
-    /// The most requests kept; the oldest go first.
+    /// The most tasks kept to do; the oldest go first.
     static let limit = 200
     /// The most silences kept; the oldest go first.
     static let silenceLimit = 500
@@ -41,13 +45,10 @@ final class DeskStore {
     static let threadMinimum = 2
     /// How long a reply that ends on a question counts as waiting on Shelby.
     static let replyWindow: TimeInterval = 48 * 3600
-    /// How long a finished reply stays Ready to mark complete, and a completion stays in Done.
-    static let readyWindow: TimeInterval = 7 * 86_400
+    /// How long a completed task stays in Done (and in desk.json).
     static let doneWindow: TimeInterval = 7 * 86_400
-    /// The most sessions Ready to mark complete shows, newest first.
+    /// The most tasks Ready to mark complete shows, newest first.
     static let readyLimit = 50
-    /// The most completions kept; the oldest go first.
-    static let completionLimit = 200
     static let loose = Companion.DeskPlace(kind: "loose", id: nil, name: "Loose session",
                                            detail: "A session of its own, in no Studio or project.")
 
@@ -65,19 +66,38 @@ final class DeskStore {
         var silencedAt: Date
     }
 
-    /// A session marked complete from the board.
-    struct Completion: Codable, Hashable {
-        var chatID: UUID
-        var completedAt: Date
+    /// A task: a request, and the thread doing it once it's linked.
+    struct TaskRecord: Codable, Hashable {
+        var id: UUID
+        var text: String
+        var source: String
+        var createdAt: Date
+        var proposed: Companion.DeskPlace?
+        var note: String? = nil
+        /// The thread doing it; nil while it's to do.
+        var chatID: UUID? = nil
+        var linkedAt: Date? = nil
+        /// When it was marked complete (its thread archived).
+        var completedAt: Date? = nil
+
+        init(_ request: Companion.DeskRequest) {
+            id = request.id; text = request.text; source = request.source; createdAt = request.createdAt
+            proposed = request.proposed; note = request.note
+        }
+        var request: Companion.DeskRequest {
+            .init(id: id, text: text, source: source, createdAt: createdAt, proposed: proposed, note: note)
+        }
+        var isOpen: Bool { completedAt == nil }
     }
 
     private struct Saved: Codable {
         var revision: Int
+        /// To do, as builds from before tasks read it.
         var requests: [Companion.DeskRequest]
         /// Nil in a desk.json from before silencing.
         var silences: [Silence]? = nil
-        /// Nil in a desk.json from before the board.
-        var completions: [Completion]? = nil
+        /// Every task; nil in a desk.json from before tasks, whose requests become tasks to do.
+        var tasks: [TaskRecord]? = nil
     }
     private struct Content: Equatable {
         var needsYou: [Companion.DeskWaiting]
@@ -86,6 +106,7 @@ final class DeskStore {
         var silenced: [Companion.DeskWaiting]
         var ready: [Companion.DeskReady] = []
         var done: [Companion.DeskDone] = []
+        var linked: [Companion.DeskTask] = []
     }
     /// Something a session waits on Shelby for.
     private struct Waiting {
@@ -119,9 +140,9 @@ final class DeskStore {
         self.file = file
         guard let data = try? Data(contentsOf: file) else { return }
         if let saved = try? Companion.decoder.decode(Saved.self, from: data) {
-            requests = saved.requests.sorted { $0.createdAt > $1.createdAt }
+            // Requests from before tasks are tasks to do; sessions aren't made tasks.
+            tasks = (saved.tasks ?? saved.requests.map(TaskRecord.init)).sorted { $0.createdAt > $1.createdAt }
             silences = saved.silences ?? []
-            completions = saved.completions ?? []
             // Sessions may have changed while the service was down.
             revision = saved.revision + 1
         } else {
@@ -173,24 +194,27 @@ final class DeskStore {
     /// same work, best first: the request's and its note's words in each one's title (counted
     /// twice) and in what it was first asked and last said. Only that Studio's or project's
     /// own, open sessions; sidequests and automation runs report to their session instead.
-    /// The best is a clear match when it scores well and well ahead of the next.
-    func threads(for id: UUID, place chosen: Companion.DeskPlace? = nil) throws -> [Companion.DeskThread] {
+    /// The best is a clear match when it scores well and well ahead of the next. With `all`
+    /// (Link a thread), every one there, the rest ("other") after the matches, newest first.
+    /// Each names the open task it already carries.
+    func threads(for id: UUID, place chosen: Companion.DeskPlace? = nil, all: Bool = false) throws -> [Companion.DeskThread] {
         guard let request = requests.first(where: { $0.id == id }) else { throw Failure(status: 404, message: "That request is gone.") }
         guard let place = chosen ?? request.proposed else { return [] }
         let said = PlaceSuggestion.words(request.text + (request.note.map { "\n" + $0 } ?? ""))
-        guard !said.isEmpty else { return [] }
-        let ranked = sessions(in: place)
-            .map { ($0, Self.overlap(said, with: $0)) }
-            .filter { $0.1 >= Self.threadMinimum }
+        guard all || !said.isEmpty else { return [] }
+        let scored = sessions(in: place)
+            .map { ($0, said.isEmpty ? 0 : Self.overlap(said, with: $0)) }
             .sorted { $0.1 != $1.1 ? $0.1 > $1.1 : Self.lastActive($0.0) > Self.lastActive($1.0) }
-            .prefix(Self.threadLimit)
-        let scores = ranked.map(\.1)
+        let matching = scored.filter { $0.1 >= Self.threadMinimum }.prefix(all ? Int.max : Self.threadLimit)
+        let ranked = all ? scored : Array(matching)
+        let scores = matching.map(\.1)
         let clear = (scores.first ?? 0) >= 4 && (scores.count < 2 || scores[0] >= scores[1] + 3)
         return ranked.enumerated().map { index, entry in
             let session = entry.0
+            let match = entry.1 < Self.threadMinimum ? "other" : index == 0 && clear ? "clear" : "possible"
             return .init(id: session.id, title: session.title, detail: session.lastActionSummary.map { Self.short($0, limit: 160) },
                          settings: session.settingsDescription, updatedAt: Self.lastActive(session), isRunning: session.isRunning,
-                         match: index == 0 && clear ? "clear" : "possible")
+                         match: match, task: openTask(for: session.id).map { Self.short($0.text, limit: 160) })
         }
     }
 
@@ -239,8 +263,10 @@ final class DeskStore {
         // Whole seconds, as desk.json keeps it.
         let now = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down))
         let request = Companion.DeskRequest(id: UUID(), text: text, source: source, createdAt: now, proposed: proposed, note: note)
-        requests.insert(request, at: 0)
-        if requests.count > Self.limit { requests.removeLast(requests.count - Self.limit) }
+        tasks.insert(TaskRecord(request), at: 0)
+        // The oldest to do go first; linked and done ones stay.
+        let todo = tasks.filter(isToDo)
+        if todo.count > Self.limit { let old = Set(todo.suffix(todo.count - Self.limit).map(\.id)); tasks.removeAll { old.contains($0.id) } }
         changed()
         return request
     }
@@ -265,7 +291,8 @@ final class DeskStore {
         }) {
             guard !silences.contains(where: found.silenced) else { return true }
             silence = Silence(chatID: session.id, itemID: found.itemID, kind: found.item.kind, text: found.item.text, silencedAt: at)
-        } else if all.isEmpty, body.id == session.id, let finished = finished(session, now: now), body.text == nil || body.text == finished.item.text {
+        } else if all.isEmpty, body.id == session.id, !session.isRunning, let task = openTask(for: session.id),
+                  case let finished = finished(session, task: task), body.text == nil || body.text == finished.item.text {
             guard !silences.contains(where: { $0.kind == "ready" && $0.chatID == session.id && $0.itemID == finished.replyID }) else { return true }
             silence = Silence(chatID: session.id, itemID: finished.replyID, kind: "ready", text: finished.item.text, silencedAt: at)
         } else {
@@ -293,8 +320,8 @@ final class DeskStore {
         return true
     }
 
-    /// Mark complete: archives the session (its agent stops; nothing is removed) and puts it in
-    /// Done for a week. Refused while it's working, so a reply is never cut off.
+    /// Mark complete: archives the session (its agent stops; nothing is removed), and the task
+    /// it carries goes to Done for a week. Refused while it's working, so a reply is never cut off.
     func complete(_ chatID: UUID) throws {
         guard let model, let session = model.sessions.first(where: { $0.id == chatID }) else { throw Failure(status: 404, message: "That session is gone.") }
         guard !session.isRunning else { throw Failure(status: 409, message: "That session is working. Mark it complete once it finishes.") }
@@ -304,35 +331,37 @@ final class DeskStore {
             model.archive(session)
             if let shown, shown != session.id, model.sessions.contains(where: { $0.id == shown }) { model.selectedID = shown }
         }
-        // Whole seconds, as desk.json keeps it.
-        let now = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down))
-        completions.removeAll { $0.chatID == chatID }
-        completions.insert(Completion(chatID: chatID, completedAt: now), at: 0)
-        if completions.count > Self.completionLimit { completions.removeLast(completions.count - Self.completionLimit) }
+        let now = Self.wholeSeconds()
+        for index in tasks.indices where tasks[index].chatID == chatID && tasks[index].completedAt == nil { tasks[index].completedAt = now }
         changed()
     }
 
-    /// Reopen: unarchives the session and takes it out of Done.
+    /// Reopen: unarchives the session, and its task leaves Done (to wherever its thread is now).
     func reopen(_ chatID: UUID) throws {
         guard let session = model?.sessions.first(where: { $0.id == chatID }) else { throw Failure(status: 404, message: "That session is gone.") }
         if session.record.archivedAt != nil { session.setArchived(false) }
-        completions.removeAll { $0.chatID == chatID }
+        // Its newest task: one thread carries one task.
+        if let index = tasks.firstIndex(where: { $0.chatID == chatID }) { tasks[index].completedAt = nil }
         changed()
     }
 
+    /// Remove (Ignore): a task to do leaves the Desk.
     func ignore(_ id: UUID) throws {
-        guard requests.contains(where: { $0.id == id }) else { throw Failure(status: 404, message: "That request is gone.") }
-        requests.removeAll { $0.id == id }
+        guard tasks.contains(where: { $0.id == id && isToDo($0) }) else { throw Failure(status: 404, message: "That request is gone.") }
+        tasks.removeAll { $0.id == id }
         changed()
     }
 
-    /// Starts a request where it was proposed, or in `body.place`: a new chat in a Studio, a new
-    /// Sidechat of a project's session, or a loose session, on the agent and model chosen (else
-    /// as a new one there would start). It's named from the request, which becomes its first
-    /// message (with the note, labelled), and leaves the Desk. With `body.continueChat`, the
-    /// request is that session's next message instead (queued while it works) and nothing new starts.
+    /// Starts a task to do where it was proposed, or in `body.place`: a new chat in a Studio, a
+    /// new work thread of a project's session (it reports back there), or a loose session, on the
+    /// agent and model chosen (else as a new one there would start). It's named from the request,
+    /// which becomes its first message (with the note, labelled), and the task is linked to it.
+    /// With `body.continueChat`, the request is that session's next message instead (queued while
+    /// it works), nothing new starts, and the task is linked to it; a session carrying another
+    /// open task is refused unless `body.replace` (that task goes back to To do).
     func start(_ id: UUID, _ body: Companion.DeskStartRequest = .init()) throws -> ChatSession {
-        guard let request = requests.first(where: { $0.id == id }) else { throw Failure(status: 404, message: "That request is gone.") }
+        guard let index = tasks.firstIndex(where: { $0.id == id && isToDo($0) }) else { throw Failure(status: 404, message: "That request is gone.") }
+        let request = tasks[index].request
         if let chat = body.continueChat {
             guard let session = model?.sessions.first(where: { $0.id == chat }), session.record.archivedAt == nil else {
                 throw Failure(status: 404, message: "That session is gone.")
@@ -340,7 +369,8 @@ final class DeskStore {
             guard !session.isRestartingThread else {
                 throw Failure(status: 409, message: "That session is reconnecting. Try again when it's ready.")
             }
-            requests.removeAll { $0.id == id }
+            try canCarry(session, replacing: body.replace == true)
+            link(id, to: session.id)
             save()
             sendFirstMessage(session, Self.message(request))
             changed()
@@ -360,33 +390,196 @@ final class DeskStore {
         case "studio":
             guard let studio = place.id else { throw Failure(status: 404, message: "That Studio is gone.") }
             session = try server.newSession(project: nil, studio: studio, backend: backend)
+            session.setTitle(Self.title(request.text))
         case "project":
-            guard let project = place.id, model?.sessions.first(where: { $0.id == project })?.record.projectFolder != nil else {
+            guard let id = place.id, let project = model?.sessions.first(where: { $0.id == id && $0.record.archivedAt == nil }),
+                  project.record.projectFolder != nil else {
                 throw Failure(status: 404, message: "That project's session is gone.")
             }
-            // A Sidechat starts on its project's agent; another one is switched to before anything's sent.
-            session = try server.newSession(project: project, studio: nil, backend: nil)
+            // A work thread of the project's session: it starts on its agent (another one is
+            // switched to before anything's sent), and reports back there.
+            session = try newWorkThread(of: project, title: Self.title(request.text))
             if let backend, backend != session.record.backend { session.setBackend(backend) }
         case "loose":
             session = try server.newSession(project: nil, studio: nil, backend: backend)
+            session.setTitle(Self.title(request.text))
         default:
             throw Failure(status: 400, message: "A place is a studio, a project, or loose.")
         }
         // The model chosen, before anything's sent.
         let settings = Companion.SettingsRequest(model: Self.clean(body.model), effort: Self.clean(body.effort), openModel: Self.clean(body.openModel))
         if settings.model != nil || settings.effort != nil || settings.openModel != nil { CompanionMapper.apply(settings, to: session) }
-        session.setTitle(Self.title(request.text))
-        // Off the Desk (and saved so) before it's sent, so a request is never started twice.
-        requests.removeAll { $0.id == id }
+        // Linked (and saved so) before it's sent, so a request is never started twice.
+        link(id, to: session.id)
         save()
         sendFirstMessage(session, Self.message(request))
+        if let front = session.record.workOf.flatMap({ id in model?.sessions.first { $0.id == id } }) { front.noteWorkStarted(session) }
         changed()
         return session
     }
 
+    // MARK: - Tasks and threads (plans/work-threads.md)
+
+    /// Link a thread (from a To do card): the task is done in that thread. One that carries
+    /// another open task is refused unless `replace`: then that task goes back to To do.
+    func link(_ id: UUID, _ body: Companion.DeskLinkRequest) throws {
+        guard let task = tasks.first(where: { $0.id == id }), task.isOpen else { throw Failure(status: 404, message: "That task is gone.") }
+        guard let session = model?.sessions.first(where: { $0.id == body.chatID }), session.record.archivedAt == nil else {
+            throw Failure(status: 404, message: "That session is gone.")
+        }
+        guard task.chatID != session.id else { return }
+        try canCarry(session, replacing: body.replace == true)
+        link(id, to: session.id)
+        changed()
+    }
+
+    /// Unlink: the task goes back to To do; its thread carries on as a thread.
+    func unlink(_ id: UUID) throws {
+        guard let index = tasks.firstIndex(where: { $0.id == id }), tasks[index].isOpen else { throw Failure(status: 404, message: "That task is gone.") }
+        tasks[index].chatID = nil
+        tasks[index].linkedAt = nil
+        changed()
+    }
+
+    /// Make this a task (from a thread): a new task, already linked, named `text` or else the
+    /// thread's title, in the thread's place.
+    @discardableResult
+    func makeTask(_ body: Companion.DeskTaskRequest, source: String = "you") throws -> UUID {
+        guard let session = model?.sessions.first(where: { $0.id == body.chatID }), session.record.archivedAt == nil else {
+            throw Failure(status: 404, message: "That session is gone.")
+        }
+        try canCarry(session, replacing: false)
+        let text = Self.clean(body.text).map { String($0.prefix(4_000)) } ?? session.title
+        var task = TaskRecord(.init(id: UUID(), text: text, source: source, createdAt: Self.wholeSeconds(), proposed: place(of: session)))
+        task.chatID = session.id
+        task.linkedAt = task.createdAt
+        tasks.insert(task, at: 0)
+        changed()
+        return task.id
+    }
+
+    /// To do: open, and not linked (or linked to a thread that's gone).
+    func isToDo(_ task: TaskRecord) -> Bool {
+        task.isOpen && (task.chatID.map { id in model?.sessions.contains { $0.id == id } != true } ?? true)
+    }
+
+    /// The open task a thread carries.
+    func openTask(for chatID: UUID) -> TaskRecord? { tasks.first { $0.chatID == chatID && $0.isOpen } }
+
+    /// Whether `session` can carry a task: not a sidequest or automation run, and not one
+    /// carrying another open task, unless that one may go back to To do (`replacing`).
+    private func canCarry(_ session: ChatSession, replacing: Bool) throws {
+        guard session.record.sidequestOf == nil, session.record.automationID == nil else {
+            throw Failure(status: 409, message: "Sidequests and automation runs report to their session; they aren't tasks.")
+        }
+        guard let other = openTask(for: session.id) else { return }
+        guard replacing else {
+            throw Failure(status: 409, message: "That thread already carries a task: \u{201C}\(Self.short(other.text, limit: 80))\u{201D}. Link it anyway to send that one back to To do.")
+        }
+        if let index = tasks.firstIndex(where: { $0.id == other.id }) { tasks[index].chatID = nil; tasks[index].linkedAt = nil }
+    }
+
+    private func link(_ id: UUID, to chatID: UUID) {
+        guard let index = tasks.firstIndex(where: { $0.id == id }) else { return }
+        tasks[index].chatID = chatID
+        tasks[index].linkedAt = Self.wholeSeconds()
+    }
+
+    /// A thread was deleted: its open task goes back to To do, and a done one goes.
+    func threadDeleted(_ chatID: UUID) {
+        guard tasks.contains(where: { $0.chatID == chatID }) else { return }
+        tasks.removeAll { $0.chatID == chatID && !$0.isOpen }
+        for index in tasks.indices where tasks[index].chatID == chatID { tasks[index].chatID = nil; tasks[index].linkedAt = nil }
+        changed()
+    }
+
+    /// A work thread of `front` (plans/work-threads.md): a fresh thread in its folder, started
+    /// with `brief` as its first message, on the front thread's agent and model unless `agent`
+    /// or `model` say otherwise, carrying its own task (linked, in the front thread's place),
+    /// reporting back when it finishes. Only from a thread that isn't one itself, a sidequest or
+    /// an automation run.
+    func startWork(from front: ChatSession, _ body: Companion.WorkStartRequest, source: String) throws -> ChatSession {
+        guard front.record.archivedAt == nil else { throw Failure(status: 404, message: "That session is archived.") }
+        guard front.record.workOf == nil else {
+            throw Failure(status: 409, message: "A work thread doesn't start work threads of its own; report back instead (work report).")
+        }
+        guard front.record.sidequestOf == nil, front.record.automationID == nil else {
+            throw Failure(status: 409, message: "Sidequests and automation runs can't start work threads.")
+        }
+        guard let title = Self.clean(body.title) else { throw Failure(status: 400, message: "Name the work thread.") }
+        guard let brief = Self.clean(body.brief) else {
+            throw Failure(status: 400, message: "Give the work thread a brief: what to do, what's decided, which files to read.")
+        }
+        guard brief.count <= 100_000 else { throw Failure(status: 400, message: "That brief is too long.") }
+        var backend: Backend?
+        if let agent = Self.clean(body.agent) {
+            guard let chosen = Backend(rawValue: agent.lowercased()) else { throw Failure(status: 400, message: "The agent is claude or codex.") }
+            backend = chosen
+        }
+        let session = try newWorkThread(of: front, title: Self.title(title))
+        if let backend, backend != session.record.backend { session.setBackend(backend) }
+        if let model = Self.clean(body.model) { CompanionMapper.apply(.init(model: model), to: session) }
+        var task = TaskRecord(.init(id: UUID(), text: String(title.prefix(4_000)), source: Self.clean(source) ?? "you",
+                                    createdAt: Self.wholeSeconds(), proposed: place(of: front)))
+        task.chatID = session.id
+        task.linkedAt = task.createdAt
+        tasks.insert(task, at: 0)
+        // Saved before it's sent, so the task is there when the thread starts working.
+        save()
+        sendFirstMessage(session, brief)
+        front.noteWorkStarted(session)
+        changed()
+        return session
+    }
+
+    private func newWorkThread(of front: ChatSession, title: String) throws -> ChatSession {
+        guard let model else { throw Failure(status: 503, message: "Chatterbox is starting.") }
+        let shown = model.selectedID
+        defer { if let shown, model.sessions.contains(where: { $0.id == shown }) { model.selectedID = shown } }
+        do { return try model.newWorkThread(of: front, title: title) } catch { throw Failure(status: 503, message: "Could not save the new work thread.") }
+    }
+
+    /// A front thread's work threads for its Work strip, newest first: open ones, and those
+    /// done (archived) this week.
+    func workThreads(of front: ChatSession) -> [Companion.WorkThread] {
+        guard let model else { return [] }
+        let now = Date()
+        return model.sessions.filter { session in
+            guard session.record.workOf == front.id else { return false }
+            guard let archived = session.record.archivedAt else { return true }
+            return now.timeIntervalSince(archived) < Self.doneWindow
+        }
+        .sorted { $0.record.createdAt > $1.record.createdAt }
+        .map { session in
+            let state = session.record.archivedAt != nil ? "done" : session.isWaitingOnYou ? "needsYou"
+                : session.isRunning || session.hasBackgroundWork ? "working" : "ready"
+            return .init(id: session.id, title: session.title, state: state, task: tasks.first { $0.chatID == session.id }?.id,
+                         backend: session.record.backend.rawValue, updatedAt: session.record.updatedAt)
+        }
+    }
+
+    /// The service socket's "work" operation, once the caller may: `action` start (a
+    /// WorkStartRequest's fields) answers the work thread's ChatDetail; list, the front
+    /// thread's work threads. Report is the session's own (ChatSession.reportWork).
+    func workOperation(_ body: JSON, in session: ChatSession, agent: Bool) throws -> JSON {
+        guard let model else { throw Failure(status: 503, message: "Chatterbox is starting.") }
+        switch body["action"]?.string ?? "list" {
+        case "list":
+            let front = session.record.workOf.flatMap { id in model.sessions.first { $0.id == id } } ?? session
+            return try .value(workThreads(of: front))
+        case "start":
+            guard let request = try? body.decode(Companion.WorkStartRequest.self) else { throw Failure(status: 400, message: "Name the work thread and give it a brief.") }
+            let work = try startWork(from: session, request, source: agent ? session.record.backend.rawValue : "you")
+            return try .value(CompanionMapper.detail(work, model: model))
+        default:
+            throw RuntimeFailure("unsupported_operation")
+        }
+    }
+
     /// The service socket's "desk" operation (the Mac app): `action` get, add, start, ignore,
-    /// silence, unsilence, complete, reopen, places, threads or options, with the companion API's bodies, plus `id` for
-    /// start, ignore and threads. Replies as the companion API does: the Desk, a started
+    /// silence, unsilence, complete, reopen, link, unlink, makeTask, places, threads or options,
+    /// with the companion API's bodies, plus `id` for start, ignore, link, unlink and threads
+    /// (and `all` for threads). Replies as the companion API does: the Desk, a started
     /// session's ChatDetail, the places, the sessions to continue, or a new session's options
     /// in `place` (with `picks`, a SettingsRequest). An agent's request is from Claude (or
     /// Codex), never from Shelby.
@@ -398,7 +591,7 @@ final class DeskStore {
             return try .value(places())
         case "threads":
             let place = try body["place"].map { try $0.decode(Companion.DeskPlace.self) }
-            return try .value(threads(for: try Self.requestID(body), place: place))
+            return try .value(threads(for: try Self.requestID(body), place: place, all: body["all"]?.bool == true))
         case "options":
             guard let place = try? body["place"]?.decode(Companion.DeskPlace.self) else { throw Failure(status: 400, message: "Say which place.") }
             let picks = (try? body["picks"]?.decode(Companion.SettingsRequest.self)) ?? .init()
@@ -423,6 +616,18 @@ final class DeskStore {
             guard let request = try? body.decode(Companion.DeskSessionRequest.self) else { throw Failure(status: 400, message: "Say which session.") }
             if body["action"]?.string == "complete" { try complete(request.chatID) } else { try reopen(request.chatID) }
             return try .value(snapshot())
+        case "link":
+            let id = try Self.requestID(body)
+            guard let request = try? body.decode(Companion.DeskLinkRequest.self) else { throw Failure(status: 400, message: "Say which thread.") }
+            try link(id, request)
+            return try .value(snapshot())
+        case "unlink":
+            try unlink(try Self.requestID(body))
+            return try .value(snapshot())
+        case "makeTask":
+            guard let request = try? body.decode(Companion.DeskTaskRequest.self) else { throw Failure(status: 400, message: "Say which thread.") }
+            try makeTask(request)
+            return try .value(snapshot())
         case "start":
             let id = try Self.requestID(body)
             guard let start = try? body.decode(Companion.DeskStartRequest.self) else { throw Failure(status: 400, message: "Bad place.") }
@@ -436,17 +641,24 @@ final class DeskStore {
 
     // MARK: - Building it
 
-    /// What the Desk shows now. Silences that no longer match anything waiting (or ready) go,
-    /// and completions no longer in Done.
+    /// What the Desk shows now. To do: tasks not linked (or whose thread is gone). Needs you:
+    /// every thread waiting on Shelby, task or not. Working and Ready: threads carrying a task,
+    /// by what they're doing. Done: tasks completed this week. Silences that no longer match
+    /// anything waiting (or ready) go.
     private func current() -> Content {
         guard let model else { return Content(needsYou: [], incoming: requests, working: [], silenced: []) }
+        let now = Date()
+        let byID = Dictionary(model.sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        if reconcile(byID, now: now) { scheduleSave() }
+        var carried: [UUID: TaskRecord] = [:]
+        for task in tasks where task.isOpen { if let chat = task.chatID, carried[chat] == nil { carried[chat] = task } }
         var needs: [(date: Date, item: Companion.DeskWaiting)] = []
         var silenced: [(date: Date, item: Companion.DeskWaiting)] = []
         var working: [(date: Date, item: Companion.DeskWorking)] = []
         var ready: [(date: Date, item: Companion.DeskReady)] = []
         var live = Set<Silence>()
-        let now = Date()
         for session in model.sessions where session.record.archivedAt == nil {
+            let task = carried[session.id]
             let all = waiting(in: session, now: now)
             var shown: Waiting?
             for waiting in all {
@@ -457,15 +669,22 @@ final class DeskStore {
                     shown = waiting
                 }
             }
-            if let shown {
+            if var shown {
+                shown.item.task = task?.id
+                shown.item.taskText = task?.text
                 needs.append((shown.date, shown.item))
-            } else if all.isEmpty, session.isRunning {
-                // One waiting on something silenced is waiting, not working.
+            } else if !all.isEmpty || task == nil {
+                // Waiting on something silenced is waiting, not working; a thread with no task
+                // shows only when it needs Shelby.
+                continue
+            } else if session.isRunning || session.hasBackgroundWork {
                 let name = CompanionMapper.heading(session)
                 working.append((session.record.turnStartedAt ?? session.record.updatedAt,
                                 .init(id: session.id, title: name.title, place: placeName(session), subtitle: name.subtitle,
-                                      activity: session.lastActionSummary.map { Self.short($0, limit: 160) }, since: session.record.turnStartedAt)))
-            } else if all.isEmpty, let finished = finished(session, now: now) {
+                                      activity: session.lastActionSummary.map { Self.short($0, limit: 160) }, since: session.record.turnStartedAt,
+                                      task: task?.id, taskText: task?.text)))
+            } else {
+                let finished = finished(session, task: task)
                 if let silence = silences.first(where: { $0.kind == "ready" && $0.chatID == session.id && $0.itemID == finished.replyID }) {
                     live.insert(silence)
                 } else {
@@ -474,39 +693,62 @@ final class DeskStore {
             }
         }
         if live.count < silences.count { silences.removeAll { !live.contains($0) } }
-        // Done: completions from the last week whose sessions are still archived.
-        let byID = Dictionary(model.sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        // Done: tasks completed this week whose threads are still archived.
         var done: [Companion.DeskDone] = []
-        let kept = completions.filter { completion in
-            guard now.timeIntervalSince(completion.completedAt) < Self.doneWindow, let session = byID[completion.chatID],
-                  session.record.archivedAt != nil else { return false }
+        for task in tasks {
+            guard let completed = task.completedAt, let chat = task.chatID, let session = byID[chat], session.record.archivedAt != nil else { continue }
             let name = CompanionMapper.heading(session)
-            done.append(.init(id: session.id, title: name.title, place: placeName(session), subtitle: name.subtitle, completedAt: completion.completedAt))
-            return true
+            done.append(.init(id: session.id, title: name.title, place: placeName(session), subtitle: name.subtitle, completedAt: completed,
+                              task: task.id, taskText: task.text))
         }
-        if kept.count < completions.count { completions = kept }
+        // To do: not linked, or linked to a thread that's gone (until its deletion unlinks it).
+        let incoming = tasks.filter { $0.isOpen && ($0.chatID.map { byID[$0] == nil } ?? true) }.map(\.request)
+        let linked = tasks.compactMap { task -> Companion.DeskTask? in
+            guard let chat = task.chatID, byID[chat] != nil else { return nil }
+            return .init(id: task.id, text: task.text, chatID: chat, completedAt: task.completedAt)
+        }
         func newestFirst<T: Identifiable>(_ a: (date: Date, item: T), _ b: (date: Date, item: T)) -> Bool where T.ID == UUID {
             a.date != b.date ? a.date > b.date : a.item.id.uuidString < b.item.id.uuidString
         }
-        return Content(needsYou: needs.sorted(by: newestFirst).map(\.item), incoming: requests,
+        return Content(needsYou: needs.sorted(by: newestFirst).map(\.item), incoming: incoming,
                        working: working.sorted(by: newestFirst).map(\.item), silenced: silenced.sorted(by: newestFirst).map(\.item),
                        ready: Array(ready.sorted(by: newestFirst).prefix(Self.readyLimit).map(\.item)),
-                       done: done.map { (date: $0.completedAt, item: $0) }.sorted(by: newestFirst).map(\.item))
+                       done: done.map { (date: $0.completedAt, item: $0) }.sorted(by: newestFirst).map(\.item),
+                       linked: linked)
     }
 
-    /// A session that finished its reply in the last week and asks nothing: idle, its last
-    /// word the agent's. Sidequests and automation runs report to their session instead. The
-    /// caller has checked it waits on nothing.
-    private func finished(_ session: ChatSession, now: Date) -> Finished? {
-        guard !session.isRunning, !session.hasBackgroundWork, session.record.sidequestOf == nil, session.record.automationID == nil,
-              let last = session.items.last(where: { $0.kind == .user || ($0.kind == .assistant && $0.phase == .final) }),
-              last.kind == .assistant else { return nil }
-        let date = last.timestamp ?? session.record.updatedAt
-        guard now.timeIntervalSince(date) < Self.readyWindow else { return nil }
+    /// Tasks follow their threads: one archived outside the board is done (when it was
+    /// archived), one unarchived is open again, and done ones go after a week. True when
+    /// something changed.
+    private func reconcile(_ byID: [UUID: ChatSession], now: Date) -> Bool {
+        var changed = false
+        for index in tasks.indices {
+            guard let chat = tasks[index].chatID, let session = byID[chat] else { continue }
+            if let archived = session.record.archivedAt, tasks[index].completedAt == nil {
+                tasks[index].completedAt = Date(timeIntervalSince1970: archived.timeIntervalSince1970.rounded(.down))
+                changed = true
+            } else if session.record.archivedAt == nil, tasks[index].completedAt != nil {
+                tasks[index].completedAt = nil
+                changed = true
+            }
+        }
+        let before = tasks.count
+        tasks.removeAll { task in task.completedAt.map { now.timeIntervalSince($0) >= Self.doneWindow } ?? false }
+        return changed || tasks.count < before
+    }
+
+    /// A thread carrying a task, idle and asking nothing: Ready to mark complete, however long
+    /// ago it finished, with its last reply's first sentence. The caller has checked it waits
+    /// on nothing.
+    private func finished(_ session: ChatSession, task: TaskRecord?) -> Finished {
         let name = CompanionMapper.heading(session)
-        let text = ChatSession.firstSentence(of: last.text, limit: 160) ?? "Finished its reply."
+        let last = session.items.last(where: { $0.kind == .user || ($0.kind == .assistant && $0.phase == .final) })
+        let reply = last?.kind == .assistant ? last : nil
+        let date = reply?.timestamp ?? session.record.updatedAt
+        let text = reply.flatMap { ChatSession.firstSentence(of: $0.text, limit: 160) } ?? (reply == nil ? "No reply yet." : "Finished its reply.")
         return Finished(date: date, item: .init(id: session.id, title: name.title, place: placeName(session), subtitle: name.subtitle,
-                                                text: text, finishedAt: date), replyID: last.id)
+                                                text: text, finishedAt: date, task: task?.id, taskText: task?.text),
+                        replyID: reply?.id ?? session.id)
     }
 
     /// What a session waits on Shelby for, oldest first: its approvals, plans and questions,
@@ -550,16 +792,35 @@ final class DeskStore {
         return [Waiting(date: date, item: item(id: session.id, kind: "reply", text: question), itemID: last.id)]
     }
 
-    /// A session's Studio or project, or its parent's for a Sidechat or sidequest.
+    /// A session's Studio or project, or its parent's for a Sidechat, sidequest or work thread.
     private func placeName(_ session: ChatSession, depth: Int = 0) -> String? {
         guard let model else { return nil }
         if let id = session.record.studioID, let studio = model.studio(id) { return studio.name }
         if session.record.projectFolder != nil { return session.projectName }
-        if depth < 3, let parentID = session.record.sidechatOf ?? session.record.sidequestOf,
+        if depth < 3, let parentID = session.record.sidechatOf ?? session.record.sidequestOf ?? session.record.workOf,
            let parent = model.sessions.first(where: { $0.id == parentID }) {
             return placeName(parent, depth: depth + 1)
         }
         return session.record.sidechatProjectFolder.map { ($0 as NSString).lastPathComponent }
+    }
+
+    /// Where a session is, as a place to propose: its Studio, its project (a worktree's or a
+    /// Sidechat's, the project's own session), or loose.
+    private func place(of session: ChatSession, depth: Int = 0) -> Companion.DeskPlace? {
+        guard let model else { return nil }
+        if let id = session.record.studioID, let studio = model.studio(id) {
+            return Self.place(.init(id: studio.id, name: studio.name, instructions: studio.trimmedInstructions, kind: .studio))
+        }
+        let folder = session.record.worktreeOf ?? session.record.projectFolder
+        if let folder, let project = model.sessions.first(where: { $0.record.projectFolder == folder && $0.record.worktreeOf == nil && $0.record.archivedAt == nil }) {
+            return Self.place(.init(id: project.id, name: project.projectName,
+                                    instructions: project.record.brief?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "", kind: .project))
+        }
+        if depth < 3, let parentID = session.record.sidechatOf ?? session.record.sidequestOf ?? session.record.workOf,
+           let parent = model.sessions.first(where: { $0.id == parentID }) {
+            return place(of: parent, depth: depth + 1)
+        }
+        return session.record.sidechatProjectFolder == nil ? Self.loose : nil
     }
 
     /// A place's own open sessions: a Studio's chats, a project's session with its Sidechats
@@ -617,8 +878,11 @@ final class DeskStore {
 
     private static func desk(_ content: Content, revision: Int) -> Companion.Desk {
         .init(revision: revision, needsYou: content.needsYou, incoming: content.incoming, working: content.working, silenced: content.silenced,
-              ready: content.ready, done: content.done)
+              ready: content.ready, done: content.done, linked: content.linked)
     }
+
+    /// Now, in whole seconds, as desk.json keeps it.
+    private static func wholeSeconds() -> Date { Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down)) }
 
     // MARK: - Text
 
@@ -676,7 +940,7 @@ final class DeskStore {
 
     // MARK: - Saving
 
-    /// The requests, silences or completions changed: saved now, and announced.
+    /// The tasks or silences changed: saved now, and announced.
     private func changed() {
         revision += 1
         let content = current()
@@ -701,7 +965,7 @@ final class DeskStore {
     private func save() {
         do {
             try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try Companion.encoder.encode(Saved(revision: revision, requests: requests, silences: silences, completions: completions)).write(to: file, options: .atomic)
+            try Companion.encoder.encode(Saved(revision: revision, requests: requests, silences: silences, tasks: tasks)).write(to: file, options: .atomic)
         } catch {
             RuntimeHooks.note("The Desk couldn't save: \(error.localizedDescription)")
         }

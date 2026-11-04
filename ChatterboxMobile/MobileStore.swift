@@ -518,6 +518,44 @@ final class MobileStore {
         return try await call("/v1/desk/\(request.uuidString)/threads" + (wanted.map { "?place=" + $0 } ?? ""))
     }
 
+    /// Link a thread's choices: every open thread in `place`, best matches first, each with the
+    /// task it already carries.
+    func deskAllThreads(_ request: UUID, place: Companion.DeskPlace) async throws -> [Companion.DeskThread] {
+        let wanted = place.kind == "loose" ? "loose" : place.id?.uuidString ?? "loose"
+        return try await call("/v1/desk/\(request.uuidString)/threads?place=\(wanted)&all=1")
+    }
+
+    // MARK: Tasks and work threads (plans/work-threads.md)
+
+    /// Link a thread to a task. A thread carrying another open task answers 409 unless
+    /// `replace` (that task goes back to To do).
+    @discardableResult
+    func linkDesk(_ task: UUID, to chat: UUID, replace: Bool = false) async throws -> Companion.Desk {
+        let body = try JSONEncoder().encode(Companion.DeskLinkRequest(chatID: chat, replace: replace ? true : nil))
+        return try await changeDesk { try await self.call("/v1/desk/\(task.uuidString)/link", method: "POST", body: body) }
+    }
+
+    /// Unlink: the task goes back to To do.
+    @discardableResult
+    func unlinkDesk(_ task: UUID) async throws -> Companion.Desk {
+        try await changeDesk { try await self.call("/v1/desk/\(task.uuidString)/unlink", method: "POST", body: Data("{}".utf8)) }
+    }
+
+    /// Make this a task: a new task, already linked to the thread.
+    @discardableResult
+    func makeTask(_ chat: UUID, text: String? = nil) async throws -> Companion.Desk {
+        let body = try JSONEncoder().encode(Companion.DeskTaskRequest(chatID: chat, text: text))
+        return try await changeDesk { try await self.call("/v1/desk/task", method: "POST", body: body) }
+    }
+
+    /// A work thread from `chat` (its front thread), started with the brief; returns it.
+    func startWork(from chat: UUID, _ request: Companion.WorkStartRequest) async throws -> Companion.ChatDetail {
+        let work: Companion.ChatDetail = try await call("/v1/chats/\(chat.uuidString)/work", method: "POST", body: try JSONEncoder().encode(request))
+        await loadChats()
+        _ = try? await desk()
+        return work
+    }
+
     /// Where Desk work can go: Studios and projects, each with what belongs there.
     func deskPlaces() async throws -> [Companion.DeskPlace] {
         try await call("/v1/desk/places")

@@ -118,7 +118,7 @@ enum Prompts {
         \(personalitySpec(p))
 
         # About this app
-        You're running inside Chatterbox, a Mac chat app, not a terminal. The user reads your messages in a chat window that renders Markdown, and they can't see command or tool output unless you summarize it. Text you write before a tool call shows as a small inline note; your last message of the turn is the main reply. Blocks tagged <personality_spec>, <conversation_handoff>, <session_brief>, <sidequest>, <sidequest_result>, or <app_note> come from the app, not from something the user typed. A newer <personality_spec> block replaces this one. A <session_brief> is the user's brief for this session (the assignment, the tools to use, the key files); a newer one replaces it, and it holds whichever agent answers. A handoff's "Tools used" line names the tools the work so far was built on: keep to them where you have them.
+        You're running inside Chatterbox, a Mac chat app, not a terminal. The user reads your messages in a chat window that renders Markdown, and they can't see command or tool output unless you summarize it. Text you write before a tool call shows as a small inline note; your last message of the turn is the main reply. Blocks tagged <personality_spec>, <conversation_handoff>, <session_brief>, <sidequest>, <sidequest_result>, <work_thread>, <work_result>, or <app_note> come from the app, not from something the user typed. A newer <personality_spec> block replaces this one. A <session_brief> is the user's brief for this session (the assignment, the tools to use, the key files); a newer one replaces it, and it holds whichever agent answers. A handoff's "Tools used" line names the tools the work so far was built on: keep to them where you have them.
 
         The chat shows visuals inline: HTML and SVG code blocks render as live previews, and images you make with an image-generation tool appear by themselves. A file on disk shows only when your final reply names its path: images (PNG, JPG, screenshots, renders, proofs), GIFs, videos, and Lottie files you name appear under the reply, and the user can click .html, .svg, and .pdf paths to open them beside the chat. Reading or viewing a file yourself doesn't show it to the user, so when they ask to see something, name each file's full path in your reply, like ![Full page](/path/to/full-page.png), or name the folder that holds them. Don't open files in a browser or another app (no `open`, `xdg-open`, or launching a browser) unless the user asks for that.
 
@@ -130,6 +130,8 @@ enum Prompts {
 
         Sidequests: to hand a task to the other agent (Claude and Codex each have their strengths; Codex usually makes the images, and Claude usually double-checks work), run `sidequest "<the task>"` from your working folder. It opens beside this chat as a Sidechat on the other agent, which reads this whole conversation first, so the task can be short. When it finishes, its answer arrives here as a new message and you carry on from it. Start one when the user asks for it, or when the other agent is clearly the better fit; tell the user you did, and finish your reply instead of waiting for it.
 
+        Work threads: when a piece of work needs more than a few steps or many files (a feature, a fix across files, a migration), keep this session short and start a work thread for it: run `work start "<short title>" --brief "<the brief>"` from your working folder (add `--agent claude|codex` or `--model M` only to use another agent or model than yours). It's a fresh session in the same folder, with its own task on the Desk, that starts from your brief alone, so make the brief self-contained: what to do, what's already decided, which files and plans to read, and what to report. You can start several. When one finishes, its result arrives here as a new message and you carry on from it; `work list` shows them and their state. Tell the user you started it, and finish your reply instead of waiting. A work thread doesn't start work threads of its own.
+
         PC errands: for work on Shelby-PC, the user's Windows PC (its apps, such as Photoshop; its GPU or disk), run `pc-errand "<the task>"` from your working folder, adding `--file PATH` for each file it needs. It opens beside this session as a Sidechat running on the PC on your own agent, caught up on the conversation, with those files copied there. When it finishes, the files it made are copied to this Mac and its answer arrives here as a new message, naming those copies. Send one when the user asks for something to be done on the PC; tell the user you did, and finish your reply instead of waiting for it.
 
         Drafts: when you write something the user will send or paste somewhere else (an email, a message, a post, a reply, text for a form), put exactly that text in a fenced ```draft block, and nothing else inside it: no notes, options or explanations. Markdown is fine inside. For an email, make the first line `Subject: …`. The chat shows the block as a card with a Copy button (and, for an email, Copy Subject and Open in Mail), so the user can take it in one click. Put your notes before or after the block; give each separate draft its own block, and when you revise one, give the whole new version in a new block.
@@ -137,7 +139,7 @@ enum Prompts {
     }
 
     /// Bump when `agentInstructions` gains something chats already in progress should hear.
-    static let instructionsVersion = 12
+    static let instructionsVersion = 13
 
     /// What changed since earlier versions, sent once to chats whose session started before.
     static let instructionsUpdate = """
@@ -157,6 +159,8 @@ enum Prompts {
     Sidequests: to hand a task to the other agent (Claude and Codex each have their strengths; Codex usually makes the images, and Claude usually double-checks work), run `sidequest "<the task>"` from your working folder. It opens beside this session as a Sidechat on the other agent, with a handoff of this session's brief and recent conversation. State the task and any essential older details explicitly. When it finishes, its answer arrives here as a new message and you carry on from it. Start one when the user asks for it, or when the other agent is clearly the better fit; tell the user you did, and finish your reply instead of waiting for it.
 
     PC errands: for work on Shelby-PC, the user's Windows PC (its apps, such as Photoshop; its GPU or disk), run `pc-errand "<the task>"` from your working folder, adding `--file PATH` for each file it needs. It opens beside this session as a Sidechat running on the PC on your own agent, caught up on the conversation, with those files copied there. When it finishes, the files it made are copied to this Mac and its answer arrives here as a new message, naming those copies. Send one when the user asks for something to be done on the PC; tell the user you did, and finish your reply instead of waiting for it.
+
+    Work threads: when a piece of work needs more than a few steps or many files (a feature, a fix across files, a migration), keep this session short and start a work thread for it: run `work start "<short title>" --brief "<the brief>"` from your working folder (add `--agent claude|codex` or `--model M` only to use another agent or model than yours). It's a fresh session in the same folder, with its own task on the Desk, that starts from your brief alone, so make the brief self-contained: what to do, what's already decided, which files and plans to read, and what to report. You can start several. When one finishes, its result arrives here as a new message and you carry on from it; `work list` shows them and their state. Tell the user you started it, and finish your reply instead of waiting. A work thread doesn't start work threads of its own.
 
     Drafts: when you write something the user will send or paste somewhere else (an email, a message, a post, a reply, text for a form), put exactly that text in a fenced ```draft block, and nothing else inside it: no notes, options or explanations. Markdown is fine inside. For an email, make the first line `Subject: …`. The chat shows the block as a card with a Copy button (and, for an email, Copy Subject and Open in Mail), so the user can take it in one click. Put your notes before or after the block; give each separate draft its own block, and when you revise one, give the whole new version in a new block.
     </app_note>
@@ -244,6 +248,30 @@ enum Prompts {
         \(reply)
         </sidequest_result>
         Tell the user briefly what the automation found, and anything that needs them. Don't act on it unless they ask.
+        """
+    }
+
+    /// Starts a work thread (plans/work-threads.md): what it is and where its result goes. Its
+    /// brief is the next message; the front thread's transcript doesn't come along.
+    static func workStart(front title: String, project: String?, agent: String) -> String {
+        """
+        <work_thread>
+        This is a work thread\(project.map { " in the project \u{201C}\($0)\u{201D}" } ?? ""): a fresh session started from the front session \u{201C}\(title)\u{201D}, where \(agent) talks with the user, to do one piece of work. Your brief is the next message; it's all you're given of that conversation, so read the files and plans it names before you start. Do the work here, in the same folder.
+
+        When you finish your reply, it goes back to the front session automatically and its agent carries on from it, so end with what it needs: what you did, the files you changed, how you checked it, and anything left undone or needing the user. To send a result earlier (or a different one), run `work report "<the result>"`; the reply that ends that turn then isn't sent again. Don't start work threads or sidequests of your own: a work thread is one level.
+        </work_thread>
+        """
+    }
+
+    /// A work thread's result, sent to its front thread: its final reply, or what it reported.
+    static func workResult(title: String, agent: String, reply: String, finished: Bool) -> String {
+        """
+        <work_result>
+        The work thread \u{201C}\(title)\u{201D} (\(agent)) \(finished ? "finished its reply" : "reported back"). This is its result:
+
+        \(reply)
+        </work_result>
+        Pick up from here: tell the user briefly what came back and what it means for the work, then carry on. Its task waits on the Desk as Ready for the user to mark complete.
         """
     }
 

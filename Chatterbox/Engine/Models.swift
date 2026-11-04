@@ -97,7 +97,7 @@ struct DisplayItem: Identifiable, Codable, Equatable {
     var approvalStyle: ApprovalStyle?
     /// A user row Chatterbox sent on its own (a sidequest's result), shown by its label in `detail`.
     var automatic: Bool?
-    /// In the chat a sidequest came from: the sidequest this row starts or brings back.
+    /// In the chat a sidequest (or a work thread) came from: the one this row starts or brings back.
     var sidequest: UUID?
 
     enum ApprovalStyle: String, Codable { case plan }
@@ -190,6 +190,12 @@ struct ConversationRecord: Codable {
     var pcErrand: Bool?
     /// Set on a project's Automation thread: the automation it runs (see ProjectAutomations).
     var automationID: UUID?
+    /// A work thread (plans/work-threads.md): the front thread it reports to, the last reply
+    /// already reported, and when it last reported by itself (`work report`), so the reply
+    /// that ends that turn isn't sent again (see ChatSession+Work).
+    var workOf: UUID?
+    var workReported: UUID?
+    var workReportedAt: Date?
     var sidechatFolder: String?
     /// Parent project scope for existing project-only secrets; no new access is granted.
     var sidechatProjectFolder: String?

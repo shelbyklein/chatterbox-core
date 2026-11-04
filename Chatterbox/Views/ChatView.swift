@@ -65,6 +65,8 @@ struct ChatView: View {
         VStack(spacing: 0) {
             if session.record.archivedAt != nil { archivedBanner }
             if session.isSidequest { SidequestBanner(session: session) }
+            // Work threads (plans/work-threads.md): whom it works for, or the ones it started.
+            if session.isWorkThread { WorkThreadBanner(session: session) } else if !session.isSidequest { WorkStrip(session: session) }
             if let context = session.record.parentContext { ParentContextBanner(context: context) }
             if session.record.backend == .claude, let status = ClaudeModels.shared.statusMessage { claudeBanner(status) }
             if session.record.backend == .codex, let status = CodexAppServer.shared.statusMessage { claudeBanner(status) }
@@ -90,6 +92,7 @@ struct ChatView: View {
                                         NewSidechatControl(parent: session, iconOnly: true)
                                         SidequestButton(session: session)
                                         PCErrandButton(session: session)
+                                        if !session.isWorkThread, session.record.automationID == nil { WorkThreadButton(session: session) }
                                     }
                                 }
                                 ChatPins(chat: session.record.id, agentName: session.record.backend == .codex ? "Codex" : "Claude",
