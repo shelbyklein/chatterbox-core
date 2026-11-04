@@ -2,10 +2,11 @@ import SwiftUI
 
 // The Desk on the phone: what needs you, incoming work to place, what is working. plans/front-desk.md
 
-/// The home's first tab. What needs you (approve or deny in place, or open), requests waiting
-/// to be placed (start where the Desk proposes, or choose another place), and one quiet line
-/// of what's working. The Desk never does work itself: starting a request opens a session in
-/// its Studio or project, through the same path as a tapped notification.
+/// The home's first tab. What needs you (approve or deny in place, open, or swipe left to
+/// silence), requests waiting to be placed (start where the Desk proposes, or choose another
+/// place), and one quiet line of what's working. The Desk never does work itself: starting a
+/// request opens a session in its Studio or project, through the same path as a tapped
+/// notification. Wide (an iPad, an open iPhone Duo), the cards go in two columns.
 struct MobileDeskView: View {
     @Environment(MobileStore.self) private var store
     @Environment(\.scenePhase) private var scenePhase
@@ -14,6 +15,10 @@ struct MobileDeskView: View {
     @FocusState private var asking: Bool
     /// Waiting items and requests acted on here, hidden until the Desk stops listing them.
     @State private var settled = Set<UUID>()
+    /// Waiting things being silenced (silenceKey), hidden until the Mac answers.
+    @State private var silencing = Set<String>()
+    /// The Desk's width: two columns of cards when one would be wider than a card should be.
+    @State private var width: CGFloat = 0
     @State private var busy = Set<UUID>()
     /// Places picked with Change Place, per request; Start There uses them.
     @State private var chosen: [UUID: Companion.DeskPlace] = [:]
@@ -27,10 +32,23 @@ struct MobileDeskView: View {
     /// waiting to be placed.
     static func waiting(_ desk: Companion.Desk) -> Int { desk.needsYou.count + desk.incoming.count }
 
+    /// Wider than this, a card would be too wide alone: two columns.
+    static let twoColumnWidth: CGFloat = 560
+    static func columns(for width: CGFloat) -> Int { width - 32 > twoColumnWidth ? 2 : 1 }
+
+    /// What silencing hides: the item, or for a reply (its id is the session's) the question it asks.
+    static func silenceKey(_ item: Companion.DeskWaiting) -> String {
+        "\(item.chatID.uuidString)|\(item.id.uuidString)|\(item.kind == "reply" ? item.text : "")"
+    }
+
     private var desk: Companion.Desk? { store.latestDesk }
-    private var needsYou: [Companion.DeskWaiting] { (desk?.needsYou ?? []).filter { !settled.contains($0.id) } }
+    private var needsYou: [Companion.DeskWaiting] {
+        (desk?.needsYou ?? []).filter { !settled.contains($0.id) && !silencing.contains(Self.silenceKey($0)) }
+    }
     private var incoming: [Companion.DeskRequest] { (desk?.incoming ?? []).filter { !settled.contains($0.id) } }
     private var working: [Companion.DeskWorking] { desk?.working ?? [] }
+
+    private var columns: Int { Self.columns(for: width) }
 
     var body: some View {
         NavigationStack {
@@ -48,11 +66,12 @@ struct MobileDeskView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 24)
-                // A readable column on a big iPad; an iPad mini or open iPhone Duo fills.
-                .frame(maxWidth: 760, alignment: .leading)
+                // One readable column; two side by side on an iPad or an open iPhone Duo.
+                .frame(maxWidth: columns > 1 ? 1240 : 760, alignment: .leading)
                 .frame(maxWidth: .infinity)
                 .animation(.easeOut(duration: 0.2), value: needsYou.map(\.id) + incoming.map(\.id))
             }
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
             .background(Color(uiColor: .systemGroupedBackground))
             .scrollDismissesKeyboard(.interactively)
             .navigationTitle("Desk")
@@ -139,9 +158,10 @@ struct MobileDeskView: View {
     private var needsYouSection: some View {
         section("Needs you", id: "needs-you") {
             ForEach(needsYou) { item in
-                DeskWaitingCard(item: item, busy: busy.contains(item.id),
+                DeskWaitingCard(item: item, busy: busy.contains(item.id), fill: columns > 1,
                                 open: { open(item.chatID) },
-                                decide: { decide($0, item) })
+                                decide: { decide($0, item) },
+                                silence: { silence(item) })
             }
         }
     }
@@ -150,7 +170,7 @@ struct MobileDeskView: View {
         section("Incoming", id: "incoming") {
             ForEach(incoming) { request in
                 DeskRequestCard(request: request, place: place(for: request), changed: chosen[request.id] != nil,
-                                busy: busy.contains(request.id),
+                                busy: busy.contains(request.id), fill: columns > 1,
                                 start: { start(request) },
                                 change: { choosing = request },
                                 ignore: { ignore(request) })
@@ -188,7 +208,7 @@ struct MobileDeskView: View {
                                 .overlay(Capsule().strokeBorder(Color.primary.opacity(0.06)))
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("\(item.title), working\(item.place.map { ", in \($0)" } ?? "")")
+                        .accessibilityLabel("\(item.title)\(item.subtitle.map { ", " + $0 } ?? ""), working\(item.place.flatMap { $0 != item.title ? ", in \($0)" : nil } ?? "")")
                         .accessibilityIdentifier("desk-working-\(item.id.uuidString)")
                     }
                 }
@@ -203,7 +223,12 @@ struct MobileDeskView: View {
                 .padding(.horizontal, 4)
                 .accessibilityAddTraits(.isHeader)
                 .accessibilityIdentifier("desk-section-\(id)")
-            content()
+            if columns > 1 {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10, alignment: .top), count: columns),
+                          alignment: .leading, spacing: 10) { content() }
+            } else {
+                VStack(alignment: .leading, spacing: 10) { content() }
+            }
         }
     }
 
@@ -256,6 +281,21 @@ struct MobileDeskView: View {
                 _ = try await store.decide(decision, item: item.id, in: item.chatID)
                 settled.insert(item.id)
                 _ = try? await store.desk()
+            } catch { actionProblem = Self.describe(error) }
+        }
+    }
+
+    /// Silence: off the Desk on every device, without answering it; it stays waiting in its
+    /// session, and something new from it shows again.
+    private func silence(_ item: Companion.DeskWaiting) {
+        let key = Self.silenceKey(item)
+        guard silencing.insert(key).inserted else { return }
+        Task {
+            defer { silencing.remove(key) }
+            do {
+                _ = try await store.silenceDesk(item)
+            } catch let error as MobileError where error.status == 404 {
+                actionProblem = "Silencing needs the newest Chatterbox on the Mac. Update it there to use it."
             } catch { actionProblem = Self.describe(error) }
         }
     }
@@ -331,12 +371,16 @@ private struct DeskPlaceTag: View {
     }
 }
 
-/// A session waiting on you: what it asks; approve or deny in place, or open it.
+/// A session waiting on you: what it asks; approve or deny in place, open it, or swipe it left
+/// (or long-press it) to silence it.
 private struct DeskWaitingCard: View {
     let item: Companion.DeskWaiting
     let busy: Bool
+    /// In two columns: as tall as its row.
+    var fill = false
     let open: () -> Void
     let decide: (String) -> Void
+    let silence: () -> Void
 
     private var decides: Bool { item.kind == "approval" || item.kind == "plan" }
     private var kind: (title: String, icon: String) {
@@ -350,8 +394,13 @@ private struct DeskWaitingCard: View {
     }
 
     var body: some View {
+        SwipeToSilence(id: item.id.uuidString, silence: silence) { taps in card(taps) }
+    }
+
+    /// The card; its buttons go through `taps`, so letting go of a swipe doesn't press them.
+    private func card(_ taps: DeskSwipeTaps) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Button(action: open) {
+            Button(action: taps(open)) {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 8) {
                         Label(kind.title, systemImage: kind.icon)
@@ -360,6 +409,11 @@ private struct DeskWaitingCard: View {
                         if let place = item.place, place != item.title { DeskPlaceTag(name: place) }
                     }
                     Text(item.title).font(.headline).lineLimit(2).multilineTextAlignment(.leading)
+                    // A project's session: its own title under the project's name.
+                    if let subtitle = item.subtitle {
+                        Text(subtitle).font(.subheadline.weight(.medium)).lineLimit(2).multilineTextAlignment(.leading)
+                            .accessibilityIdentifier("desk-subtitle-\(item.id.uuidString)")
+                    }
                     Text(item.text).font(.subheadline).foregroundStyle(.secondary)
                         .lineLimit(4).multilineTextAlignment(.leading)
                     if let questions = item.questions, questions.count > 1 {
@@ -371,20 +425,21 @@ private struct DeskWaitingCard: View {
             }
             .buttonStyle(.plain)
             .accessibilityHint("Opens the session")
+            .accessibilityAction(named: "Silence", silence)
             .accessibilityIdentifier("desk-waiting-\(item.id.uuidString)")
             HStack(spacing: 8) {
                 if busy {
                     ProgressView().controlSize(.small)
                     Text("Sending…").font(.footnote).foregroundStyle(.secondary)
                 } else if decides {
-                    Button("Approve") { decide("approved") }
+                    Button("Approve", action: taps { decide("approved") })
                         .buttonStyle(.borderedProminent)
                         .accessibilityIdentifier("desk-approve-\(item.id.uuidString)")
-                    Button("Deny", role: .destructive) { decide("denied") }
+                    Button("Deny", role: .destructive, action: taps { decide("denied") })
                         .buttonStyle(.bordered)
                         .accessibilityIdentifier("desk-deny-\(item.id.uuidString)")
                 } else {
-                    Button("Open", action: open)
+                    Button("Open", action: taps(open))
                         .buttonStyle(.bordered)
                         .accessibilityIdentifier("desk-open-\(item.id.uuidString)")
                 }
@@ -392,9 +447,122 @@ private struct DeskWaitingCard: View {
             }
         }
         .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, maxHeight: fill ? .infinity : nil, alignment: .topLeading)
         .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(uiColor: .secondarySystemGroupedBackground)))
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.yellow.opacity(0.5), lineWidth: 1.5))
+        .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .contextMenu {
+            Button("Open", systemImage: "arrow.up.forward.square", action: open)
+            Button("Silence", systemImage: "bell.slash", action: silence)
+        }
+    }
+}
+
+/// Whether a card's button may act: not while it's swiped, nor as the swipe lets go (a
+/// button under the finger would otherwise take the release as a tap).
+final class DeskSwipeTaps {
+    fileprivate var swiping = false
+    fileprivate var open = false
+    fileprivate var endedAt = Date.distantPast
+    var allowed: Bool { !swiping && !open && Date().timeIntervalSince(endedAt) > 0.35 }
+    /// The action, when a tap is a tap.
+    func callAsFunction(_ action: @escaping () -> Void) -> () -> Void {
+        { [weak self] in if self?.allowed ?? true { action() } }
+    }
+}
+
+/// Swipe a card left to show Silence, or all the way to silence it, as a list row's swipe
+/// actions do (the Desk is a scroll view of cards, not a list). A tap on an open card closes it.
+private struct SwipeToSilence<Content: View>: View {
+    let id: String
+    let silence: () -> Void
+    @ViewBuilder let content: (DeskSwipeTaps) -> Content
+    @State private var taps = DeskSwipeTaps()
+    /// How far the card is moved left (negative), and where it rests (0 or open).
+    @State private var offset: CGFloat = 0
+    @State private var resting: CGFloat = 0
+    /// Decided once per drag: sideways swipes the card, up and down scrolls.
+    @State private var sideways: Bool?
+    @State private var width: CGFloat = 0
+    /// Past the point where letting go silences it.
+    @State private var armed = false
+    /// How far an open card moves, and the space between it and Silence.
+    private let reveal: CGFloat = 96
+    private let gap: CGFloat = 8
+    private var commit: CGFloat { max(reveal + 70, width * 0.5) }
+
+    var body: some View {
+        content(taps)
+            .overlay {
+                if resting < 0 { Color.clear.contentShape(Rectangle()).onTapGesture(perform: close) }
+            }
+            .offset(x: offset)
+            .background(alignment: .trailing) { if offset < 0 { button } }
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+            .simultaneousGesture(drag)
+            .sensoryFeedback(.impact(weight: .medium), trigger: armed) { _, now in now }
+    }
+
+    private var button: some View {
+        Button(action: silenceNow) {
+            VStack(spacing: 4) {
+                Image(systemName: "bell.slash.fill").font(.title3)
+                Text("Silence").font(.caption.weight(.semibold))
+            }
+            .foregroundStyle(.white)
+            .frame(width: reveal - gap)
+            .frame(width: max(reveal, -offset) - gap, alignment: armed ? .leading : .center)
+            .frame(maxHeight: .infinity)
+            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.indigo))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("desk-silence-\(id)")
+    }
+
+    private var drag: some Gesture {
+        DragGesture(minimumDistance: 14)
+            .onChanged { value in
+                if sideways == nil { sideways = abs(value.translation.width) > abs(value.translation.height) * 1.2 }
+                guard sideways == true else { return }
+                taps.swiping = true
+                let x = min(0, resting + value.translation.width)
+                offset = x
+                armed = -x > commit
+            }
+            .onEnded { value in
+                defer { sideways = nil }
+                guard sideways == true else { return }
+                taps.swiping = false
+                taps.endedAt = Date()
+                let x = resting + value.translation.width
+                if -x > commit {
+                    silenceNow()
+                } else if -x > reveal / 2 || -(resting + value.predictedEndTranslation.width) > reveal {
+                    withAnimation(.spring(duration: 0.25)) { offset = -reveal; resting = -reveal }
+                    taps.open = true
+                    armed = false
+                } else {
+                    close()
+                }
+            }
+    }
+
+    private func close() {
+        withAnimation(.spring(duration: 0.25)) { offset = 0; resting = 0 }
+        taps.open = false
+        armed = false
+    }
+
+    /// Slides off, then goes; back in place if it's still here (it didn't go through).
+    private func silenceNow() {
+        withAnimation(.easeOut(duration: 0.2)) { offset = -(width + 40) }
+        resting = 0
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+            silence()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { close() }
+        }
     }
 }
 
@@ -405,6 +573,8 @@ private struct DeskRequestCard: View {
     /// Picked here with Change Place, instead of the Desk's proposal.
     let changed: Bool
     let busy: Bool
+    /// In two columns: as tall as its row.
+    var fill = false
     let start: () -> Void
     let change: () -> Void
     let ignore: () -> Void
@@ -466,7 +636,7 @@ private struct DeskRequestCard: View {
             }
         }
         .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, maxHeight: fill ? .infinity : nil, alignment: .topLeading)
         .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(uiColor: .secondarySystemGroupedBackground)))
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.primary.opacity(0.06)))
     }

@@ -462,6 +462,14 @@ final class MobileStore {
         try await changeDesk { try await self.call("/v1/desk/\(request.uuidString)/ignore", method: "POST", body: Data("{}".utf8)) }
     }
 
+    /// Silence: takes one waiting thing off the Desk, on every device, without answering it.
+    /// A reply's id is its session's, so what it asks goes along to say which reply.
+    @discardableResult
+    func silenceDesk(_ item: Companion.DeskWaiting) async throws -> Companion.Desk {
+        let body = try JSONEncoder().encode(Companion.DeskSilenceRequest(chatID: item.chatID, id: item.id, text: item.text))
+        return try await changeDesk { try await self.call("/v1/desk/silence", method: "POST", body: body) }
+    }
+
     /// Where Desk work can go: Studios and projects, each with what belongs there.
     func deskPlaces() async throws -> [Companion.DeskPlace] {
         try await call("/v1/desk/places")

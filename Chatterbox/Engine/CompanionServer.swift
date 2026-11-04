@@ -361,6 +361,10 @@ final class CompanionServer {
             return .json(DeskStore.shared.snapshot())
         case ("GET", 3) where parts[1] == "desk" && parts[2] == "places":
             return .json(DeskStore.shared.places())
+        case ("POST", 3) where parts[1] == "desk" && parts[2] == "silence":
+            guard let body = try? Companion.decoder.decode(Companion.DeskSilenceRequest.self, from: request.body) else { return .error(400, "Say what to silence.") }
+            DeskStore.shared.silence(body)
+            return .json(DeskStore.shared.snapshot())
         case ("POST", 4) where parts[1] == "desk" && (parts[3] == "start" || parts[3] == "ignore"):
             guard let id = UUID(uuidString: parts[2]) else { return .error(404, "That request is gone.") }
             do {
@@ -747,18 +751,39 @@ enum CompanionMapper {
               target: pin.kind == .website ? (PinStore.normalizedURL(pin.target)?.absoluteString ?? pin.target) : pin.target)
     }
 
+    /// A worktree's session: its branch, which the session list names it by.
+    static func worktreeBranch(_ session: ChatSession) -> String? {
+        session.record.worktreeOf != nil ? (session.record.worktreeBranch ?? session.projectName) : nil
+    }
+
+    /// A project's own session: the project's name (its nickname, or its folder's).
+    static func projectName(_ session: ChatSession) -> String? {
+        session.record.projectFolder != nil ? session.projectName : nil
+    }
+
+    /// A session's name as the phone's session list shows it: its worktree's branch, its
+    /// project's name, or its own title. Under a project's (or branch's) name, the session's
+    /// own title, when that says more. The Desk names its cards this way.
+    static func heading(_ session: ChatSession) -> (title: String, subtitle: String?) {
+        let project = projectName(session)
+        let title = worktreeBranch(session) ?? project ?? session.title
+        guard let project else { return (title, nil) }
+        let own = session.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let repeats = own.isEmpty || own == "New chat" || [title, project].contains { own.caseInsensitiveCompare($0) == .orderedSame }
+        return (title, repeats ? nil : own)
+    }
+
     static func summary(_ session: ChatSession) -> Companion.ChatSummary {
-        let isProject = session.record.projectFolder != nil
         let activity = activity(session)
         return .init(id: session.id, title: session.title,
-                     project: isProject ? session.projectName : nil,
+                     project: projectName(session),
                      subtitle: session.lastActionSummary,
                      backend: session.record.backend.rawValue,
                      isRunning: session.isRunning || session.hasBackgroundWork,
                      isWaitingOnYou: session.isWaitingOnYou,
                      updatedAt: session.record.updatedAt,
                      pins: nil,
-                     worktreeBranch: session.record.worktreeOf != nil ? (session.record.worktreeBranch ?? session.projectName) : nil,
+                     worktreeBranch: worktreeBranch(session),
                      sidechatOf: session.record.sidechatOf,
                      sidequestOf: session.record.sidequestOf, sidequestTask: session.record.sidequestTask,
                      sidequestReturned: session.record.sidequestOf != nil ? session.record.sidequestReturned != nil : nil,

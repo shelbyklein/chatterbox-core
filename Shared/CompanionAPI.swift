@@ -300,9 +300,14 @@ enum Companion {
     /// never does work itself; starting a request opens a session in its Studio or project.
     struct Desk: Codable {
         var revision: Int
+        /// What waits on Shelby, less what was silenced.
         var needsYou: [DeskWaiting]
         var incoming: [DeskRequest]
         var working: [DeskWorking]
+        /// Waiting things silenced from the Desk, still waiting in their sessions (an approval
+        /// stays pending). The Mac, which finds approvals in its own sessions, leaves these out.
+        /// Nil from a service older than silencing.
+        var silenced: [DeskWaiting]? = nil
     }
 
     /// A session waiting on Shelby, with what it asks.
@@ -311,6 +316,8 @@ enum Companion {
         /// waiting on a reply in plain text.
         var id: UUID
         var chatID: UUID
+        /// The session's name as the session list shows it: its worktree's branch, its
+        /// project's name, or its own title.
         var title: String
         /// The session's Studio or project, if it has one.
         var place: String?
@@ -319,6 +326,8 @@ enum Companion {
         /// What it asks, short.
         var text: String
         var questions: [Question]? = nil
+        /// The session's own title, when `title` is its project's or branch's name.
+        var subtitle: String? = nil
     }
 
     /// Where work goes: a Studio, a project (its work starts as a Sidechat of it), or loose.
@@ -347,8 +356,10 @@ enum Companion {
 
     struct DeskWorking: Codable, Identifiable, Hashable {
         var id: UUID
+        /// Named as in DeskWaiting.
         var title: String
         var place: String?
+        var subtitle: String? = nil
     }
 
     /// POST /v1/desk: a new request. `place` names a Studio or project to propose instead of
@@ -364,6 +375,15 @@ enum Companion {
     struct DeskStartRequest: Codable {
         var place: DeskPlace? = nil
         var agent: String? = nil
+    }
+
+    /// POST /v1/desk/silence (socket: action "silence"): takes one waiting thing off the Desk,
+    /// on every device, without answering it. The DeskWaiting's chatID, id and text: a new
+    /// approval, plan or questions, or a newer reply that asks something, shows again.
+    struct DeskSilenceRequest: Codable {
+        var chatID: UUID
+        var id: UUID
+        var text: String? = nil
     }
 
     /// Pin to Top on the Mac, or not.
