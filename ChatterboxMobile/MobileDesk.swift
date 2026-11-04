@@ -1,13 +1,44 @@
 import SwiftUI
 
-// The Desk on the phone: what needs you, incoming work to place, what is working. plans/front-desk.md
+// The Desk on the phone and iPad: a board of what's to do, working, needing you, ready to mark
+// complete, and done. plans/front-desk.md, plans/desk-board.md
 
-/// The home's first tab. What needs you (approve or deny in place, open, or swipe left to
-/// silence), requests waiting to be placed (start where the Desk proposes, or choose another
-/// place), and one quiet line of what's working. The Desk never does work itself: starting a
-/// request (a step to pick the model, or a session already there to continue) runs it in its
-/// Studio or project in the background, with a note to open it. Wide (an iPad, an open iPhone
-/// Duo), the cards go in two columns.
+/// The board's columns, left to right.
+enum MobileDeskColumn: String, CaseIterable, Identifiable {
+    case todo, working, needsYou = "needs-you", ready, done
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .todo: "To do"
+        case .working: "Working"
+        case .needsYou: "Needs you"
+        case .ready: "Ready to mark complete"
+        case .done: "Done"
+        }
+    }
+    /// On the phone's tabs.
+    var short: String { self == .ready ? "Ready" : title }
+    /// A column with nothing in it: one quiet line.
+    var empty: String {
+        switch self {
+        case .todo: "Nothing waiting to start."
+        case .working: "Nothing running."
+        case .needsYou: "Nothing needs you."
+        case .ready: "Nothing finished to mark complete."
+        case .done: "Nothing completed this week."
+        }
+    }
+}
+
+/// The home's first tab: the Desk as a board. To do: requests waiting to be placed (start where
+/// the Desk proposes, or choose another place). Working: sessions mid-reply. Needs you: approve
+/// or deny in place, open, or swipe left (or long-press) to silence. Ready to mark complete:
+/// sessions that finished and ask nothing; swipe left (or Mark Complete) archives one into Done,
+/// where Reopen brings it back. The Desk never does work itself: starting a request (a step to
+/// pick the model, or a session already there to continue) runs it in its Studio or project in
+/// the background, with a note to open it. On a phone, one column at a time under tabs with
+/// counts; wide (an iPad, an open iPhone Duo), the columns side by side, scrolling sideways.
 struct MobileDeskView: View {
     @Environment(MobileStore.self) private var store
     @Environment(\.scenePhase) private var scenePhase
@@ -18,8 +49,15 @@ struct MobileDeskView: View {
     @State private var settled = Set<UUID>()
     /// Waiting things being silenced (silenceKey), hidden until the Mac answers.
     @State private var silencing = Set<String>()
-    /// The Desk's width: two columns of cards when one would be wider than a card should be.
+    /// Sessions being marked complete or reopened here, hidden until the Mac answers.
+    @State private var completing = Set<UUID>()
+    @State private var reopening = Set<UUID>()
+    /// The Desk's width: the columns side by side when there's room.
     @State private var width: CGFloat = 0
+    /// The phone's column; nil until the Desk first answers (then Needs you if anything does).
+    @State private var column: MobileDeskColumn?
+    /// Wide, the board has been scrolled to Needs you once.
+    @State private var showedNeedsYou = false
     @State private var busy = Set<UUID>()
     /// Places picked with Change Place, per request; Start There uses them.
     @State private var chosen: [UUID: Companion.DeskPlace] = [:]
@@ -37,16 +75,24 @@ struct MobileDeskView: View {
     @State private var automationPick: UUID?
 
     /// What the Desk's tab counts, as of its last answer: what needs you and requests
-    /// waiting to be placed.
+    /// waiting to be placed (not what's ready to mark complete: nothing waits on that).
     static func waiting(_ desk: Companion.Desk) -> Int { desk.needsYou.count + desk.incoming.count }
 
-    /// Wider than this, a card would be too wide alone: two columns.
-    static let twoColumnWidth: CGFloat = 560
-    static func columns(for width: CGFloat) -> Int { width - 32 > twoColumnWidth ? 2 : 1 }
+    /// Wider than this, the columns go side by side.
+    static let boardWidth: CGFloat = 560
+    static func isWide(_ width: CGFloat) -> Bool { width - 32 > boardWidth }
+    /// A column's width, side by side.
+    static let columnWidth: CGFloat = 320
 
     /// What silencing hides: the item, or for a reply (its id is the session's) the question it asks.
     static func silenceKey(_ item: Companion.DeskWaiting) -> String {
         "\(item.chatID.uuidString)|\(item.id.uuidString)|\(item.kind == "reply" ? item.text : "")"
+    }
+    static func silenceKey(_ item: Companion.DeskReady) -> String { "ready|\(item.id.uuidString)|\(item.text)" }
+
+    /// "6 min. ago", short enough for a card's top line beside its place in a column.
+    static func ago(_ date: Date) -> String {
+        Date().timeIntervalSince(date) < 60 ? "just now" : date.formatted(.relative(presentation: .numeric, unitsStyle: .abbreviated))
     }
 
     private var desk: Companion.Desk? { store.latestDesk }
@@ -55,33 +101,32 @@ struct MobileDeskView: View {
     }
     private var incoming: [Companion.DeskRequest] { (desk?.incoming ?? []).filter { !settled.contains($0.id) } }
     private var working: [Companion.DeskWorking] { desk?.working ?? [] }
+    private var ready: [Companion.DeskReady] {
+        (desk?.ready ?? []).filter { !completing.contains($0.id) && !silencing.contains(Self.silenceKey($0)) }
+    }
+    private var done: [Companion.DeskDone] { (desk?.done ?? []).filter { !reopening.contains($0.id) } }
 
-    private var columns: Int { Self.columns(for: width) }
+    private func count(_ column: MobileDeskColumn) -> Int {
+        switch column {
+        case .todo: incoming.count
+        case .working: working.count
+        case .needsYou: needsYou.count
+        case .ready: ready.count
+        case .done: done.count
+        }
+    }
+
+    private var wide: Bool { Self.isWide(width) }
+    private var shown: MobileDeskColumn { column ?? (needsYou.isEmpty ? .todo : .needsYou) }
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    summaryLine
-                    if let problem = store.problem ?? loadProblem { MobileProblemCard(problem) }
-                    // Nothing to ask of a Mac without the Desk, or one not reached yet.
-                    if desk != nil || (loadProblem == nil && store.problem == nil) { askBox }
-                    if desk == nil, loadProblem == nil, store.problem == nil { loading }
-                    if !needsYou.isEmpty { needsYouSection }
-                    if !incoming.isEmpty { incomingSection }
-                    if desk != nil, needsYou.isEmpty, incoming.isEmpty { calm }
-                    if !working.isEmpty { workingLine }
-                }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 24)
-                // One readable column; two side by side on an iPad or an open iPhone Duo.
-                .frame(maxWidth: columns > 1 ? 1240 : 760, alignment: .leading)
-                .frame(maxWidth: .infinity)
-                .animation(.easeOut(duration: 0.2), value: needsYou.map(\.id) + incoming.map(\.id))
+            Group {
+                if wide { board } else { tabbed }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
             .background(Color(uiColor: .systemGroupedBackground))
-            .scrollDismissesKeyboard(.interactively)
             .navigationTitle("Desk")
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
@@ -93,7 +138,6 @@ struct MobileDeskView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) { FeedbackButton() }
             }
-            .refreshable { await refresh() }
         }
         .sheet(isPresented: $showingAutomations, onDismiss: {
             if let id = automationPick { automationPick = nil; open(id) }
@@ -133,6 +177,10 @@ struct MobileDeskView: View {
         .alert("Couldn't update the Desk", isPresented: Binding(get: { actionProblem != nil }, set: { if !$0 { actionProblem = nil } })) {
             Button("OK", role: .cancel) { actionProblem = nil }
         } message: { Text(actionProblem ?? "") }
+        // The phone opens on Needs you when something does, else To do; then stays where it's put.
+        .onChange(of: desk != nil, initial: true) { _, loaded in
+            if loaded, column == nil { column = needsYou.isEmpty ? .todo : .needsYou }
+        }
         // On screen: kept current, like the chat list.
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
@@ -143,24 +191,185 @@ struct MobileDeskView: View {
         }
     }
 
-    // MARK: Sections
+    // MARK: Layouts
 
-    /// "2 need you · 1 incoming · 3 working", under the title.
-    private var summaryLine: some View {
-        Text(summary)
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityIdentifier("desk-summary")
+    /// What's above the board: a problem reaching the Mac, the ask box, or that it's loading.
+    @ViewBuilder private var top: some View {
+        if let problem = store.problem ?? loadProblem { MobileProblemCard(problem) }
+        // Nothing to ask of a Mac without the Desk, or one not reached yet.
+        if desk != nil || (loadProblem == nil && store.problem == nil) { askBox }
+        if desk == nil, loadProblem == nil, store.problem == nil { loading }
     }
 
-    private var summary: String {
-        guard desk != nil else { return "Checking with \(store.connection?.macName ?? "your Mac")…" }
-        var parts: [String] = []
-        if !needsYou.isEmpty { parts.append("\(needsYou.count) need\(needsYou.count == 1 ? "s" : "") you") }
-        if !incoming.isEmpty { parts.append("\(incoming.count) incoming") }
-        if !working.isEmpty { parts.append("\(working.count) working") }
-        return parts.isEmpty ? "All clear" : parts.joined(separator: " · ")
+    /// A phone: the ask box, then the column tabs (they stay at the top as the cards scroll),
+    /// then one column's cards.
+    private var tabbed: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+                VStack(alignment: .leading, spacing: 16) { top }
+                    .padding(.bottom, 10)
+                Section {
+                    VStack(alignment: .leading, spacing: 10) { cards(shown) }
+                        .padding(.top, 4)
+                        .animation(.easeOut(duration: 0.2), value: ids(shown))
+                } header: {
+                    tabs
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 24)
+            .frame(maxWidth: 760, alignment: .leading)
+            .frame(maxWidth: .infinity)
+        }
+        .scrollDismissesKeyboard(.interactively)
+        .refreshable { await refresh() }
+    }
+
+    /// The columns as tabs, each with its count; the one shown is raised.
+    private var tabs: some View {
+        HStack(spacing: 2) {
+            ForEach(MobileDeskColumn.allCases) { column in
+                let on = shown == column
+                let count = count(column)
+                Button { withAnimation(.snappy(duration: 0.2)) { self.column = column } } label: {
+                    VStack(spacing: 1) {
+                        Text("\(count)").font(.headline.monospacedDigit())
+                            .foregroundStyle(column == .needsYou && count > 0 ? Color.yellow : on ? Color.primary : Color.secondary)
+                        Text(column.short).font(.caption2.weight(on ? .semibold : .medium)).lineLimit(1).minimumScaleFactor(0.8)
+                            .foregroundStyle(on ? Color.primary : Color.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+                    .background {
+                        if on {
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(Color(uiColor: .systemGray4))
+                                .shadow(color: .black.opacity(0.18), radius: 2, y: 1)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(column.title), \(count)")
+                .accessibilityAddTraits(on ? [.isButton, .isSelected] : .isButton)
+                .accessibilityIdentifier("desk-tab-\(column.id)")
+            }
+        }
+        .padding(3)
+        .background(RoundedRectangle(cornerRadius: 13, style: .continuous).fill(Color(uiColor: .tertiarySystemFill)))
+        .padding(.vertical, 8)
+        .background(Color(uiColor: .systemGroupedBackground))
+    }
+
+    /// Wide: the ask box, then the columns side by side, each scrolling on its own, the board
+    /// sideways when they don't all fit (shown at Needs you when something does).
+    private var board: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 14) { top }
+                .frame(maxWidth: 760, alignment: .leading)
+                .padding(.horizontal, 20)
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal) {
+                    HStack(alignment: .top, spacing: 12) {
+                        ForEach(MobileDeskColumn.allCases) { column in
+                            lane(column).id(column)
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 12)
+                    .frame(maxHeight: .infinity, alignment: .top)
+                }
+                .scrollIndicators(.hidden)
+                .onChange(of: needsYou.isEmpty, initial: true) { _, empty in
+                    guard !empty, !showedNeedsYou else { return }
+                    showedNeedsYou = true
+                    proxy.scrollTo(MobileDeskColumn.needsYou, anchor: .center)
+                }
+            }
+        }
+        .padding(.top, 4)
+    }
+
+    /// One column, side by side with the others: its name and count, then its cards.
+    private func lane(_ column: MobileDeskColumn) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Text(column.title).font(.subheadline.weight(.semibold))
+                Text("\(count(column))").font(.caption.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(column == .needsYou && count(column) > 0 ? Color.black : Color.secondary)
+                    .padding(.horizontal, 7).padding(.vertical, 2)
+                    .background(Capsule().fill(column == .needsYou && count(column) > 0 ? Color.yellow : Color.primary.opacity(0.08)))
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 10)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(column.title), \(count(column))")
+            .accessibilityAddTraits(.isHeader)
+            .accessibilityIdentifier("desk-section-\(column.id)")
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 10) { cards(column) }
+                    .padding(.horizontal, 10).padding(.bottom, 12)
+                    .animation(.easeOut(duration: 0.2), value: ids(column))
+            }
+            .refreshable { await refresh() }
+        }
+        .frame(width: Self.columnWidth)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.primary.opacity(0.04)))
+    }
+
+    // MARK: Cards
+
+    @ViewBuilder private func cards(_ column: MobileDeskColumn) -> some View {
+        if desk != nil, count(column) == 0 {
+            empty(column)
+        }
+        switch column {
+        case .todo:
+            ForEach(incoming) { request in
+                DeskRequestCard(request: request, place: place(for: request), changed: chosen[request.id] != nil,
+                                busy: busy.contains(request.id),
+                                start: { start(request) },
+                                change: { choosing = request },
+                                ignore: { ignore(request) })
+            }
+        case .working:
+            ForEach(working) { item in DeskWorkingCard(item: item, open: { open(item.id) }) }
+        case .needsYou:
+            ForEach(needsYou) { item in
+                DeskWaitingCard(item: item, busy: busy.contains(item.id), swipes: !wide,
+                                open: { open(item.chatID) },
+                                decide: { decide($0, item) },
+                                silence: { silence(item) })
+            }
+        case .ready:
+            ForEach(ready) { item in
+                DeskReadyCard(item: item, swipes: !wide, open: { open(item.id) }, complete: { complete(item) }, silence: { silence(item) })
+            }
+        case .done:
+            ForEach(done) { item in
+                DeskDoneCard(item: item, busy: reopening.contains(item.id), reopen: { reopen(item) })
+            }
+        }
+    }
+
+    private func ids(_ column: MobileDeskColumn) -> [UUID] {
+        switch column {
+        case .todo: incoming.map(\.id)
+        case .working: working.map(\.id)
+        case .needsYou: needsYou.map(\.id)
+        case .ready: ready.map(\.id)
+        case .done: done.map(\.id)
+        }
+    }
+
+    /// A column with nothing in it.
+    private func empty(_ column: MobileDeskColumn) -> some View {
+        Text(column.empty)
+            .font(.subheadline).foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 4).padding(.vertical, 10)
+            .accessibilityIdentifier("desk-empty-\(column.id)")
     }
 
     private var loading: some View {
@@ -202,83 +411,6 @@ struct MobileDeskView: View {
         }
     }
 
-    private var needsYouSection: some View {
-        section("Needs you", id: "needs-you") {
-            ForEach(needsYou) { item in
-                DeskWaitingCard(item: item, busy: busy.contains(item.id), fill: columns > 1,
-                                open: { open(item.chatID) },
-                                decide: { decide($0, item) },
-                                silence: { silence(item) })
-            }
-        }
-    }
-
-    private var incomingSection: some View {
-        section("Incoming", id: "incoming") {
-            ForEach(incoming) { request in
-                DeskRequestCard(request: request, place: place(for: request), changed: chosen[request.id] != nil,
-                                busy: busy.contains(request.id), fill: columns > 1,
-                                start: { start(request) },
-                                change: { choosing = request },
-                                ignore: { ignore(request) })
-            }
-        }
-    }
-
-    /// A healthy Desk takes no space.
-    private var calm: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "checkmark.circle").font(.title3).foregroundStyle(.green)
-            Text("Nothing else needs you.").font(.body).foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 4)
-        .padding(.vertical, 8)
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("desk-calm")
-    }
-
-    /// One quiet line: what's working, each title opens its session.
-    private var workingLine: some View {
-        HStack(spacing: 8) {
-            Label("\(working.count) working", systemImage: "circle.dotted")
-                .font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
-                .labelStyle(.titleAndIcon).fixedSize()
-                .accessibilityIdentifier("desk-working")
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(working) { item in
-                        Button { open(item.id) } label: {
-                            Text(item.title).font(.footnote).lineLimit(1)
-                                .padding(.horizontal, 10).padding(.vertical, 6)
-                                .background(Capsule().fill(Color(uiColor: .secondarySystemGroupedBackground)))
-                                .overlay(Capsule().strokeBorder(Color.primary.opacity(0.06)))
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("\(item.title)\(item.subtitle.map { ", " + $0 } ?? ""), working\(item.place.flatMap { $0 != item.title ? ", in \($0)" : nil } ?? "")")
-                        .accessibilityIdentifier("desk-working-\(item.id.uuidString)")
-                    }
-                }
-            }
-        }
-    }
-
-    private func section<Content: View>(_ title: String, id: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title)
-                .font(.footnote.weight(.semibold)).foregroundStyle(.secondary).textCase(.uppercase)
-                .padding(.horizontal, 4)
-                .accessibilityAddTraits(.isHeader)
-                .accessibilityIdentifier("desk-section-\(id)")
-            if columns > 1 {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10, alignment: .top), count: columns),
-                          alignment: .leading, spacing: 10) { content() }
-            } else {
-                VStack(alignment: .leading, spacing: 10) { content() }
-            }
-        }
-    }
-
     // MARK: Actions
 
     private func refresh() async {
@@ -315,6 +447,8 @@ struct MobileDeskView: View {
                 _ = try await store.addToDesk(text)
                 ask = ""
                 asking = false
+                // On a phone, the new request shows in To do.
+                withAnimation { column = .todo }
             } catch { actionProblem = Self.describe(error) }
         }
     }
@@ -344,6 +478,38 @@ struct MobileDeskView: View {
             } catch let error as MobileError where error.status == 404 {
                 actionProblem = "Silencing needs the newest Chatterbox on the Mac. Update it there to use it."
             } catch { actionProblem = Self.describe(error) }
+        }
+    }
+
+    /// Silence a session ready to mark complete: off the board until something new happens in it.
+    private func silence(_ item: Companion.DeskReady) {
+        let key = Self.silenceKey(item)
+        guard silencing.insert(key).inserted else { return }
+        Task {
+            defer { silencing.remove(key) }
+            do { _ = try await store.silenceDesk(item) } catch { actionProblem = Self.describe(error) }
+        }
+    }
+
+    /// Mark complete: the Mac archives it, and it moves to Done.
+    private func complete(_ item: Companion.DeskReady) {
+        guard completing.insert(item.id).inserted else { return }
+        Task {
+            defer { completing.remove(item.id) }
+            do {
+                _ = try await store.completeDesk(item.id)
+            } catch let error as MobileError where error.status == 404 {
+                actionProblem = "Mark Complete needs the newest Chatterbox on the Mac. Update it there to use it."
+            } catch { actionProblem = Self.describe(error) }
+        }
+    }
+
+    /// Reopen: unarchived, it leaves Done.
+    private func reopen(_ item: Companion.DeskDone) {
+        guard reopening.insert(item.id).inserted else { return }
+        Task {
+            defer { reopening.remove(item.id) }
+            do { _ = try await store.reopenDesk(item.id) } catch { actionProblem = Self.describe(error) }
         }
     }
 
@@ -425,13 +591,23 @@ private struct DeskPlaceTag: View {
     }
 }
 
+/// A card's surface: the grouped background's raised fill, with a hairline (or `stroke`).
+private extension View {
+    func deskCard(stroke: Color = Color.primary.opacity(0.06), width: CGFloat = 1) -> some View {
+        padding(14)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(uiColor: .secondarySystemGroupedBackground)))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(stroke, lineWidth: width))
+    }
+}
+
 /// A session waiting on you: what it asks; approve or deny in place, open it, or swipe it left
 /// (or long-press it) to silence it.
 private struct DeskWaitingCard: View {
     let item: Companion.DeskWaiting
     let busy: Bool
-    /// In two columns: as tall as its row.
-    var fill = false
+    /// Side by side, a sideways drag scrolls the board instead: no swipe.
+    var swipes = true
     let open: () -> Void
     let decide: (String) -> Void
     let silence: () -> Void
@@ -448,7 +624,7 @@ private struct DeskWaitingCard: View {
     }
 
     var body: some View {
-        SwipeToSilence(id: item.id.uuidString, silence: silence) { taps in card(taps) }
+        DeskSwipe(action: .silence, id: item.id.uuidString, enabled: swipes, perform: silence) { taps in card(taps) }
     }
 
     /// The card; its buttons go through `taps`, so letting go of a swipe doesn't press them.
@@ -500,15 +676,140 @@ private struct DeskWaitingCard: View {
                 Spacer(minLength: 0)
             }
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, maxHeight: fill ? .infinity : nil, alignment: .topLeading)
-        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(uiColor: .secondarySystemGroupedBackground)))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.yellow.opacity(0.5), lineWidth: 1.5))
+        .deskCard(stroke: Color.yellow.opacity(0.5), width: 1.5)
         .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 16, style: .continuous))
         .contextMenu {
             Button("Open", systemImage: "arrow.up.forward.square", action: open)
             Button("Silence", systemImage: "bell.slash", action: silence)
         }
+    }
+}
+
+/// A session working now: its name, place and what it's doing; a tap (or Open) opens it.
+private struct DeskWorkingCard: View {
+    let item: Companion.DeskWorking
+    let open: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Button(action: open) {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.mini)
+                        Text(item.since.map { "Working · \(MobileDeskView.ago($0))" } ?? "Working")
+                            .font(.caption.weight(.semibold)).foregroundStyle(.blue).lineLimit(1)
+                        Spacer(minLength: 8)
+                        if let place = item.place, place != item.title { DeskPlaceTag(name: place) }
+                    }
+                    Text(item.title).font(.headline).lineLimit(2).multilineTextAlignment(.leading)
+                    if let subtitle = item.subtitle {
+                        Text(subtitle).font(.subheadline.weight(.medium)).lineLimit(2).multilineTextAlignment(.leading)
+                    }
+                    if let activity = item.activity, !activity.isEmpty {
+                        Text(activity).font(.subheadline).foregroundStyle(.secondary).lineLimit(2).multilineTextAlignment(.leading)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(item.title)\(item.subtitle.map { ", " + $0 } ?? ""), working\(item.place.flatMap { $0 != item.title ? ", in \($0)" : nil } ?? "")\(item.activity.map { ": " + $0 } ?? "")")
+            .accessibilityHint("Opens the session")
+            .accessibilityIdentifier("desk-working-\(item.id.uuidString)")
+            Button("Open", action: open)
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("desk-working-open-\(item.id.uuidString)")
+        }
+        .deskCard()
+    }
+}
+
+/// A session that finished and asks nothing: Mark Complete (or swipe it left) archives it into
+/// Done; long-press for Open, Mark Complete and Silence (hidden until something new happens).
+private struct DeskReadyCard: View {
+    let item: Companion.DeskReady
+    /// Side by side, a sideways drag scrolls the board instead: no swipe.
+    var swipes = true
+    let open: () -> Void
+    let complete: () -> Void
+    let silence: () -> Void
+
+    var body: some View {
+        DeskSwipe(action: .complete, id: item.id.uuidString, enabled: swipes, perform: complete) { taps in card(taps) }
+    }
+
+    private func card(_ taps: DeskSwipeTaps) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Button(action: taps(open)) {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        Label("Finished \(MobileDeskView.ago(item.finishedAt))", systemImage: "checkmark.circle")
+                            .font(.caption.weight(.semibold)).foregroundStyle(.green).lineLimit(1)
+                        Spacer(minLength: 8)
+                        if let place = item.place, place != item.title { DeskPlaceTag(name: place) }
+                    }
+                    Text(item.title).font(.headline).lineLimit(2).multilineTextAlignment(.leading)
+                    if let subtitle = item.subtitle {
+                        Text(subtitle).font(.subheadline.weight(.medium)).lineLimit(2).multilineTextAlignment(.leading)
+                    }
+                    Text(item.text).font(.subheadline).foregroundStyle(.secondary).lineLimit(3).multilineTextAlignment(.leading)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Opens the session")
+            .accessibilityAction(named: "Mark Complete", complete)
+            .accessibilityAction(named: "Silence", silence)
+            .accessibilityIdentifier("desk-ready-\(item.id.uuidString)")
+            HStack(spacing: 8) {
+                Button("Mark Complete", action: taps(complete))
+                    .buttonStyle(.borderedProminent)
+                    .tint(.green)
+                    .accessibilityIdentifier("desk-complete-\(item.id.uuidString)")
+                Button("Open", action: taps(open))
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("desk-ready-open-\(item.id.uuidString)")
+                Spacer(minLength: 0)
+            }
+        }
+        .deskCard()
+        .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .contextMenu {
+            Button("Open", systemImage: "arrow.up.forward.square", action: open)
+            Button("Mark Complete", systemImage: "checkmark.circle", action: complete)
+            Button("Silence", systemImage: "bell.slash", action: silence)
+        }
+    }
+}
+
+/// A session marked complete this week (archived): Reopen brings it back.
+private struct DeskDoneCard: View {
+    let item: Companion.DeskDone
+    let busy: Bool
+    let reopen: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                Label("Completed \(MobileDeskView.ago(item.completedAt))", systemImage: "checkmark.circle.fill")
+                    .font(.caption.weight(.medium)).foregroundStyle(.secondary).lineLimit(1)
+                Text(item.title).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary).lineLimit(2)
+                if let subtitle = item.subtitle {
+                    Text(subtitle).font(.footnote).foregroundStyle(.secondary).lineLimit(1)
+                }
+                if let place = item.place, place != item.title { DeskPlaceTag(name: place).padding(.top, 2) }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("desk-done-\(item.id.uuidString)")
+            Button("Reopen", action: reopen)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(busy)
+                .accessibilityIdentifier("desk-reopen-\(item.id.uuidString)")
+        }
+        .deskCard()
     }
 }
 
@@ -525,11 +826,24 @@ final class DeskSwipeTaps {
     }
 }
 
-/// Swipe a card left to show Silence, or all the way to silence it, as a list row's swipe
-/// actions do (the Desk is a scroll view of cards, not a list). A tap on an open card closes it.
-private struct SwipeToSilence<Content: View>: View {
+/// Swipe a card left to show its main action (Silence on Needs you, Mark Complete on Ready), or
+/// all the way to do it, as a list row's swipe actions do (the Desk is a scroll view of cards,
+/// not a list). A tap on an open card closes it. Only one column at a time (a phone): side by
+/// side, sideways drags scroll the board.
+private struct DeskSwipe<Content: View>: View {
+    enum Action {
+        case silence, complete
+        var title: String { self == .silence ? "Silence" : "Complete" }
+        var icon: String { self == .silence ? "bell.slash.fill" : "checkmark.circle.fill" }
+        var tint: Color { self == .silence ? .indigo : .green }
+        /// The revealed button's identifier, before the card's id.
+        var identifier: String { self == .silence ? "desk-silence-" : "desk-swipe-complete-" }
+    }
+    let action: Action
     let id: String
-    let silence: () -> Void
+    /// Off: just the card (the long-press menu still has the action).
+    var enabled = true
+    let perform: () -> Void
     @ViewBuilder let content: (DeskSwipeTaps) -> Content
     @State private var taps = DeskSwipeTaps()
     /// How far the card is moved left (negative), and where it rests (0 or open).
@@ -538,14 +852,18 @@ private struct SwipeToSilence<Content: View>: View {
     /// Decided once per drag: sideways swipes the card, up and down scrolls.
     @State private var sideways: Bool?
     @State private var width: CGFloat = 0
-    /// Past the point where letting go silences it.
+    /// Past the point where letting go does it.
     @State private var armed = false
-    /// How far an open card moves, and the space between it and Silence.
+    /// How far an open card moves, and the space between it and the button.
     private let reveal: CGFloat = 96
     private let gap: CGFloat = 8
     private var commit: CGFloat { max(reveal + 70, width * 0.5) }
 
-    var body: some View {
+    @ViewBuilder var body: some View {
+        if enabled { swipeable } else { content(taps) }
+    }
+
+    private var swipeable: some View {
         content(taps)
             .overlay {
                 if resting < 0 { Color.clear.contentShape(Rectangle()).onTapGesture(perform: close) }
@@ -559,20 +877,20 @@ private struct SwipeToSilence<Content: View>: View {
     }
 
     private var button: some View {
-        Button(action: silenceNow) {
+        Button(action: now) {
             VStack(spacing: 4) {
-                Image(systemName: "bell.slash.fill").font(.title3)
-                Text("Silence").font(.caption.weight(.semibold))
+                Image(systemName: action.icon).font(.title3)
+                Text(action.title).font(.caption.weight(.semibold))
             }
             .foregroundStyle(.white)
             .frame(width: reveal - gap)
             .frame(width: max(reveal, -offset) - gap, alignment: armed ? .leading : .center)
             .frame(maxHeight: .infinity)
-            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.indigo))
+            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(action.tint))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityIdentifier("desk-silence-\(id)")
+        .accessibilityIdentifier(action.identifier + id)
     }
 
     private var drag: some Gesture {
@@ -592,7 +910,7 @@ private struct SwipeToSilence<Content: View>: View {
                 taps.endedAt = Date()
                 let x = resting + value.translation.width
                 if -x > commit {
-                    silenceNow()
+                    now()
                 } else if -x > reveal / 2 || -(resting + value.predictedEndTranslation.width) > reveal {
                     withAnimation(.spring(duration: 0.25)) { offset = -reveal; resting = -reveal }
                     taps.open = true
@@ -610,11 +928,11 @@ private struct SwipeToSilence<Content: View>: View {
     }
 
     /// Slides off, then goes; back in place if it's still here (it didn't go through).
-    private func silenceNow() {
+    private func now() {
         withAnimation(.easeOut(duration: 0.2)) { offset = -(width + 40) }
         resting = 0
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
-            silence()
+            perform()
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { close() }
         }
     }
@@ -627,8 +945,6 @@ private struct DeskRequestCard: View {
     /// Picked here with Change Place, instead of the Desk's proposal.
     let changed: Bool
     let busy: Bool
-    /// In two columns: as tall as its row.
-    var fill = false
     let start: () -> Void
     let change: () -> Void
     let ignore: () -> Void
@@ -667,32 +983,38 @@ private struct DeskRequestCard: View {
                 Text(note).font(.footnote).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            HStack(spacing: 8) {
-                if busy {
+            if busy {
+                HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
                     Text("Working on it…").font(.footnote).foregroundStyle(.secondary)
-                    Spacer(minLength: 0)
-                } else {
-                    // Nothing starts until it has a place.
-                    Button("Start There", action: start)
-                        .buttonStyle(.borderedProminent)
-                        .disabled(place == nil)
-                        .accessibilityIdentifier("desk-start-\(request.id.uuidString)")
-                    Button(place == nil ? "Choose Place" : "Change Place", action: change)
-                        .buttonStyle(.bordered)
-                        .accessibilityIdentifier("desk-\(place == nil ? "choose" : "change")-\(request.id.uuidString)")
-                    Spacer(minLength: 0)
-                    Button("Ignore", action: ignore)
-                        .buttonStyle(.borderless)
-                        .foregroundStyle(.secondary)
-                        .accessibilityIdentifier("desk-ignore-\(request.id.uuidString)")
+                }
+            } else {
+                // In a narrow column, Ignore goes under the others.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) { startButtons; Spacer(minLength: 0); ignoreButton }
+                    VStack(alignment: .leading, spacing: 8) { HStack(spacing: 8) { startButtons }; ignoreButton }
                 }
             }
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, maxHeight: fill ? .infinity : nil, alignment: .topLeading)
-        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(uiColor: .secondarySystemGroupedBackground)))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.primary.opacity(0.06)))
+        .deskCard()
+    }
+
+    @ViewBuilder private var startButtons: some View {
+        // Nothing starts until it has a place.
+        Button("Start There", action: start)
+            .buttonStyle(.borderedProminent)
+            .disabled(place == nil)
+            .accessibilityIdentifier("desk-start-\(request.id.uuidString)")
+        Button(place == nil ? "Choose Place" : "Change Place", action: change)
+            .buttonStyle(.bordered)
+            .accessibilityIdentifier("desk-\(place == nil ? "choose" : "change")-\(request.id.uuidString)")
+    }
+
+    private var ignoreButton: some View {
+        Button("Ignore", action: ignore)
+            .buttonStyle(.borderless)
+            .foregroundStyle(.secondary)
+            .accessibilityIdentifier("desk-ignore-\(request.id.uuidString)")
     }
 }
 

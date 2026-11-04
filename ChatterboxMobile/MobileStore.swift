@@ -472,6 +472,27 @@ final class MobileStore {
         return try await changeDesk { try await self.call("/v1/desk/silence", method: "POST", body: body) }
     }
 
+    /// Silences a session Ready to mark complete: off the board until something new happens in it.
+    @discardableResult
+    func silenceDesk(_ ready: Companion.DeskReady) async throws -> Companion.Desk {
+        let body = try JSONEncoder().encode(Companion.DeskSilenceRequest(chatID: ready.id, id: ready.id, text: ready.text))
+        return try await changeDesk { try await self.call("/v1/desk/silence", method: "POST", body: body) }
+    }
+
+    /// Mark complete: the Mac archives the session and lists it in Done.
+    @discardableResult
+    func completeDesk(_ chat: UUID) async throws -> Companion.Desk {
+        let body = try JSONEncoder().encode(Companion.DeskSessionRequest(chatID: chat))
+        return try await changeDesk { try await self.call("/v1/desk/complete", method: "POST", body: body) }
+    }
+
+    /// Reopen: unarchives a session marked complete.
+    @discardableResult
+    func reopenDesk(_ chat: UUID) async throws -> Companion.Desk {
+        let body = try JSONEncoder().encode(Companion.DeskSessionRequest(chatID: chat))
+        return try await changeDesk { try await self.call("/v1/desk/reopen", method: "POST", body: body) }
+    }
+
     /// Sessions already in `place` (else where it was proposed) that look like the same work,
     /// best first. An older Mac has none to offer.
     func deskThreads(_ request: UUID, place: Companion.DeskPlace? = nil) async throws -> [Companion.DeskThread] {

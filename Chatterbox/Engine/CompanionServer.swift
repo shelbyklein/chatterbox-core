@@ -365,6 +365,13 @@ final class CompanionServer {
             guard let body = try? Companion.decoder.decode(Companion.DeskSilenceRequest.self, from: request.body) else { return .error(400, "Say what to silence.") }
             DeskStore.shared.silence(body)
             return .json(DeskStore.shared.snapshot())
+        case ("POST", 3) where parts[1] == "desk" && (parts[2] == "complete" || parts[2] == "reopen"):
+            // The board's Mark complete (archives, into Done) and Reopen (unarchives).
+            guard let body = try? Companion.decoder.decode(Companion.DeskSessionRequest.self, from: request.body) else { return .error(400, "Say which session.") }
+            do {
+                if parts[2] == "complete" { try DeskStore.shared.complete(body.chatID) } else { try DeskStore.shared.reopen(body.chatID) }
+            } catch { return failure(error) }
+            return .json(DeskStore.shared.snapshot())
         case ("GET", 4) where parts[1] == "desk" && parts[3] == "threads":
             // ?place=<a Studio's or project's id, or "loose">; else where it was proposed.
             guard let id = UUID(uuidString: parts[2]) else { return .error(404, "That request is gone.") }

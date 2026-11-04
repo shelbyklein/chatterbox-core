@@ -298,6 +298,8 @@ enum Companion {
 
     /// The Desk: what needs Shelby, requests waiting to be placed, and what's working. It
     /// never does work itself; starting a request opens a session in its Studio or project.
+    /// Shown as a board (plans/desk-board.md): To do (`incoming`) · Working · Needs you ·
+    /// Ready to mark complete · Done.
     struct Desk: Codable {
         var revision: Int
         /// What waits on Shelby, less what was silenced.
@@ -308,6 +310,12 @@ enum Companion {
         /// stays pending). The Mac, which finds approvals in its own sessions, leaves these out.
         /// Nil from a service older than silencing.
         var silenced: [DeskWaiting]? = nil
+        /// Sessions that finished their reply and ask nothing, newest first: to mark complete.
+        /// Nil from a service older than the board.
+        var ready: [DeskReady]? = nil
+        /// Sessions marked complete from the board in the last week, newest first. Nil from a
+        /// service older than the board.
+        var done: [DeskDone]? = nil
     }
 
     /// A session waiting on Shelby, with what it asks.
@@ -360,6 +368,44 @@ enum Companion {
         var title: String
         var place: String?
         var subtitle: String? = nil
+        /// What it's doing now (the step it's on, or that it's thinking), short. Nil from a
+        /// service older than the board.
+        var activity: String? = nil
+        /// When its reply started.
+        var since: Date? = nil
+    }
+
+    /// A session that finished its reply and asks nothing: Ready to mark complete. Only
+    /// sessions not archived whose last reply finished in the last week; never sidequests or
+    /// automation runs. Silencing it (DeskSilenceRequest with its id and text) hides it until
+    /// something new happens in it.
+    struct DeskReady: Codable, Identifiable, Hashable {
+        /// The session.
+        var id: UUID
+        /// Named as in DeskWaiting.
+        var title: String
+        var place: String?
+        var subtitle: String? = nil
+        /// What its last reply says, its first sentence.
+        var text: String
+        var finishedAt: Date
+    }
+
+    /// A session marked complete from the board (archived); Reopen unarchives it.
+    struct DeskDone: Codable, Identifiable, Hashable {
+        /// The session.
+        var id: UUID
+        /// Named as in DeskWaiting.
+        var title: String
+        var place: String?
+        var subtitle: String? = nil
+        var completedAt: Date
+    }
+
+    /// POST /v1/desk/complete (socket: action "complete"): archives the session and puts it in
+    /// Done. POST /v1/desk/reopen (socket: action "reopen"): unarchives it. Both answer the Desk.
+    struct DeskSessionRequest: Codable {
+        var chatID: UUID
     }
 
     /// POST /v1/desk: a new request. `place` names a Studio or project to propose instead of

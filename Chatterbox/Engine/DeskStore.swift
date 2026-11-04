@@ -1,14 +1,16 @@
 import Foundation
 
 // The Desk: incoming requests (desk.json), place proposals, and what needs Shelby. plans/front-desk.md
+// The board's Ready to mark complete and Done: plans/desk-board.md
 
 /// The Desk: what needs Shelby, work waiting to be placed, and what's working. It never does
 /// work itself: starting a request opens a session in its Studio or project (or continues one
 /// already there doing the same work), so work stays in its compartment. The service owns it; the phone and Claude's connector reach it through
 /// the companion API (/v1/desk), the Mac app through the service socket (operation "desk").
 ///
-/// Only the requests and what was silenced are kept (desk.json in the data folder). What
-/// needs Shelby and what's working come from the sessions each time they're asked for.
+/// Only the requests, what was silenced and what was marked complete are kept (desk.json in
+/// the data folder). What needs Shelby, what's working and what's ready to mark complete come
+/// from the sessions each time they're asked for.
 @MainActor
 final class DeskStore {
     static let shared = DeskStore()
@@ -19,6 +21,9 @@ final class DeskStore {
     /// Waiting things Shelby silenced: off the Desk, still waiting in their sessions. Each goes
     /// once it no longer waits.
     private(set) var silences: [Silence] = []
+    /// Sessions marked complete from the board (archived), newest first. Each goes from Done
+    /// after a week, or once its session is unarchived or gone.
+    private(set) var completions: [Completion] = []
     /// Goes up whenever anything the Desk shows changes, including what sessions are doing.
     private(set) var revision = 1
     /// After the Desk changed, with what it shows now: the service tells the app (desk.changed).
@@ -36,19 +41,34 @@ final class DeskStore {
     static let threadMinimum = 2
     /// How long a reply that ends on a question counts as waiting on Shelby.
     static let replyWindow: TimeInterval = 48 * 3600
+    /// How long a finished reply stays Ready to mark complete, and a completion stays in Done.
+    static let readyWindow: TimeInterval = 7 * 86_400
+    static let doneWindow: TimeInterval = 7 * 86_400
+    /// The most sessions Ready to mark complete shows, newest first.
+    static let readyLimit = 50
+    /// The most completions kept; the oldest go first.
+    static let completionLimit = 200
     static let loose = Companion.DeskPlace(kind: "loose", id: nil, name: "Loose session",
                                            detail: "A session of its own, in no Studio or project.")
 
     /// One waiting thing silenced. An approval, plan or questions is its own item; a reply is
     /// the reply itself and the question it ends on, so a newer reply that asks shows again.
+    /// A session Ready to mark complete ("ready") is its last reply: anything newer shows it again.
     struct Silence: Codable, Hashable {
         var chatID: UUID
         /// The approval's, plan's or questions' item, or the reply's.
         var itemID: UUID
+        /// A DeskWaiting's kind, or "ready".
         var kind: String
         /// What it asked, as the Desk said it.
         var text: String
         var silencedAt: Date
+    }
+
+    /// A session marked complete from the board.
+    struct Completion: Codable, Hashable {
+        var chatID: UUID
+        var completedAt: Date
     }
 
     private struct Saved: Codable {
@@ -56,12 +76,16 @@ final class DeskStore {
         var requests: [Companion.DeskRequest]
         /// Nil in a desk.json from before silencing.
         var silences: [Silence]? = nil
+        /// Nil in a desk.json from before the board.
+        var completions: [Completion]? = nil
     }
     private struct Content: Equatable {
         var needsYou: [Companion.DeskWaiting]
         var incoming: [Companion.DeskRequest]
         var working: [Companion.DeskWorking]
         var silenced: [Companion.DeskWaiting]
+        var ready: [Companion.DeskReady] = []
+        var done: [Companion.DeskDone] = []
     }
     /// Something a session waits on Shelby for.
     private struct Waiting {
@@ -71,8 +95,15 @@ final class DeskStore {
         var itemID: UUID
 
         func silenced(by silence: Silence) -> Bool {
-            silence.chatID == item.chatID && silence.itemID == itemID && (item.kind != "reply" || silence.text == item.text)
+            silence.kind != "ready" && silence.chatID == item.chatID && silence.itemID == itemID && (item.kind != "reply" || silence.text == item.text)
         }
+    }
+    /// A session's finished reply, asking nothing.
+    private struct Finished {
+        var date: Date
+        var item: Companion.DeskReady
+        /// The reply: what silencing it hides.
+        var replyID: UUID
     }
 
     private let file: URL
@@ -90,6 +121,7 @@ final class DeskStore {
         if let saved = try? Companion.decoder.decode(Saved.self, from: data) {
             requests = saved.requests.sorted { $0.createdAt > $1.createdAt }
             silences = saved.silences ?? []
+            completions = saved.completions ?? []
             // Sessions may have changed while the service was down.
             revision = saved.revision + 1
         } else {
@@ -217,20 +249,59 @@ final class DeskStore {
     /// (an approval stays pending in its session). `id` is the DeskWaiting's: any of a
     /// session's approvals, plans or questions, or its id for the reply it waits on, whose
     /// `text` (when given) must still be what that reply asks. Something no longer waiting, or a
-    /// reply since replaced, is left alone: the Desk shows what waits now. True when it's silenced.
+    /// reply since replaced, is left alone: the Desk shows what waits now. A session Ready to
+    /// mark complete (its id, and the DeskReady's text) is hidden until something new happens
+    /// in it. True when it's silenced.
     @discardableResult
     func silence(_ body: Companion.DeskSilenceRequest) -> Bool {
-        guard let session = model?.sessions.first(where: { $0.id == body.chatID }), session.record.archivedAt == nil,
-              let found = waiting(in: session, now: Date()).first(where: { candidate in
-                  candidate.item.id == body.id && (candidate.item.kind != "reply" || body.text == nil || body.text == candidate.item.text)
-              }) else { return false }
-        guard !silences.contains(where: found.silenced) else { return true }
+        guard let session = model?.sessions.first(where: { $0.id == body.chatID }), session.record.archivedAt == nil else { return false }
+        let now = Date()
+        let all = waiting(in: session, now: now)
+        let silence: Silence
         // Whole seconds, as desk.json keeps it.
-        let now = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down))
-        silences.append(Silence(chatID: session.id, itemID: found.itemID, kind: found.item.kind, text: found.item.text, silencedAt: now))
+        let at = Date(timeIntervalSince1970: now.timeIntervalSince1970.rounded(.down))
+        if let found = all.first(where: { candidate in
+            candidate.item.id == body.id && (candidate.item.kind != "reply" || body.text == nil || body.text == candidate.item.text)
+        }) {
+            guard !silences.contains(where: found.silenced) else { return true }
+            silence = Silence(chatID: session.id, itemID: found.itemID, kind: found.item.kind, text: found.item.text, silencedAt: at)
+        } else if all.isEmpty, body.id == session.id, let finished = finished(session, now: now), body.text == nil || body.text == finished.item.text {
+            guard !silences.contains(where: { $0.kind == "ready" && $0.chatID == session.id && $0.itemID == finished.replyID }) else { return true }
+            silence = Silence(chatID: session.id, itemID: finished.replyID, kind: "ready", text: finished.item.text, silencedAt: at)
+        } else {
+            return false
+        }
+        silences.append(silence)
         if silences.count > Self.silenceLimit { silences.removeFirst(silences.count - Self.silenceLimit) }
         changed()
         return true
+    }
+
+    /// Mark complete: archives the session (its agent stops; nothing is removed) and puts it in
+    /// Done for a week. Refused while it's working, so a reply is never cut off.
+    func complete(_ chatID: UUID) throws {
+        guard let model, let session = model.sessions.first(where: { $0.id == chatID }) else { throw Failure(status: 404, message: "That session is gone.") }
+        guard !session.isRunning else { throw Failure(status: 409, message: "That session is working. Mark it complete once it finishes.") }
+        if session.record.archivedAt == nil {
+            // As the phone's Archive: the Mac keeps showing what it was.
+            let shown = model.selectedID
+            model.archive(session)
+            if let shown, shown != session.id, model.sessions.contains(where: { $0.id == shown }) { model.selectedID = shown }
+        }
+        // Whole seconds, as desk.json keeps it.
+        let now = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down))
+        completions.removeAll { $0.chatID == chatID }
+        completions.insert(Completion(chatID: chatID, completedAt: now), at: 0)
+        if completions.count > Self.completionLimit { completions.removeLast(completions.count - Self.completionLimit) }
+        changed()
+    }
+
+    /// Reopen: unarchives the session and takes it out of Done.
+    func reopen(_ chatID: UUID) throws {
+        guard let session = model?.sessions.first(where: { $0.id == chatID }) else { throw Failure(status: 404, message: "That session is gone.") }
+        if session.record.archivedAt != nil { session.setArchived(false) }
+        completions.removeAll { $0.chatID == chatID }
+        changed()
     }
 
     func ignore(_ id: UUID) throws {
@@ -298,7 +369,7 @@ final class DeskStore {
     }
 
     /// The service socket's "desk" operation (the Mac app): `action` get, add, start, ignore,
-    /// silence, places, threads or options, with the companion API's bodies, plus `id` for
+    /// silence, complete, reopen, places, threads or options, with the companion API's bodies, plus `id` for
     /// start, ignore and threads. Replies as the companion API does: the Desk, a started
     /// session's ChatDetail, the places, the sessions to continue, or a new session's options
     /// in `place` (with `picks`, a SettingsRequest). An agent's request is from Claude (or
@@ -328,6 +399,10 @@ final class DeskStore {
             guard let request = try? body.decode(Companion.DeskSilenceRequest.self) else { throw Failure(status: 400, message: "Say what to silence.") }
             silence(request)
             return try .value(snapshot())
+        case "complete", "reopen":
+            guard let request = try? body.decode(Companion.DeskSessionRequest.self) else { throw Failure(status: 400, message: "Say which session.") }
+            if body["action"]?.string == "complete" { try complete(request.chatID) } else { try reopen(request.chatID) }
+            return try .value(snapshot())
         case "start":
             let id = try Self.requestID(body)
             guard let start = try? body.decode(Companion.DeskStartRequest.self) else { throw Failure(status: 400, message: "Bad place.") }
@@ -341,12 +416,14 @@ final class DeskStore {
 
     // MARK: - Building it
 
-    /// What the Desk shows now. Silences that no longer match anything waiting go.
+    /// What the Desk shows now. Silences that no longer match anything waiting (or ready) go,
+    /// and completions no longer in Done.
     private func current() -> Content {
         guard let model else { return Content(needsYou: [], incoming: requests, working: [], silenced: []) }
         var needs: [(date: Date, item: Companion.DeskWaiting)] = []
         var silenced: [(date: Date, item: Companion.DeskWaiting)] = []
         var working: [(date: Date, item: Companion.DeskWorking)] = []
+        var ready: [(date: Date, item: Companion.DeskReady)] = []
         var live = Set<Silence>()
         let now = Date()
         for session in model.sessions where session.record.archivedAt == nil {
@@ -366,15 +443,50 @@ final class DeskStore {
                 // One waiting on something silenced is waiting, not working.
                 let name = CompanionMapper.heading(session)
                 working.append((session.record.turnStartedAt ?? session.record.updatedAt,
-                                .init(id: session.id, title: name.title, place: placeName(session), subtitle: name.subtitle)))
+                                .init(id: session.id, title: name.title, place: placeName(session), subtitle: name.subtitle,
+                                      activity: session.lastActionSummary.map { Self.short($0, limit: 160) }, since: session.record.turnStartedAt)))
+            } else if all.isEmpty, let finished = finished(session, now: now) {
+                if let silence = silences.first(where: { $0.kind == "ready" && $0.chatID == session.id && $0.itemID == finished.replyID }) {
+                    live.insert(silence)
+                } else {
+                    ready.append((finished.date, finished.item))
+                }
             }
         }
         if live.count < silences.count { silences.removeAll { !live.contains($0) } }
+        // Done: completions from the last week whose sessions are still archived.
+        let byID = Dictionary(model.sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var done: [Companion.DeskDone] = []
+        let kept = completions.filter { completion in
+            guard now.timeIntervalSince(completion.completedAt) < Self.doneWindow, let session = byID[completion.chatID],
+                  session.record.archivedAt != nil else { return false }
+            let name = CompanionMapper.heading(session)
+            done.append(.init(id: session.id, title: name.title, place: placeName(session), subtitle: name.subtitle, completedAt: completion.completedAt))
+            return true
+        }
+        if kept.count < completions.count { completions = kept }
         func newestFirst<T: Identifiable>(_ a: (date: Date, item: T), _ b: (date: Date, item: T)) -> Bool where T.ID == UUID {
             a.date != b.date ? a.date > b.date : a.item.id.uuidString < b.item.id.uuidString
         }
         return Content(needsYou: needs.sorted(by: newestFirst).map(\.item), incoming: requests,
-                       working: working.sorted(by: newestFirst).map(\.item), silenced: silenced.sorted(by: newestFirst).map(\.item))
+                       working: working.sorted(by: newestFirst).map(\.item), silenced: silenced.sorted(by: newestFirst).map(\.item),
+                       ready: Array(ready.sorted(by: newestFirst).prefix(Self.readyLimit).map(\.item)),
+                       done: done.map { (date: $0.completedAt, item: $0) }.sorted(by: newestFirst).map(\.item))
+    }
+
+    /// A session that finished its reply in the last week and asks nothing: idle, its last
+    /// word the agent's. Sidequests and automation runs report to their session instead. The
+    /// caller has checked it waits on nothing.
+    private func finished(_ session: ChatSession, now: Date) -> Finished? {
+        guard !session.isRunning, !session.hasBackgroundWork, session.record.sidequestOf == nil, session.record.automationID == nil,
+              let last = session.items.last(where: { $0.kind == .user || ($0.kind == .assistant && $0.phase == .final) }),
+              last.kind == .assistant else { return nil }
+        let date = last.timestamp ?? session.record.updatedAt
+        guard now.timeIntervalSince(date) < Self.readyWindow else { return nil }
+        let name = CompanionMapper.heading(session)
+        let text = ChatSession.firstSentence(of: last.text, limit: 160) ?? "Finished its reply."
+        return Finished(date: date, item: .init(id: session.id, title: name.title, place: placeName(session), subtitle: name.subtitle,
+                                                text: text, finishedAt: date), replyID: last.id)
     }
 
     /// What a session waits on Shelby for, oldest first: its approvals, plans and questions,
@@ -479,7 +591,8 @@ final class DeskStore {
     }
 
     private static func desk(_ content: Content, revision: Int) -> Companion.Desk {
-        .init(revision: revision, needsYou: content.needsYou, incoming: content.incoming, working: content.working, silenced: content.silenced)
+        .init(revision: revision, needsYou: content.needsYou, incoming: content.incoming, working: content.working, silenced: content.silenced,
+              ready: content.ready, done: content.done)
     }
 
     // MARK: - Text
@@ -538,7 +651,7 @@ final class DeskStore {
 
     // MARK: - Saving
 
-    /// The requests changed: saved now, and announced.
+    /// The requests, silences or completions changed: saved now, and announced.
     private func changed() {
         revision += 1
         let content = current()
@@ -563,7 +676,7 @@ final class DeskStore {
     private func save() {
         do {
             try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try Companion.encoder.encode(Saved(revision: revision, requests: requests, silences: silences)).write(to: file, options: .atomic)
+            try Companion.encoder.encode(Saved(revision: revision, requests: requests, silences: silences, completions: completions)).write(to: file, options: .atomic)
         } catch {
             RuntimeHooks.note("The Desk couldn't save: \(error.localizedDescription)")
         }

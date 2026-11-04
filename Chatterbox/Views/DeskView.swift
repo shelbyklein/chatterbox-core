@@ -2,15 +2,17 @@ import AppKit
 import Observation
 import SwiftUI
 
-// The Desk on the Mac: what needs you, incoming work to place, what is working. plans/front-desk.md
+// The Desk on the Mac, a board: To do · Working · Needs you · Ready to mark complete · Done.
+// plans/front-desk.md, plans/desk-board.md
 //
 // Home's first page: Desk at the top of its left column, the toolbar's Desk button, and
 // Go > Desk (⌘0). Needs you and Working come from the sessions this Mac already has (the same
 // pending approvals, plans and questions their cards show), so Approve here is the chat's own
-// Approve. Requests waiting to be placed, the places they can go, replies that ask you
-// something, and what was silenced come from the background service: socket operation "desk"
-// (action get, add, start, ignore, silence, places, threads or options, with the HTTP API's
-// bodies and replies), which sends "desk.changed" when they change. Start there opens a step
+// Approve. Requests waiting to be placed (To do), the places they can go, replies that ask you
+// something, what was silenced, sessions ready to mark complete and those done come from the
+// background service: socket operation "desk" (action get, add, start, ignore, silence,
+// complete, reopen, places, threads or options, with the HTTP API's bodies and replies), which
+// sends "desk.changed" when they change. Start there opens a step
 // (DeskStartPopover): the place, a session already there doing the same work to continue, or
 // the agent and model for a new one. What starts runs in the background, with a note to open it.
 
@@ -29,35 +31,61 @@ struct DeskNeed: Identifiable, Equatable {
     }
 }
 
-/// What the Desk shows, in order. A section with nothing in it takes no space.
+/// What the Desk shows: the board's columns (plans/desk-board.md). A column with nothing in it
+/// says so in one quiet line.
 struct DeskSections: Equatable {
-    enum Section: String, CaseIterable { case needsYou = "Needs you", incoming = "Incoming", working = "Working" }
+    /// The columns, left to right.
+    enum Section: String, CaseIterable, Identifiable {
+        case todo = "To do", working = "Working", needsYou = "Needs you", ready = "Ready to mark complete", done = "Done"
+        var id: String { key }
+        /// For DeskDebug's frames ("section:needsYou").
+        var key: String {
+            switch self {
+            case .todo: "todo"
+            case .working: "working"
+            case .needsYou: "needsYou"
+            case .ready: "ready"
+            case .done: "done"
+            }
+        }
+        var empty: String {
+            switch self {
+            case .todo: "Nothing waiting to start."
+            case .working: "Nothing running."
+            case .needsYou: "Nothing needs you."
+            case .ready: "Nothing finished to mark complete."
+            case .done: "Nothing completed this week."
+            }
+        }
+    }
 
     var needsYou: [DeskNeed] = []
     var incoming: [Companion.DeskRequest] = []
     var working: [Companion.DeskWorking] = []
+    var ready: [Companion.DeskReady] = []
+    var done: [Companion.DeskDone] = []
 
-    var visible: [Section] {
-        Section.allCases.filter { section in
-            switch section {
-            case .needsYou: return !needsYou.isEmpty
-            case .incoming: return !incoming.isEmpty
-            case .working: return !working.isEmpty
-            }
+    func count(_ section: Section) -> Int {
+        switch section {
+        case .todo: incoming.count
+        case .working: working.count
+        case .needsYou: needsYou.count
+        case .ready: ready.count
+        case .done: done.count
         }
     }
-    /// Nothing waits on you and nothing waits to be placed: "Nothing else needs you."
-    var isCalm: Bool { needsYou.isEmpty && incoming.isEmpty }
-    var summary: String { Self.summary(needsYou: needsYou.count, incoming: incoming.count, working: working.count) }
-    /// What needs acting on: the toolbar's Desk badge.
+    var summary: String { Self.summary(needsYou: needsYou.count, incoming: incoming.count, working: working.count, ready: ready.count) }
+    /// What needs acting on: the toolbar's Desk badge. Not what's ready to mark complete:
+    /// nothing waits on that.
     var actionCount: Int { needsYou.count + incoming.count }
 
-    /// The header's line: "2 need you · 1 incoming · 3 working".
-    static func summary(needsYou: Int, incoming: Int, working: Int) -> String {
+    /// The header's line: "2 need you · 1 to do · 3 working · 4 ready".
+    static func summary(needsYou: Int, incoming: Int, working: Int, ready: Int = 0) -> String {
         var parts: [String] = []
         if needsYou > 0 { parts.append("\(needsYou) need\(needsYou == 1 ? "s" : "") you") }
-        if incoming > 0 { parts.append("\(incoming) incoming") }
+        if incoming > 0 { parts.append("\(incoming) to do") }
         if working > 0 { parts.append("\(working) working") }
+        if ready > 0 { parts.append("\(ready) ready") }
         return parts.isEmpty ? "All clear" : parts.joined(separator: " · ")
     }
 }
@@ -80,8 +108,11 @@ final class DeskModel {
     private(set) var chosen: [UUID: Companion.DeskPlace] = [:]
     /// Requests being started or ignored.
     private(set) var busy: Set<UUID> = []
-    /// Waiting things being silenced here (DeskNeed.silenceKey), hidden until the service answers.
+    /// Waiting things being silenced here (DeskNeed.silenceKey, readyKey), hidden until the service answers.
     private(set) var silencing: Set<String> = []
+    /// Sessions being marked complete or reopened here, hidden until the service answers.
+    private(set) var completing: Set<UUID> = []
+    private(set) var reopening: Set<UUID> = []
     private(set) var adding = false
     /// What last went wrong, shown under the header.
     var problem: String?
@@ -179,10 +210,12 @@ final class DeskModel {
 
     // MARK: What it shows
 
-    /// Needs you and Working from this Mac's sessions; Incoming, replies that ask you
-    /// something, and what was silenced, from the service's Desk. As the service has it for the
-    /// phone: a session's oldest request not silenced, newest sessions first; Needs you wins
-    /// over Working, and a session waiting only on what was silenced is in neither.
+    /// Needs you and Working from this Mac's sessions; To do (incoming requests), replies that
+    /// ask you something, what was silenced, Ready to mark complete and Done from the service's
+    /// Desk. As the service has it for the phone: a session's oldest request not silenced,
+    /// newest sessions first; Needs you wins over Working, and a session waiting only on what
+    /// was silenced is in neither. A ready session this Mac sees working, waiting or archived
+    /// again leaves Ready before the service says so; a done one unarchived leaves Done.
     func sections(in model: AppModel, now: Date = Date()) -> DeskSections {
         let sessions = model.activeSessions
         var needs: [(date: Date, need: DeskNeed)] = []
@@ -219,10 +252,23 @@ final class DeskModel {
         needs.sort { $0.date == $1.date ? $0.need.id.uuidString < $1.need.id.uuidString : $0.date > $1.date }
         let working = Attention.shared.workingChats(in: model).filter { !waiting.contains($0.id) }.map { session in
             let name = CompanionMapper.heading(session)
-            return Companion.DeskWorking(id: session.id, title: name.title, place: Self.placeName(of: session, in: model), subtitle: name.subtitle)
+            return Companion.DeskWorking(id: session.id, title: name.title, place: Self.placeName(of: session, in: model), subtitle: name.subtitle,
+                                         activity: session.lastActionSummary, since: session.record.turnStartedAt)
         }
-        return DeskSections(needsYou: needs.map(\.need), incoming: snapshot?.incoming ?? [], working: working)
+        let all = Dictionary(model.sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let ready = (snapshot?.ready ?? []).filter { item in
+            guard !completing.contains(item.id), !silencing.contains(Self.readyKey(item)) else { return false }
+            guard let session = all[item.id] else { return true }
+            return session.record.archivedAt == nil && !session.isRunning && !waiting.contains(session.id)
+        }
+        let done = (snapshot?.done ?? []).filter { item in
+            !reopening.contains(item.id) && all[item.id].map { $0.record.archivedAt != nil } ?? true
+        }
+        return DeskSections(needsYou: needs.map(\.need), incoming: snapshot?.incoming ?? [], working: working, ready: ready, done: done)
     }
+
+    /// What silencing a ready session hides: the session, as its last reply says.
+    static func readyKey(_ item: Companion.DeskReady) -> String { "ready|\(item.id.uuidString)|\(item.text)" }
 
     private func recentlyAnswered(_ id: UUID, now: Date) -> Bool {
         answered[id].map { now.timeIntervalSince($0) < 15 } ?? false
@@ -278,7 +324,8 @@ final class DeskModel {
         session.resolveApproval(need.id, decision)
     }
 
-    /// Silence can reach the service (a test's transport, or the background service).
+    /// Silence, Mark complete and Reopen can reach the service (a test's transport, or the
+    /// background service).
     var canSilence: Bool { canReachService && !unsupported }
 
     /// Silence: off the Desk on every device, without answering it (an approval stays pending
@@ -297,6 +344,43 @@ final class DeskModel {
             // The rest of the Desk still works with an older service.
             problem = "Silence works once the background service restarts with this version of Chatterbox."
         } catch { note(error, "silence it") }
+    }
+
+    /// Silence a session ready to mark complete: off the board on every device until something
+    /// new happens in it.
+    func silence(_ item: Companion.DeskReady) async {
+        let key = Self.readyKey(item)
+        guard canSilence, silencing.insert(key).inserted else { return }
+        defer { silencing.remove(key) }
+        await change(["action": "silence", "chatID": .string(item.id.uuidString), "id": .string(item.id.uuidString), "text": .string(item.text)],
+                     doing: "silence it", older: "Silence works once the background service restarts with this version of Chatterbox.")
+    }
+
+    /// Mark complete: the service archives the session and lists it in Done for a week.
+    func complete(_ item: Companion.DeskReady) async {
+        guard canSilence, completing.insert(item.id).inserted else { return }
+        defer { completing.remove(item.id) }
+        await change(["action": "complete", "chatID": .string(item.id.uuidString)],
+                     doing: "mark it complete", older: "Mark complete works once the background service restarts with this version of Chatterbox.")
+    }
+
+    /// Reopen: the service unarchives it, and it leaves Done.
+    func reopen(_ item: Companion.DeskDone) async {
+        guard canSilence, reopening.insert(item.id).inserted else { return }
+        defer { reopening.remove(item.id) }
+        await change(["action": "reopen", "chatID": .string(item.id.uuidString)],
+                     doing: "reopen it", older: "Reopen works once the background service restarts with this version of Chatterbox.")
+    }
+
+    /// Sends a change the service answers with the Desk. From an older service, `older` says
+    /// so; the rest of the Desk still works.
+    private func change(_ body: [String: JSON], doing: String, older: String) async {
+        do {
+            load(try await send(body).decode(Companion.Desk.self))
+            problem = nil
+        } catch let error where error.localizedDescription.contains("unsupported_operation") {
+            problem = older
+        } catch { note(error, doing) }
     }
 
     func open(_ chatID: UUID, in model: AppModel) {
@@ -472,6 +556,12 @@ enum DeskText {
         return age.isEmpty ? "From \(source)" : "From \(source) · \(age)"
     }
 
+    /// "5m ago", "just now".
+    static func ago(_ date: Date, now: Date = Date()) -> String {
+        let age = ShortAge.string(since: date, now: now)
+        return age.isEmpty || age == "now" ? "just now" : "\(age) ago"
+    }
+
     /// A place's instructions or brief, as a line or two of plain text.
     static func detailLine(_ text: String?) -> String? {
         guard let text else { return nil }
@@ -513,44 +603,40 @@ private extension View {
 
 // MARK: - The page
 
+/// The Desk as a board: To do · Working · Needs you · Ready to mark complete · Done, side by
+/// side at a fixed width, each scrolling on its own; the board scrolls sideways when they don't
+/// all fit (shown at Needs you when something does).
 struct DeskView: View {
     @Environment(AppModel.self) private var model
     var desk: DeskModel = .shared
     @State private var ask = ""
-    /// The page's width, for two columns when it's wide.
-    @State private var width: CGFloat = 0
+    /// The board has been scrolled to Needs you once.
+    @State private var showedNeedsYou = false
 
-    /// Two columns of cards once the content area is wider than this; one readable column below.
-    static let twoColumnWidth: CGFloat = 1100
-    static func columns(for width: CGFloat) -> Int { width - 56 > twoColumnWidth ? 2 : 1 }
+    /// A column's width.
+    static let columnWidth: CGFloat = 320
 
     var body: some View {
         let sections = desk.sections(in: model)
-        let columns = Self.columns(for: width)
         VStack(spacing: 0) {
             header(sections).padding(.horizontal, 28).padding(.top, 24).padding(.bottom, 16)
             Divider()
-            ScrollView {
-                VStack(alignment: .leading, spacing: 30) {
-                    if !sections.needsYou.isEmpty {
-                        section("Needs you", "\(sections.needsYou.count) waiting", key: "needsYou", columns: columns) {
-                            ForEach(sections.needsYou) { DeskNeedRow(need: $0, desk: desk, fill: columns > 1) }
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal) {
+                    HStack(alignment: .top, spacing: 14) {
+                        ForEach(DeskSections.Section.allCases) { section in
+                            column(section, sections).id(section)
                         }
                     }
-                    if !sections.incoming.isEmpty {
-                        section("Incoming", "\(sections.incoming.count) to place", key: "incoming", columns: columns) {
-                            ForEach(sections.incoming) { DeskRequestRow(request: $0, desk: desk, fill: columns > 1) }
-                        }
-                    }
-                    if sections.isCalm { calm }
-                    if !sections.working.isEmpty { DeskWorkingLine(working: sections.working, desk: desk) }
+                    .padding(20)
+                    .frame(maxHeight: .infinity, alignment: .top)
                 }
-                .frame(maxWidth: columns > 1 ? 1480 : 920, alignment: .leading)
-                .padding(28)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .animation(.easeOut(duration: 0.2), value: sections.needsYou.map(\.id))
+                .onChange(of: sections.needsYou.isEmpty, initial: true) { _, empty in
+                    guard !empty, !showedNeedsYou else { return }
+                    showedNeedsYou = true
+                    proxy.scrollTo(DeskSections.Section.needsYou, anchor: .center)
+                }
             }
-            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         }
         .onAppear { desk.appeared() }
         .onDisappear { desk.disappeared() }
@@ -565,7 +651,7 @@ struct DeskView: View {
                     .deskFrame("summary")
                 Spacer()
             }
-            askField
+            askField.frame(maxWidth: 760, alignment: .leading)
             if let started = desk.startedNote {
                 HStack(spacing: 8) {
                     Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
@@ -614,34 +700,73 @@ struct DeskView: View {
         Task { if await desk.add(text), ask == text { ask = "" } }
     }
 
-    private func section<Content: View>(_ title: String, _ detail: String, key: String, columns: Int,
-                                        @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Text(title).font(.title2.weight(.semibold))
-                Text(detail).font(.subheadline).foregroundStyle(.secondary)
+    /// One column: its name and count, then its cards (or one quiet line), scrolling on its own.
+    private func column(_ section: DeskSections.Section, _ sections: DeskSections) -> some View {
+        let count = sections.count(section)
+        let urgent = section == .needsYou && count > 0
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Text(section.rawValue).font(.headline).lineLimit(1)
+                Text("\(count)").font(.caption.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(urgent ? Color.white : Color.secondary)
+                    .padding(.horizontal, 7).padding(.vertical, 2)
+                    .background(Capsule().fill(urgent ? Color.orange : Color.primary.opacity(0.08)))
+                    .deskFrame("count:" + section.key)
+                Spacer(minLength: 0)
             }
-            if columns > 1 {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12, alignment: .top), count: columns),
-                          alignment: .leading, spacing: 10) { content() }
-            } else {
-                VStack(alignment: .leading, spacing: 10) { content() }
+            .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 10)
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isHeader)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    if count == 0 {
+                        Text(section.empty).font(.callout).foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 4).padding(.vertical, 6)
+                            .deskFrame("empty:" + section.key)
+                    }
+                    cards(section, sections)
+                }
+                .padding(.horizontal, 10).padding(.bottom, 12)
+                .animation(.easeOut(duration: 0.2), value: ids(section, sections))
             }
+            .scrollIndicators(.automatic)
         }
-        .deskFrame("section:" + key)
+        .frame(width: Self.columnWidth)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(0.035)))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.primary.opacity(0.07)))
+        .deskFrame("section:" + section.key)
     }
 
-    /// A healthy Desk takes little room.
-    private var calm: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "checkmark.circle").font(.title2.weight(.light))
-            Text("Nothing else needs you.").font(.title3)
+    @ViewBuilder private func cards(_ section: DeskSections.Section, _ sections: DeskSections) -> some View {
+        switch section {
+        case .todo: ForEach(sections.incoming) { DeskRequestRow(request: $0, desk: desk) }
+        case .working: ForEach(sections.working) { DeskWorkingCard(item: $0, desk: desk) }
+        case .needsYou: ForEach(sections.needsYou) { DeskNeedRow(need: $0, desk: desk) }
+        case .ready: ForEach(sections.ready) { DeskReadyRow(item: $0, desk: desk) }
+        case .done: ForEach(sections.done) { DeskDoneRow(item: $0, desk: desk) }
         }
-        .foregroundStyle(.secondary)
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 44)
-        .deskFrame("calm")
-        .accessibilityElement(children: .combine)
+    }
+
+    private func ids(_ section: DeskSections.Section, _ sections: DeskSections) -> [UUID] {
+        switch section {
+        case .todo: sections.incoming.map(\.id)
+        case .working: sections.working.map(\.id)
+        case .needsYou: sections.needsYou.map(\.id)
+        case .ready: sections.ready.map(\.id)
+        case .done: sections.done.map(\.id)
+        }
+    }
+}
+
+/// A card on the board: a raised fill with a hairline, or the colour it's marked with.
+private extension View {
+    func deskCard(fill: Color = Color(nsColor: .controlBackgroundColor), stroke: Color = Color.primary.opacity(0.1), width: CGFloat = 1) -> some View {
+        padding(12)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .background(RoundedRectangle(cornerRadius: 10).fill(fill))
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(stroke, lineWidth: width))
     }
 }
 
@@ -651,43 +776,37 @@ private struct DeskNeedRow: View {
     @Environment(AppModel.self) private var model
     let need: DeskNeed
     let desk: DeskModel
-    /// In two columns: as tall as its row.
-    var fill = false
     @State private var hovered = false
 
     private var waiting: Companion.DeskWaiting { need.waiting }
     private var isPlan: Bool { waiting.kind == "plan" }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: DeskText.icon(kind: waiting.kind))
-                .font(.title3).foregroundStyle(.orange).frame(width: 24).padding(.top, 1)
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(waiting.title).font(.headline).lineLimit(1)
-                    if let place = waiting.place, place != waiting.title { DeskPlaceLabel(name: place) }
-                    Text(DeskText.label(kind: waiting.kind)).font(.caption.weight(.medium)).foregroundStyle(.orange)
-                }
-                // A project's session: its own title under the project's name.
-                if let subtitle = waiting.subtitle {
-                    Text(subtitle).font(.subheadline.weight(.medium)).lineLimit(1)
-                        .deskFrame("subtitle:\(need.id)")
-                }
-                Text(waiting.text).font(.subheadline).foregroundStyle(.secondary).lineLimit(3)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                if let detail = need.detail {
-                    Text(detail).font(.system(.caption, design: .monospaced)).lineLimit(2)
-                        .padding(.horizontal, 8).padding(.vertical, 5)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(RoundedRectangle(cornerRadius: 6).fill(.quaternary.opacity(0.6)))
-                }
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: DeskText.icon(kind: waiting.kind)).foregroundStyle(.orange)
+                Text(DeskText.label(kind: waiting.kind)).font(.caption.weight(.semibold)).foregroundStyle(.orange)
+                if let place = waiting.place, place != waiting.title { DeskPlaceLabel(name: place) }
+                Spacer(minLength: 4)
+                if desk.canSilence { silenceButton }
             }
-            actions
+            Text(waiting.title).font(.headline).lineLimit(2)
+            // A project's session: its own title under the project's name.
+            if let subtitle = waiting.subtitle {
+                Text(subtitle).font(.subheadline.weight(.medium)).lineLimit(2)
+                    .deskFrame("subtitle:\(need.id)")
+            }
+            Text(waiting.text).font(.subheadline).foregroundStyle(.secondary).lineLimit(4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if let detail = need.detail {
+                Text(detail).font(.system(.caption, design: .monospaced)).lineLimit(3)
+                    .padding(.horizontal, 8).padding(.vertical, 5)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(.quaternary.opacity(0.6)))
+            }
+            actions.padding(.top, 4)
         }
-        .padding(14)
-        .frame(maxHeight: fill ? .infinity : nil, alignment: .top)
-        .background(RoundedRectangle(cornerRadius: 12).fill(Color.orange.opacity(hovered ? 0.11 : 0.07)))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.orange.opacity(0.75), lineWidth: 1.5))
+        .deskCard(fill: Color.orange.opacity(hovered ? 0.11 : 0.07), stroke: Color.orange.opacity(0.75), width: 1.5)
         .onHover { hovered = $0 }
         .contextMenu {
             Button("Open Session") { desk.open(waiting.chatID, in: model) }
@@ -724,6 +843,7 @@ private struct DeskNeedRow: View {
                 Button("Deny") { desk.decide(need, .denied, in: model) }
                     .help(isPlan ? "Keep planning" : "Don't allow it")
                     .deskFrame("deny:\(need.id)")
+                Spacer(minLength: 0)
                 Button { desk.open(waiting.chatID, in: model) } label: { Image(systemName: "arrow.up.forward.square") }
                     .buttonStyle(.borderless).help("Open the session").accessibilityLabel("Open \(waiting.title)")
                     .deskFrame("open:\(need.id)")
@@ -731,10 +851,9 @@ private struct DeskNeedRow: View {
                 Button("Open") { desk.open(waiting.chatID, in: model) }
                     .help(waiting.kind == "questions" ? "Answer in the session" : "Reply in the session")
                     .deskFrame("open:\(need.id)")
+                Spacer(minLength: 0)
             }
-            if desk.canSilence { silenceButton }
         }
-        .fixedSize()
     }
 }
 
@@ -748,40 +867,35 @@ private struct DeskPlaceLabel: View {
     }
 }
 
-// MARK: - Incoming
+// MARK: - To do
 
 private struct DeskRequestRow: View {
     @Environment(AppModel.self) private var model
     let request: Companion.DeskRequest
     let desk: DeskModel
-    /// In two columns: as tall as its row.
-    var fill = false
     @State private var choosing = false
     @State private var starting = false
 
     var body: some View {
         let place = desk.place(for: request)
         let busy = desk.busy.contains(request.id)
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                Text(request.text).font(.body.weight(.medium)).lineLimit(4)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
-                Text(DeskText.origin(request)).font(.caption).foregroundStyle(.secondary).fixedSize()
-            }
+        VStack(alignment: .leading, spacing: 8) {
+            Text(request.text).font(.body.weight(.medium)).lineLimit(5)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+            Text(DeskText.origin(request)).font(.caption).foregroundStyle(.secondary)
             if let note = request.note, !note.isEmpty {
                 Label { Text(note) } icon: { Image(systemName: "text.quote") }
                     .font(.subheadline).foregroundStyle(.secondary).lineLimit(3)
             }
+            Button { choosing = true } label: { DeskPlaceChip(place: place) }
+                .buttonStyle(.plain)
+                .help(place == nil ? "Nothing clearly fits: choose where this goes" : "Where it starts. Click to choose another place.")
+                .popover(isPresented: $choosing, arrowEdge: .bottom) {
+                    DeskPlacePicker(request: request, desk: desk) { choosing = false }
+                }
+                .deskFrame("chip:\(request.id)")
             HStack(spacing: 8) {
-                Button { choosing = true } label: { DeskPlaceChip(place: place) }
-                    .buttonStyle(.plain)
-                    .help(place == nil ? "Nothing clearly fits: choose where this goes" : "Where it starts. Click to choose another place.")
-                    .popover(isPresented: $choosing, arrowEdge: .bottom) {
-                        DeskPlacePicker(request: request, desk: desk) { choosing = false }
-                    }
-                    .deskFrame("chip:\(request.id)")
-                Spacer(minLength: 8)
                 if busy { ProgressView().controlSize(.small) }
                 Button(busy ? "Starting\u{2026}" : "Start there") { starting = true }
                     .buttonStyle(.borderedProminent)
@@ -796,17 +910,16 @@ private struct DeskRequestRow: View {
                         .disabled(busy)
                         .deskFrame("change:\(request.id)")
                 }
+                Spacer(minLength: 0)
                 Button("Ignore") { Task { await desk.ignore(request) } }
                     .buttonStyle(.borderless)
                     .disabled(busy)
                     .help("Take it off the Desk")
                     .deskFrame("ignore:\(request.id)")
             }
+            .padding(.top, 2)
         }
-        .padding(14)
-        .frame(maxHeight: fill ? .infinity : nil, alignment: .top)
-        .background(RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(0.055)))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.primary.opacity(0.12)))
+        .deskCard()
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Request: \(request.text)")
         .deskFrame("request:\(request.id)")
@@ -1118,48 +1231,130 @@ private struct DeskPlaceOption: View {
     }
 }
 
-// MARK: - Working
+// MARK: - Working, Ready to mark complete, Done
 
-/// One quiet line of what's working; a click opens it.
-private struct DeskWorkingLine: View {
+/// A session working now: its name, place and what it's doing; a click opens it.
+private struct DeskWorkingCard: View {
     @Environment(AppModel.self) private var model
-    let working: [Companion.DeskWorking]
+    let item: Companion.DeskWorking
     let desk: DeskModel
     private let appearance = ReaderStyleSettings()
+    @State private var hovered = false
 
     var body: some View {
-        HStack(spacing: 10) {
-            Text("Working").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
-            ScrollView(.horizontal) {
-                HStack(spacing: 8) {
-                    ForEach(working) { item in chip(item) }
-                }
-                .padding(.vertical, 1)
-            }
-            .scrollIndicators(.never)
-        }
-        .deskFrame("section:working")
-    }
-
-    private func chip(_ item: Companion.DeskWorking) -> some View {
         let session = model.sessions.first { $0.id == item.id }
-        return Button { desk.openWorking(item.id, in: model) } label: {
+        VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 ActivitySpinner(color: session.map { appearance.style.color(for: $0) } ?? .blue)
                     .frame(width: 10, height: 10)
-                Text(item.title).lineLimit(1)
-                if let place = item.place, place != item.title {
-                    Text(place).foregroundStyle(.secondary).lineLimit(1)
+                Text(item.since.map { "Working · \(DeskText.ago($0))" } ?? "Working").font(.caption.weight(.semibold)).foregroundStyle(.blue)
+                if let place = item.place, place != item.title { DeskPlaceLabel(name: place) }
+                Spacer(minLength: 0)
+            }
+            Text(item.title).font(.headline).lineLimit(2)
+            if let subtitle = item.subtitle { Text(subtitle).font(.subheadline.weight(.medium)).lineLimit(2) }
+            if let activity = item.activity, !activity.isEmpty {
+                Text(activity).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            Button("Open") { desk.openWorking(item.id, in: model) }
+                .padding(.top, 4)
+                .deskFrame("workingOpen:\(item.id)")
+        }
+        .deskCard(fill: Color(nsColor: .controlBackgroundColor).opacity(hovered ? 0.8 : 1))
+        .contentShape(Rectangle())
+        .onTapGesture { desk.openWorking(item.id, in: model) }
+        .onHover { hovered = $0 }
+        .help("\(item.title)\(item.subtitle.map { " · " + $0 } ?? "")\(item.place.flatMap { $0 != item.title ? " · " + $0 : nil } ?? "") is working. Click to open it.")
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(item.title), working\(item.activity.map { ": " + $0 } ?? "")")
+        .deskFrame("working:\(item.id)")
+    }
+}
+
+/// A session that finished and asks nothing: Mark complete archives it into Done; the bell
+/// (or right-click) silences it until something new happens in it.
+private struct DeskReadyRow: View {
+    @Environment(AppModel.self) private var model
+    let item: Companion.DeskReady
+    let desk: DeskModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "checkmark.circle").foregroundStyle(.green)
+                Text("Finished \(DeskText.ago(item.finishedAt))").font(.caption.weight(.semibold)).foregroundStyle(.green).lineLimit(1)
+                if let place = item.place, place != item.title { DeskPlaceLabel(name: place) }
+                Spacer(minLength: 4)
+                if desk.canSilence {
+                    Button { Task { await desk.silence(item) } } label: { Image(systemName: "bell.slash") }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.secondary)
+                        .help("Silence: take this off the Desk on every device until something new happens in the session.")
+                        .accessibilityLabel("Silence")
+                        .deskFrame("readySilence:\(item.id)")
                 }
             }
-            .font(.callout)
-            .padding(.horizontal, 10).padding(.vertical, 5)
-            .background(Capsule().fill(Color.primary.opacity(0.055)))
-            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.1)))
-            .contentShape(Capsule())
+            Text(item.title).font(.headline).lineLimit(2)
+            if let subtitle = item.subtitle { Text(subtitle).font(.subheadline.weight(.medium)).lineLimit(2) }
+            Text(item.text).font(.subheadline).foregroundStyle(.secondary).lineLimit(3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: 8) {
+                Button("Mark complete") { Task { await desk.complete(item) } }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.green)
+                    .disabled(!desk.canSilence)
+                    .help("Archive the session. It shows in Done for a week, where Reopen brings it back.")
+                    .deskFrame("complete:\(item.id)")
+                Button("Open") { desk.open(item.id, in: model) }
+                    .deskFrame("readyOpen:\(item.id)")
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 4)
         }
-        .buttonStyle(.plain)
-        .help("\(item.title)\(item.subtitle.map { " · " + $0 } ?? "")\(item.place.flatMap { $0 != item.title ? " · " + $0 : nil } ?? "") is working. Click to open it.")
-        .deskFrame("working:\(item.id)")
+        .deskCard()
+        .contextMenu {
+            Button("Open Session") { desk.open(item.id, in: model) }
+            if desk.canSilence {
+                Button("Mark Complete", systemImage: "checkmark.circle") { Task { await desk.complete(item) } }
+                Divider()
+                Button("Silence", systemImage: "bell.slash") { Task { await desk.silence(item) } }
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(item.title), finished: \(item.text)")
+        .accessibilityAction(named: "Mark Complete") { Task { await desk.complete(item) } }
+        .deskFrame("ready:\(item.id)")
+    }
+}
+
+/// A session marked complete this week (archived): Reopen brings it back.
+private struct DeskDoneRow: View {
+    let item: Companion.DeskDone
+    let desk: DeskModel
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.circle.fill")
+                    Text("Completed \(DeskText.ago(item.completedAt))").lineLimit(1)
+                }
+                .font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                Text(item.title).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary).lineLimit(2)
+                if let subtitle = item.subtitle { Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+                if let place = item.place, place != item.title { DeskPlaceLabel(name: place).padding(.top, 2) }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Button("Reopen") { Task { await desk.reopen(item) } }
+                .controlSize(.small)
+                .disabled(!desk.canSilence || desk.reopening.contains(item.id))
+                .help("Unarchive the session")
+                .deskFrame("reopen:\(item.id)")
+        }
+        .deskCard(fill: Color.primary.opacity(0.03), stroke: Color.primary.opacity(0.07))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(item.title), completed")
+        .deskFrame("done:\(item.id)")
     }
 }
