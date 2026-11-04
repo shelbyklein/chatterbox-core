@@ -361,7 +361,7 @@ struct MobileDeskView: View {
         case .todo:
             ForEach(incoming) { request in
                 DeskRequestCard(request: request, place: place(for: request), changed: chosen[request.id] != nil,
-                                busy: busy.contains(request.id),
+                                busy: busy.contains(request.id), swipes: !wide,
                                 start: { start(request) },
                                 change: { choosing = request },
                                 ignore: { ignore(request) })
@@ -926,19 +926,28 @@ final class DeskSwipeTaps {
     }
 }
 
-/// Swipe a card left to show its main action (Silence on Needs you, Mark Complete on Ready); a
-/// tap on it does it. Mark Complete also goes all the way across to do it, as a list row's swipe
-/// actions do (the Desk is a scroll view of cards, not a list); Silence never does. A tap on an
+/// Swipe a card left to show its main action (Remove on To do, Silence on Needs you, Mark
+/// Complete on Ready); a tap on it does it. Mark Complete also goes all the way across to do it,
+/// as a list row's swipe actions do (the Desk is a scroll view of cards, not a list); Remove and
+/// Silence never do. A tap on an
 /// open card closes it. Only one column at a time (a phone): side by side, sideways drags
 /// scroll the board.
 private struct DeskSwipe<Content: View>: View {
     enum Action {
-        case silence, complete
-        var title: String { self == .silence ? "Silence" : "Complete" }
-        var icon: String { self == .silence ? "bell.slash.fill" : "checkmark.circle.fill" }
-        var tint: Color { self == .silence ? .indigo : .green }
+        case silence, complete, remove
+        var title: String {
+            switch self { case .silence: "Silence"; case .complete: "Complete"; case .remove: "Remove" }
+        }
+        var icon: String {
+            switch self { case .silence: "bell.slash.fill"; case .complete: "checkmark.circle.fill"; case .remove: "trash.fill" }
+        }
+        var tint: Color {
+            switch self { case .silence: .indigo; case .complete: .green; case .remove: .red }
+        }
         /// The revealed button's identifier, before the card's id.
-        var identifier: String { self == .silence ? "desk-silence-" : "desk-swipe-complete-" }
+        var identifier: String {
+            switch self { case .silence: "desk-silence-"; case .complete: "desk-swipe-complete-"; case .remove: "desk-swipe-remove-" }
+        }
     }
     let action: Action
     let id: String
@@ -1050,8 +1059,11 @@ private struct DeskRequestCard: View {
     /// Picked here from the place chip, instead of the Desk's proposal.
     let changed: Bool
     let busy: Bool
+    /// Side by side, a sideways drag scrolls the board instead: no swipe.
+    var swipes = true
     let start: () -> Void
     let change: () -> Void
+    /// Takes it off the Desk (the service's ignore).
     let ignore: () -> Void
 
     private var source: String {
@@ -1063,13 +1075,18 @@ private struct DeskRequestCard: View {
     }
 
     var body: some View {
+        DeskSwipe(action: .remove, id: request.id.uuidString, enabled: swipes && !busy, fullSwipe: false, perform: ignore) { taps in card(taps) }
+    }
+
+    /// The card; its buttons go through `taps`, so letting go of a swipe doesn't press them.
+    private func card(_ taps: DeskSwipeTaps) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(request.text)
                 .font(.body).lineLimit(6)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Text("\(source) · \(request.createdAt.formatted(.relative(presentation: .named)))")
                 .font(.caption).foregroundStyle(Color.metadata)
-            Button(action: change) {
+            Button(action: taps(change)) {
                 HStack(spacing: 6) {
                     Image(systemName: MobileDeskPlaces.icon(place))
                     Text(place?.name ?? "Choose a place").lineLimit(1)
@@ -1094,24 +1111,25 @@ private struct DeskRequestCard: View {
                     Text("Working on it…").font(.footnote).foregroundStyle(Color.metadata)
                 }
             } else {
-                HStack(spacing: 8) { startButton; Spacer(minLength: 0); ignoreButton }
+                HStack(spacing: 8) { startButton(taps); Spacer(minLength: 0); removeButton(taps) }
             }
         }
         .deskCard()
     }
 
     // The place chip above changes the place; with none yet, Start asks for one first.
-    private var startButton: some View {
-        Button("Start", action: start)
+    private func startButton(_ taps: DeskSwipeTaps) -> some View {
+        Button("Start", action: taps(start))
             .buttonStyle(.borderedProminent)
             .accessibilityHint(place == nil ? "Choose a place, then start" : "Choose the model, or continue a session already there")
             .accessibilityIdentifier("desk-start-\(request.id.uuidString)")
     }
 
-    private var ignoreButton: some View {
-        Button("Ignore", action: ignore)
+    private func removeButton(_ taps: DeskSwipeTaps) -> some View {
+        Button("Remove", action: taps(ignore))
             .buttonStyle(.borderless)
             .foregroundStyle(Color.metadata)
+            .accessibilityHint("Takes it off the Desk")
             .accessibilityIdentifier("desk-ignore-\(request.id.uuidString)")
     }
 }

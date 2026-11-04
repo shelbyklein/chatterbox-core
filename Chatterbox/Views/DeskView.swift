@@ -997,7 +997,7 @@ private struct DeskRequestRow: View {
                     }
                     .deskFrame("start:\(request.id)")
                 Spacer(minLength: 0)
-                Button("Ignore") { Task { await desk.ignore(request) } }
+                Button("Remove") { Task { await desk.ignore(request) } }
                     .buttonStyle(.borderless)
                     .disabled(busy)
                     .help("Take it off the Desk")
