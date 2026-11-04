@@ -5,8 +5,9 @@ import SwiftUI
 /// The home's first tab. What needs you (approve or deny in place, open, or swipe left to
 /// silence), requests waiting to be placed (start where the Desk proposes, or choose another
 /// place), and one quiet line of what's working. The Desk never does work itself: starting a
-/// request opens a session in its Studio or project, through the same path as a tapped
-/// notification. Wide (an iPad, an open iPhone Duo), the cards go in two columns.
+/// request (a step to pick the model, or a session already there to continue) runs it in its
+/// Studio or project in the background, with a note to open it. Wide (an iPad, an open iPhone
+/// Duo), the cards go in two columns.
 struct MobileDeskView: View {
     @Environment(MobileStore.self) private var store
     @Environment(\.scenePhase) private var scenePhase
@@ -23,10 +24,14 @@ struct MobileDeskView: View {
     /// Places picked with Change Place, per request; Start There uses them.
     @State private var chosen: [UUID: Companion.DeskPlace] = [:]
     @State private var choosing: Companion.DeskRequest?
+    /// The request in Start There's step (MobileDeskStartSheet).
+    @State private var starting: Companion.DeskRequest?
     /// Why the Desk couldn't be read, shown until it can.
     @State private var loadProblem: String?
     /// An action that didn't go through.
     @State private var actionProblem: String?
+    /// The last request started (or continued) from here: it runs in the background, with a note to open it.
+    @State private var started: (name: String, chat: UUID, continued: Bool)?
     @State private var showingAutomations = false
     /// A run's session picked in Automations: opened once the sheet has closed.
     @State private var automationPick: UUID?
@@ -96,6 +101,34 @@ struct MobileDeskView: View {
         .sheet(item: $choosing) { request in
             MobileDeskPlacePicker(current: place(for: request)) { chosen[request.id] = $0 }
                 .environment(store)
+        }
+        .sheet(item: $starting) { request in
+            if let place = place(for: request) {
+                MobileDeskStartSheet(request: request, place: place, changed: { chosen[request.id] = $0 }) { body, name in
+                    begin(request, body, name: name)
+                }
+                .environment(store)
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if let started {
+                HStack(spacing: 10) {
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                    Text("\(started.continued ? "Continued" : "Started") in \(started.name)").font(.subheadline.weight(.medium)).lineLimit(1)
+                    Spacer(minLength: 4)
+                    Button("Open") { open(started.chat); self.started = nil }.font(.subheadline.weight(.semibold))
+                }
+                .padding(.horizontal, 16).padding(.vertical, 12)
+                .background(.regularMaterial, in: Capsule())
+                .padding(.horizontal, 16).padding(.bottom, 12)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("desk-started")
+                .task(id: started.chat) {
+                    try? await Task.sleep(for: .seconds(5))
+                    withAnimation { self.started = nil }
+                }
+            }
         }
         .alert("Couldn't update the Desk", isPresented: Binding(get: { actionProblem != nil }, set: { if !$0 { actionProblem = nil } })) {
             Button("OK", role: .cancel) { actionProblem = nil }
@@ -314,17 +347,24 @@ struct MobileDeskView: View {
         }
     }
 
+    /// Start There: first its step (the place, a session already there to continue, the model).
     private func start(_ request: Companion.DeskRequest) {
         guard place(for: request) != nil else { choosing = request; return }
+        guard !busy.contains(request.id) else { return }
+        starting = request
+    }
+
+    /// Sends what the start step chose; `name` is where it went, for the note.
+    private func begin(_ request: Companion.DeskRequest, _ body: Companion.DeskStartRequest, name: String) {
         guard busy.insert(request.id).inserted else { return }
-        let place = chosen[request.id]
         Task {
             defer { busy.remove(request.id) }
             do {
-                let started = try await store.startDesk(request.id, place: place)
+                let detail = try await store.startDesk(request.id, body)
                 settled.insert(request.id)
                 chosen[request.id] = nil
-                open(started.summary.id)
+                // It runs in the background; the Desk stays, with a note to open it.
+                withAnimation { started = (name, detail.summary.id, body.continueChat != nil) }
                 _ = try? await store.desk()
             } catch { actionProblem = Self.describe(error) }
         }
@@ -653,6 +693,176 @@ private struct DeskRequestCard: View {
         .frame(maxWidth: .infinity, maxHeight: fill ? .infinity : nil, alignment: .topLeading)
         .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(uiColor: .secondarySystemGroupedBackground)))
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.primary.opacity(0.06)))
+    }
+}
+
+/// Start There's step: where it goes (with Change), a session already there doing the same
+/// work to continue instead (a clear match is chosen), and for a new session its agent and
+/// model, as New Chat would start one there. Start sends the choice; nothing opens.
+private struct MobileDeskStartSheet: View {
+    let request: Companion.DeskRequest
+    @State var place: Companion.DeskPlace
+    /// A place picked here, for the card too.
+    let changed: (Companion.DeskPlace) -> Void
+    let start: (Companion.DeskStartRequest, String) -> Void
+    @Environment(MobileStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
+    /// Sessions in the place like this work; nil while they load.
+    @State private var threads: [Companion.DeskThread]?
+    /// The session to continue; nil: a new one.
+    @State private var continuing: UUID?
+    @State private var options: Companion.ChatOptions?
+    @State private var picks = Companion.SettingsRequest()
+    @State private var browsing: String?
+    @State private var problem: String?
+    @State private var changingPlace = false
+
+    private var placeKey: String { "\(place.kind)|\(place.id?.uuidString ?? place.name)" }
+    private var continued: Companion.DeskThread? { threads?.first { $0.id == continuing } }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Text(request.text).lineLimit(4)
+                    if let note = request.note, !note.isEmpty {
+                        Text(note).font(.footnote).foregroundStyle(.secondary).lineLimit(3)
+                    }
+                }
+                Section("Place") {
+                    HStack(spacing: 10) {
+                        Image(systemName: MobileDeskPlaces.icon(place)).foregroundStyle(.secondary).frame(width: 22)
+                        Text(place.name).lineLimit(1)
+                        Spacer(minLength: 8)
+                        Button("Change") { changingPlace = true }
+                            .accessibilityIdentifier("desk-start-change-place")
+                    }
+                    .accessibilityIdentifier("desk-start-place")
+                }
+                threadSection
+                if continuing == nil { modelSection }
+            }
+            .tint(.blue)
+            .navigationTitle("Start There")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(continuing == nil ? "Start" : "Continue", action: begin)
+                        .fontWeight(.semibold)
+                        .disabled(threads == nil)
+                        .accessibilityIdentifier("desk-start-confirm")
+                }
+            }
+            .task(id: placeKey) { await load() }
+            .sheet(isPresented: $changingPlace) {
+                MobileDeskPlacePicker(current: place) { picked in
+                    guard !MobileDeskPlaces.same(place, picked) else { return }
+                    place = picked
+                    changed(picked)
+                }
+                .environment(store)
+            }
+        }
+        // Tall enough for the sessions to continue and the model, without scrolling.
+        .presentationDetents([.large])
+    }
+
+    /// "Continue in" each session like this one, then a new session; nothing when there are none.
+    @ViewBuilder private var threadSection: some View {
+        if threads == nil {
+            Section {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Looking for this work in \(place.name)\u{2026}").foregroundStyle(.secondary)
+                }
+            }
+        } else if let threads, !threads.isEmpty {
+            Section {
+                ForEach(threads) { thread in
+                    choice("Continue in \(thread.title)", detail: [thread.isRunning ? "Working now; it goes next" : nil, thread.detail].compactMap { $0 }.joined(separator: " \u{00B7} "),
+                           isOn: continuing == thread.id, id: "desk-thread-\(thread.id.uuidString)") { continuing = thread.id }
+                }
+                choice("New session", detail: "In \(place.name)", isOn: continuing == nil, id: "desk-thread-new") { continuing = nil }
+            } header: {
+                Text("Already in \(place.name)")
+            } footer: {
+                if let continued { Text("It goes to that session as its next message, on its own model (\(continued.settings ?? "as it is")).") }
+            }
+        }
+    }
+
+    private var modelSection: some View {
+        Section {
+            if let options {
+                CompactModelPicker(options: options, browsing: $browsing) { change in
+                    picks.add(change, backend: options.backend)
+                    Task { await loadOptions() }
+                }
+            } else if let problem {
+                Text(problem).foregroundStyle(.secondary)
+            } else {
+                HStack(spacing: 8) { ProgressView().controlSize(.small); Text("Loading models\u{2026}").foregroundStyle(.secondary) }
+            }
+        } header: {
+            Text("Model")
+        } footer: {
+            if options?.openModel != nil { Text("Runs on the PC's graphics card, at medium effort.") }
+        }
+    }
+
+    private func choice(_ title: String, detail: String, isOn: Bool, id: String, pick: @escaping () -> Void) -> some View {
+        Button(action: pick) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).foregroundStyle(.primary).lineLimit(2)
+                    if !detail.isEmpty { Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
+                }
+                Spacer(minLength: 8)
+                if isOn { Image(systemName: "checkmark").foregroundStyle(.tint) }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isOn ? [.isButton, .isSelected] : .isButton)
+        .accessibilityIdentifier(id)
+    }
+
+    /// The place's sessions like this work and a new session's options; picks start over.
+    private func load() async {
+        picks = .init(); browsing = nil
+        async let models: Void = loadOptions()
+        // An older Mac offers none: a new session, as before.
+        let found = (try? await store.deskThreads(request.id, place: place)) ?? []
+        threads = found
+        continuing = found.first { $0.match == "clear" }?.id
+        await models
+    }
+
+    private func loadOptions() async {
+        let id = place.id
+        do {
+            options = try await store.newChatOptions(picks, studio: place.kind == "studio" ? id : nil, project: place.kind == "project" ? id : nil)
+            problem = nil
+        } catch { problem = error.localizedDescription }
+    }
+
+    private func begin() {
+        var body = Companion.DeskStartRequest()
+        // The place shown goes along when it isn't where the Desk proposed.
+        if !MobileDeskPlaces.same(request.proposed, place) { body.place = place }
+        if let continued {
+            body.continueChat = continued.id
+        } else if !picks.isEmpty, let options {
+            // Only what was changed: otherwise it starts as a new session there would.
+            body.agent = options.backend
+            if let open = options.openModel { body.openModel = open } else {
+                body.model = options.model
+                body.effort = options.effort.isEmpty ? nil : options.effort
+            }
+        }
+        dismiss()
+        start(body, continued?.title ?? place.name)
     }
 }
 

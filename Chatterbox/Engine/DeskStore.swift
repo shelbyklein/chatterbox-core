@@ -3,8 +3,8 @@ import Foundation
 // The Desk: incoming requests (desk.json), place proposals, and what needs Shelby. plans/front-desk.md
 
 /// The Desk: what needs Shelby, work waiting to be placed, and what's working. It never does
-/// work itself: starting a request opens a session in its Studio or project, so work stays in
-/// its compartment. The service owns it; the phone and Claude's connector reach it through
+/// work itself: starting a request opens a session in its Studio or project (or continues one
+/// already there doing the same work), so work stays in its compartment. The service owns it; the phone and Claude's connector reach it through
 /// the companion API (/v1/desk), the Mac app through the service socket (operation "desk").
 ///
 /// Only the requests and what was silenced are kept (desk.json in the data folder). What
@@ -23,13 +23,17 @@ final class DeskStore {
     private(set) var revision = 1
     /// After the Desk changed, with what it shows now: the service tells the app (desk.changed).
     var onChange: ((Companion.Desk) -> Void)?
-    /// Sends a started request's first message. Tests replace it, so no agent starts.
+    /// Sends a started request to its session: a new one's first message, or the next in one
+    /// continued (queued while it works, as the phone's send is). Tests replace it, so no agent starts.
     var sendFirstMessage: (ChatSession, String) -> Void = { session, text in session.send(text) }
 
     /// The most requests kept; the oldest go first.
     static let limit = 200
     /// The most silences kept; the oldest go first.
     static let silenceLimit = 500
+    /// The most sessions offered to continue, and the least a match scores to be offered.
+    static let threadLimit = 5
+    static let threadMinimum = 2
     /// How long a reply that ends on a question counts as waiting on Shelby.
     static let replyWindow: TimeInterval = 48 * 3600
     static let loose = Companion.DeskPlace(kind: "loose", id: nil, name: "Loose session",
@@ -133,6 +137,49 @@ final class DeskStore {
         choices().map(Self.place) + [Self.loose]
     }
 
+    /// Sessions already in `place` (else where the request was proposed) that look like the
+    /// same work, best first: the request's and its note's words in each one's title (counted
+    /// twice) and in what it was first asked and last said. Only that Studio's or project's
+    /// own, open sessions; sidequests and automation runs report to their session instead.
+    /// The best is a clear match when it scores well and well ahead of the next.
+    func threads(for id: UUID, place chosen: Companion.DeskPlace? = nil) throws -> [Companion.DeskThread] {
+        guard let request = requests.first(where: { $0.id == id }) else { throw Failure(status: 404, message: "That request is gone.") }
+        guard let place = chosen ?? request.proposed else { return [] }
+        let said = PlaceSuggestion.words(request.text + (request.note.map { "\n" + $0 } ?? ""))
+        guard !said.isEmpty else { return [] }
+        let ranked = sessions(in: place)
+            .map { ($0, Self.overlap(said, with: $0)) }
+            .filter { $0.1 >= Self.threadMinimum }
+            .sorted { $0.1 != $1.1 ? $0.1 > $1.1 : Self.lastActive($0.0) > Self.lastActive($1.0) }
+            .prefix(Self.threadLimit)
+        let scores = ranked.map(\.1)
+        let clear = (scores.first ?? 0) >= 4 && (scores.count < 2 || scores[0] >= scores[1] + 3)
+        return ranked.enumerated().map { index, entry in
+            let session = entry.0
+            return .init(id: session.id, title: session.title, detail: session.lastActionSummary.map { Self.short($0, limit: 160) },
+                         settings: session.settingsDescription, updatedAt: Self.lastActive(session), isRunning: session.isRunning,
+                         match: index == 0 && clear ? "clear" : "possible")
+        }
+    }
+
+    /// What a new session in `place` would start with, given the picks so far (New Chat's
+    /// options for a Studio, a project's Sidechat, or a loose session). Nothing is created.
+    func options(for place: Companion.DeskPlace, picks: Companion.SettingsRequest = .init()) throws -> Companion.ChatOptions {
+        guard let model else { throw Failure(status: 503, message: "Chatterbox is starting.") }
+        switch place.kind {
+        case "studio":
+            guard let studio = place.id.flatMap(model.studio), studio.archivedAt == nil else { throw Failure(status: 404, message: "That Studio is gone.") }
+            return CompanionMapper.options(CompanionMapper.draftChat(picks, studio: studio))
+        case "project":
+            guard let project = model.sessions.first(where: { $0.id == place.id && $0.record.archivedAt == nil && $0.record.projectFolder != nil }) else {
+                throw Failure(status: 404, message: "That project's session is gone.")
+            }
+            return CompanionMapper.options(CompanionMapper.draftChat(picks, studio: nil, project: project))
+        default:
+            return CompanionMapper.options(CompanionMapper.draftChat(picks, studio: nil))
+        }
+    }
+
     // MARK: - Changing it
 
     /// Puts a request on the Desk, proposing the place it names, or else the one place that
@@ -193,10 +240,25 @@ final class DeskStore {
     }
 
     /// Starts a request where it was proposed, or in `body.place`: a new chat in a Studio, a new
-    /// Sidechat of a project's session, or a loose session. It's named from the request, which
-    /// becomes its first message (with the note, labelled), and leaves the Desk.
+    /// Sidechat of a project's session, or a loose session, on the agent and model chosen (else
+    /// as a new one there would start). It's named from the request, which becomes its first
+    /// message (with the note, labelled), and leaves the Desk. With `body.continueChat`, the
+    /// request is that session's next message instead (queued while it works) and nothing new starts.
     func start(_ id: UUID, _ body: Companion.DeskStartRequest = .init()) throws -> ChatSession {
         guard let request = requests.first(where: { $0.id == id }) else { throw Failure(status: 404, message: "That request is gone.") }
+        if let chat = body.continueChat {
+            guard let session = model?.sessions.first(where: { $0.id == chat }), session.record.archivedAt == nil else {
+                throw Failure(status: 404, message: "That session is gone.")
+            }
+            guard !session.isRestartingThread else {
+                throw Failure(status: 409, message: "That session is reconnecting. Try again when it's ready.")
+            }
+            requests.removeAll { $0.id == id }
+            save()
+            sendFirstMessage(session, Self.message(request))
+            changed()
+            return session
+        }
         guard let place = body.place ?? request.proposed else {
             throw Failure(status: 400, message: "Choose where this goes: a Studio, a project, or a loose session.")
         }
@@ -223,6 +285,9 @@ final class DeskStore {
         default:
             throw Failure(status: 400, message: "A place is a studio, a project, or loose.")
         }
+        // The model chosen, before anything's sent.
+        let settings = Companion.SettingsRequest(model: Self.clean(body.model), effort: Self.clean(body.effort), openModel: Self.clean(body.openModel))
+        if settings.model != nil || settings.effort != nil || settings.openModel != nil { CompanionMapper.apply(settings, to: session) }
         session.setTitle(Self.title(request.text))
         // Off the Desk (and saved so) before it's sent, so a request is never started twice.
         requests.removeAll { $0.id == id }
@@ -233,15 +298,24 @@ final class DeskStore {
     }
 
     /// The service socket's "desk" operation (the Mac app): `action` get, add, start, ignore,
-    /// silence or places, with the companion API's bodies, plus `id` for start and ignore.
-    /// Replies as the companion API does: the Desk, a started session's ChatDetail, or the
-    /// places. An agent's request is from Claude (or Codex), never from Shelby.
+    /// silence, places, threads or options, with the companion API's bodies, plus `id` for
+    /// start, ignore and threads. Replies as the companion API does: the Desk, a started
+    /// session's ChatDetail, the places, the sessions to continue, or a new session's options
+    /// in `place` (with `picks`, a SettingsRequest). An agent's request is from Claude (or
+    /// Codex), never from Shelby.
     func operation(_ body: JSON, agent: Bool) throws -> JSON {
         switch body["action"]?.string ?? "get" {
         case "get":
             return try .value(snapshot())
         case "places":
             return try .value(places())
+        case "threads":
+            let place = try body["place"].map { try $0.decode(Companion.DeskPlace.self) }
+            return try .value(threads(for: try Self.requestID(body), place: place))
+        case "options":
+            guard let place = try? body["place"]?.decode(Companion.DeskPlace.self) else { throw Failure(status: 400, message: "Say which place.") }
+            let picks = (try? body["picks"]?.decode(Companion.SettingsRequest.self)) ?? .init()
+            return try .value(options(for: place, picks: picks))
         case "add":
             guard var request = try? body.decode(Companion.DeskAddRequest.self) else { throw Failure(status: 400, message: "Say what needs doing.") }
             if agent { request.source = ["claude", "codex"].contains(request.source ?? "") ? request.source : "claude" }
@@ -349,6 +423,40 @@ final class DeskStore {
             return placeName(parent, depth: depth + 1)
         }
         return session.record.sidechatProjectFolder.map { ($0 as NSString).lastPathComponent }
+    }
+
+    /// A place's own open sessions: a Studio's chats, a project's session with its Sidechats
+    /// and worktrees, or loose ones. Never sidequests or automation runs.
+    private func sessions(in place: Companion.DeskPlace) -> [ChatSession] {
+        guard let model else { return [] }
+        let open = model.sessions.filter { $0.record.archivedAt == nil && $0.record.sidequestOf == nil && $0.record.automationID == nil }
+        switch place.kind {
+        case "studio":
+            guard let id = place.id else { return [] }
+            return open.filter { $0.record.studioID == id }
+        case "project":
+            guard let project = model.sessions.first(where: { $0.id == place.id }), let folder = project.record.projectFolder else { return [] }
+            return open.filter { $0.id == project.id || $0.record.sidechatOf == project.id || $0.record.worktreeOf == folder }
+        case "loose":
+            return open.filter {
+                $0.record.studioID == nil && $0.record.projectFolder == nil && $0.record.sidechatOf == nil && $0.record.sidechatProjectFolder == nil
+            }
+        default:
+            return []
+        }
+    }
+
+    private static func lastActive(_ session: ChatSession) -> Date { max(session.record.updatedAt, session.record.createdAt) }
+
+    /// How much of what was said a session shares: words in its title count twice, then words
+    /// in what it was first asked and what it last asked and said.
+    static func overlap(_ said: Set<String>, with session: ChatSession) -> Int {
+        let named = PlaceSuggestion.words(session.title)
+        let first = session.items.first { $0.kind == .user }
+        let lastAsked = session.items.last { $0.kind == .user }
+        let lastSaid = session.items.last { $0.kind == .assistant && $0.phase == .final }
+        let text = [first, lastAsked, lastSaid].compactMap { $0.map { String($0.text.prefix(2_000)) } }.joined(separator: "\n")
+        return named.intersection(said).count * 2 + PlaceSuggestion.words(text).subtracting(named).intersection(said).count
     }
 
     /// Open Studios, then projects' own sessions (not their Sidechats or worktrees), by name.

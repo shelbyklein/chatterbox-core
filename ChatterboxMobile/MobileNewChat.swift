@@ -59,21 +59,8 @@ struct MobileNewChatSheet: View {
         .tint(.blue)
     }
 
-    /// One change: switching agent or preset starts that part over; the rest add up.
     private func choose(_ change: Companion.SettingsRequest) {
-        if let preset = change.preset {
-            picks = .init(preset: preset)
-        } else if let backend = change.backend, backend != options?.backend {
-            // Another agent's model: that agent, with the model picked.
-            picks = .init(backend: backend, model: change.model)
-        } else if let open = change.openModel {
-            picks.openModel = open; picks.effort = nil
-        } else {
-            if let model = change.model { picks.model = model; picks.effort = nil; picks.openModel = nil }
-            if let effort = change.effort { picks.effort = effort }
-            if let mode = change.mode { picks.mode = mode }
-            if let fast = change.fastMode { picks.fastMode = fast }
-        }
+        picks.add(change, backend: options?.backend)
         Task { await load() }
     }
 

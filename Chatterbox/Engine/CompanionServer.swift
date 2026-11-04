@@ -365,6 +365,17 @@ final class CompanionServer {
             guard let body = try? Companion.decoder.decode(Companion.DeskSilenceRequest.self, from: request.body) else { return .error(400, "Say what to silence.") }
             DeskStore.shared.silence(body)
             return .json(DeskStore.shared.snapshot())
+        case ("GET", 4) where parts[1] == "desk" && parts[3] == "threads":
+            // ?place=<a Studio's or project's id, or "loose">; else where it was proposed.
+            guard let id = UUID(uuidString: parts[2]) else { return .error(404, "That request is gone.") }
+            var place: Companion.DeskPlace?
+            if let wanted = request.query["place"] {
+                guard let found = wanted == "loose" ? DeskStore.loose : DeskStore.shared.places().first(where: { $0.id?.uuidString.lowercased() == wanted.lowercased() }) else {
+                    return .error(404, "That place is gone.")
+                }
+                place = found
+            }
+            do { return .json(try DeskStore.shared.threads(for: id, place: place)) } catch { return failure(error) }
         case ("POST", 4) where parts[1] == "desk" && (parts[3] == "start" || parts[3] == "ignore"):
             guard let id = UUID(uuidString: parts[2]) else { return .error(404, "That request is gone.") }
             do {
@@ -393,7 +404,12 @@ final class CompanionServer {
                                                   preset: request.query["preset"].flatMap(UUID.init(uuidString:)),
                                                   fastMode: request.query["fastMode"].map { $0 == "true" },
                                                   openModel: request.query["openModel"])
-            return .json(CompanionMapper.options(CompanionMapper.draftChat(picks, studio: request.query["studio"].flatMap(UUID.init(uuidString:)).flatMap(model.studio))))
+            // A project's: as its new Sidechat would start.
+            let project = request.query["project"].flatMap(UUID.init(uuidString:)).flatMap { id in
+                model.sessions.first { $0.id == id && $0.record.archivedAt == nil && $0.record.projectFolder != nil }
+            }
+            return .json(CompanionMapper.options(CompanionMapper.draftChat(picks, studio: request.query["studio"].flatMap(UUID.init(uuidString:)).flatMap(model.studio),
+                                                                           project: project)))
         case ("GET", 2) where parts[1] == "presets":
             return .json(ModelPresets.shared.presets.map {
                 Companion.PresetInfo(id: $0.id, nickname: nil, title: $0.title, backend: $0.backend.rawValue, summary: ModelPresets.summary($0))
@@ -1017,7 +1033,13 @@ enum CompanionMapper {
         }
     }
 
-    static func draftChat(_ picks: Companion.SettingsRequest, studio: Studio?) -> ChatSession {
+    static func draftChat(_ picks: Companion.SettingsRequest, studio: Studio?, project: ChatSession? = nil) -> ChatSession {
+        if let project {
+            // A project's new Sidechat starts on its project's agent and settings.
+            let draft = ChatSession(record: ChatSession.sidechatRecord(of: project, anchor: project, number: 1))
+            apply(picks, to: draft)
+            return draft
+        }
         let defaults = AppPreferences.defaults
         var record = ConversationRecord(model: defaults.string(forKey: "defaultModel") ?? "default",
                                         effort: defaults.string(forKey: "defaultEffort") ?? "", personality: .friendly)

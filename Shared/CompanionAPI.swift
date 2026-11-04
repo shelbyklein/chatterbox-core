@@ -371,10 +371,36 @@ enum Companion {
         var note: String? = nil
     }
 
-    /// POST /v1/desk/<id>/start: start it where proposed, or in `place` instead.
+    /// POST /v1/desk/<id>/start: start it where proposed, or in `place` instead, on `agent`
+    /// and `model` (and `effort`, or an open model on the PC) when given. With `continueChat`,
+    /// nothing new starts: the request goes to that session as its next message (queued if
+    /// it's working), and the reply is that session. Older services ignore the new fields.
     struct DeskStartRequest: Codable {
         var place: DeskPlace? = nil
         var agent: String? = nil
+        var model: String? = nil
+        var effort: String? = nil
+        var openModel: String? = nil
+        var continueChat: UUID? = nil
+    }
+
+    /// GET /v1/desk/<id>/threads?place=<id or "loose"> (socket: action "threads", with `place`):
+    /// sessions already in that place that look like the same work, best first. Continuing
+    /// one sends the request there instead of starting a new session.
+    struct DeskThread: Codable, Identifiable, Hashable {
+        /// The session.
+        var id: UUID
+        /// Its own title.
+        var title: String
+        /// What it last said or was asked, short.
+        var detail: String? = nil
+        /// Its agent and model: "Claude · Opus 5.5 · Medium".
+        var settings: String? = nil
+        var updatedAt: Date
+        var isRunning: Bool
+        /// "clear": very likely the same work, chosen unless you pick otherwise; "possible":
+        /// it shares some of the request's words.
+        var match: String
     }
 
     /// POST /v1/desk/silence (socket: action "silence"): takes one waiting thing off the Desk,
@@ -596,4 +622,28 @@ enum Companion {
         decoder.dateDecodingStrategy = .iso8601
         return decoder
     }()
+}
+
+extension Companion.SettingsRequest {
+    /// Choices made before something starts (New Chat, the Desk's start step), one change at a
+    /// time: switching agent or preset starts that part over; the rest add up. `backend` is
+    /// the agent the options shown are for.
+    mutating func add(_ change: Companion.SettingsRequest, backend: String?) {
+        if let preset = change.preset {
+            self = .init(preset: preset)
+        } else if let picked = change.backend, picked != backend {
+            // Another agent's model: that agent, with the model picked.
+            self = .init(backend: picked, model: change.model)
+        } else if let open = change.openModel {
+            openModel = open; effort = nil
+        } else {
+            if let model = change.model { self.model = model; effort = nil; openModel = nil }
+            if let effort = change.effort { self.effort = effort }
+            if let mode = change.mode { self.mode = mode }
+            if let fast = change.fastMode { fastMode = fast }
+        }
+    }
+
+    /// Nothing chosen yet.
+    var isEmpty: Bool { backend == nil && model == nil && effort == nil && mode == nil && preset == nil && fastMode == nil && openModel == nil }
 }

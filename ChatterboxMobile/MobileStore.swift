@@ -281,11 +281,12 @@ final class MobileStore {
     }
 
     /// What a new chat would start with, given the choices so far (nothing is created).
-    func newChatOptions(_ picks: Companion.SettingsRequest, studio: UUID?) async throws -> Companion.ChatOptions {
+    /// `project`: as a new Sidechat of that project's session would start.
+    func newChatOptions(_ picks: Companion.SettingsRequest, studio: UUID?, project: UUID? = nil) async throws -> Companion.ChatOptions {
         var query = URLComponents()
         query.queryItems = [("backend", picks.backend), ("model", picks.model), ("effort", picks.effort), ("mode", picks.mode),
                             ("preset", picks.preset?.uuidString), ("fastMode", picks.fastMode.map { $0 ? "true" : "false" }),
-                            ("openModel", picks.openModel), ("studio", studio?.uuidString)]
+                            ("openModel", picks.openModel), ("studio", studio?.uuidString), ("project", project?.uuidString)]
             .compactMap { name, value in value.map { URLQueryItem(name: name, value: $0) } }
         return try await call("/v1/new-chat-options" + (query.percentEncodedQuery.map { "?" + $0 } ?? ""))
     }
@@ -447,9 +448,10 @@ final class MobileStore {
         return try await changeDesk { try await self.call("/v1/desk", method: "POST", body: body) }
     }
 
-    /// Starts a request where it was proposed, or in `place` instead; returns the new session.
-    func startDesk(_ request: UUID, place: Companion.DeskPlace? = nil, agent: String? = nil) async throws -> Companion.ChatDetail {
-        let body = try JSONEncoder().encode(Companion.DeskStartRequest(place: place, agent: agent))
+    /// Starts a request where it was proposed, or in `body.place` instead, on the model chosen;
+    /// or, with `body.continueChat`, sends it to that session. Returns the session it went to.
+    func startDesk(_ request: UUID, _ start: Companion.DeskStartRequest = .init()) async throws -> Companion.ChatDetail {
+        let body = try JSONEncoder().encode(start)
         deskChanges += 1
         defer { deskChanges += 1 }
         let started: Companion.ChatDetail = try await call("/v1/desk/\(request.uuidString)/start", method: "POST", body: body)
@@ -468,6 +470,13 @@ final class MobileStore {
     func silenceDesk(_ item: Companion.DeskWaiting) async throws -> Companion.Desk {
         let body = try JSONEncoder().encode(Companion.DeskSilenceRequest(chatID: item.chatID, id: item.id, text: item.text))
         return try await changeDesk { try await self.call("/v1/desk/silence", method: "POST", body: body) }
+    }
+
+    /// Sessions already in `place` (else where it was proposed) that look like the same work,
+    /// best first. An older Mac has none to offer.
+    func deskThreads(_ request: UUID, place: Companion.DeskPlace? = nil) async throws -> [Companion.DeskThread] {
+        let wanted = place.map { $0.kind == "loose" ? "loose" : $0.id?.uuidString ?? "loose" }
+        return try await call("/v1/desk/\(request.uuidString)/threads" + (wanted.map { "?place=" + $0 } ?? ""))
     }
 
     /// Where Desk work can go: Studios and projects, each with what belongs there.

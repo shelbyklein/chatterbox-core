@@ -9,8 +9,10 @@ import SwiftUI
 // pending approvals, plans and questions their cards show), so Approve here is the chat's own
 // Approve. Requests waiting to be placed, the places they can go, replies that ask you
 // something, and what was silenced come from the background service: socket operation "desk"
-// (action get, add, start, ignore, silence or places, with the HTTP API's bodies and replies),
-// which sends "desk.changed" when they change.
+// (action get, add, start, ignore, silence, places, threads or options, with the HTTP API's
+// bodies and replies), which sends "desk.changed" when they change. Start there opens a step
+// (DeskStartPopover): the place, a session already there doing the same work to continue, or
+// the agent and model for a new one. What starts runs in the background, with a note to open it.
 
 /// A session waiting on you, with what it asks.
 struct DeskNeed: Identifiable, Equatable {
@@ -83,6 +85,8 @@ final class DeskModel {
     private(set) var adding = false
     /// What last went wrong, shown under the header.
     var problem: String?
+    /// The last request started (or continued) here: it runs in the background, with a note to open it.
+    var startedNote: (name: String, chat: UUID, continued: Bool)?
     /// The service is older than the Desk: no requests until it restarts.
     private(set) var unsupported = false
     /// Approvals and plans answered here, hidden while the session catches up.
@@ -326,23 +330,51 @@ final class DeskModel {
 
     func choose(_ place: Companion.DeskPlace, for request: Companion.DeskRequest) { chosen[request.id] = place }
 
-    /// Start there: the service starts a session in the place shown (its first message is the
-    /// request's text) and this opens it.
-    func start(_ request: Companion.DeskRequest, in model: AppModel) async {
+    /// Start there, as its step chose: the service starts a session in the place shown (its
+    /// first message is the request's text), on `settings`' agent and model when given, or sends
+    /// the request to `continuing`, a session already there. It runs in the background.
+    func start(_ request: Companion.DeskRequest, continuing: Companion.DeskThread? = nil, settings: Companion.SettingsRequest? = nil) async {
         guard let place = place(for: request), !busy.contains(request.id) else { return }
         busy.insert(request.id)
         defer { busy.remove(request.id) }
         var body: [String: JSON] = ["action": "start", "id": .string(request.id.uuidString)]
         // The place you saw, proposed or chosen, goes with it.
         if let value = try? JSON.value(place) { body["place"] = value }
+        if let continuing {
+            body["continueChat"] = .string(continuing.id.uuidString)
+        } else if let settings {
+            for (key, value) in [("agent", settings.backend), ("model", settings.model), ("effort", settings.effort), ("openModel", settings.openModel)] {
+                if let value, !value.isEmpty { body[key] = .string(value) }
+            }
+        }
         do {
             let result = try await send(body, timeout: .seconds(60))
             problem = nil
             chosen[request.id] = nil
             if var desk = snapshot { desk.incoming.removeAll { $0.id == request.id }; snapshot = desk }
             refresh()
-            if let id = Self.startedSessionID(result) { await openWhenListed(id, in: model) }
+            // It runs in the background; the Desk stays, with a note to open it.
+            if let id = Self.startedSessionID(result) { startedNote = (continuing?.title ?? place.name, id, continuing != nil) }
         } catch { note(error, "start it") }
+    }
+
+    /// Sessions already in `place` that look like the same work, best first; none from a
+    /// service older than continuing.
+    func threads(for request: Companion.DeskRequest, in place: Companion.DeskPlace) async -> [Companion.DeskThread] {
+        guard canReachService, !unsupported else { return [] }
+        var body: [String: JSON] = ["action": "threads", "id": .string(request.id.uuidString)]
+        if let value = try? JSON.value(place) { body["place"] = value }
+        return (try? await send(body).decode([Companion.DeskThread].self)) ?? []
+    }
+
+    /// What a new session in `place` would start with, given the picks so far; nil from an
+    /// older service (it starts as a new session there would).
+    func options(in place: Companion.DeskPlace, picks: Companion.SettingsRequest) async -> Companion.ChatOptions? {
+        guard canReachService, !unsupported else { return nil }
+        var body: [String: JSON] = ["action": "options"]
+        if let value = try? JSON.value(place) { body["place"] = value }
+        if let value = try? JSON.value(picks) { body["picks"] = value }
+        return try? await send(body).decode(Companion.ChatOptions.self)
     }
 
     func ignore(_ request: Companion.DeskRequest) async {
@@ -534,6 +566,19 @@ struct DeskView: View {
                 Spacer()
             }
             askField
+            if let started = desk.startedNote {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                    Text("\(started.continued ? "Continued" : "Started") in \(started.name)").lineLimit(1)
+                    Button("Open") { Task { await desk.openWhenListed(started.chat, in: model) }; desk.startedNote = nil }
+                        .buttonStyle(.link)
+                    Button { desk.startedNote = nil } label: { Image(systemName: "xmark") }
+                        .buttonStyle(.borderless).help("Dismiss").accessibilityLabel("Dismiss")
+                }
+                .font(.callout)
+                .deskFrame("startedNote")
+                .task(id: started.chat) { try? await Task.sleep(for: .seconds(8)); if desk.startedNote?.chat == started.chat { desk.startedNote = nil } }
+            }
             if let problem = desk.problem {
                 HStack(spacing: 6) {
                     Image(systemName: desk.unsupported ? "info.circle" : "exclamationmark.triangle")
@@ -712,6 +757,7 @@ private struct DeskRequestRow: View {
     /// In two columns: as tall as its row.
     var fill = false
     @State private var choosing = false
+    @State private var starting = false
 
     var body: some View {
         let place = desk.place(for: request)
@@ -737,10 +783,13 @@ private struct DeskRequestRow: View {
                     .deskFrame("chip:\(request.id)")
                 Spacer(minLength: 8)
                 if busy { ProgressView().controlSize(.small) }
-                Button(busy ? "Starting\u{2026}" : "Start there") { Task { await desk.start(request, in: model) } }
+                Button(busy ? "Starting\u{2026}" : "Start there") { starting = true }
                     .buttonStyle(.borderedProminent)
                     .disabled(place == nil || busy)
-                    .help(place.map { "Start a session in \($0.name) with this as its first message" } ?? "Choose a place first")
+                    .help(place.map { "Start in \($0.name): choose the model, or continue a session already there" } ?? "Choose a place first")
+                    .popover(isPresented: $starting, arrowEdge: .bottom) {
+                        DeskStartPopover(step: DeskStartStep(request: request, desk: desk)) { starting = false }
+                    }
                     .deskFrame("start:\(request.id)")
                 if place != nil {
                     Button("Change place") { choosing = true }
@@ -779,6 +828,220 @@ private struct DeskPlaceChip: View {
         .background(Capsule().fill(place == nil ? Color.orange.opacity(0.12) : Color.primary.opacity(0.08)))
         .overlay(Capsule().strokeBorder(place == nil ? Color.orange.opacity(0.5) : Color.primary.opacity(0.14)))
         .contentShape(Capsule())
+    }
+}
+
+/// Start there's step, for one request: sessions already in its place doing the same work
+/// (a clear match is chosen), and a new session's agent and model as New Chat would start one
+/// there. Tests drive it directly.
+@MainActor
+@Observable
+final class DeskStartStep {
+    let request: Companion.DeskRequest
+    @ObservationIgnored let desk: DeskModel
+    /// Sessions in the place like this work; nil while they load.
+    private(set) var threads: [Companion.DeskThread]?
+    /// The session to continue; nil: a new one.
+    var continuing: UUID?
+    /// A new session's options, as picked so far; nil from an older service.
+    private(set) var options: Companion.ChatOptions?
+    private(set) var picks = Companion.SettingsRequest()
+    private(set) var loaded = false
+
+    init(request: Companion.DeskRequest, desk: DeskModel) {
+        self.request = request
+        self.desk = desk
+    }
+
+    var place: Companion.DeskPlace? { desk.place(for: request) }
+    var continued: Companion.DeskThread? { threads?.first { $0.id == continuing } }
+    /// The provider in use: an open model's, or the agent's.
+    var provider: String { options.map { $0.openModel != nil ? "open" : $0.backend } ?? "claude" }
+
+    /// The place's sessions like this work, and a new session's options; picks start over.
+    func load() async {
+        guard let place else { return }
+        picks = .init()
+        async let fresh = desk.options(in: place, picks: picks)
+        let found = await desk.threads(for: request, in: place)
+        threads = found
+        continuing = found.first { $0.match == "clear" }?.id
+        options = await fresh
+        loaded = true
+    }
+
+    /// One change to a new session's agent or model, as New Chat takes it.
+    func pick(_ change: Companion.SettingsRequest) async {
+        guard let place else { return }
+        picks.add(change, backend: options?.backend)
+        if let fresh = await desk.options(in: place, picks: picks) { options = fresh }
+    }
+
+    /// A model of `provider`'s ("claude", "codex" or "open"), as picking it would change things.
+    func change(picking id: String, of provider: String) -> Companion.SettingsRequest {
+        switch provider {
+        case "open": .init(openModel: id)
+        case options?.backend: .init(model: id)
+        default: .init(backend: provider, model: id)
+        }
+    }
+
+    func models(of provider: String) -> [Companion.ModelOption] {
+        switch provider {
+        case "open": options?.openModels ?? []
+        case "codex": options?.codexModels ?? []
+        default: options?.claudeModels ?? []
+        }
+    }
+
+    func start() async {
+        if let continued { return await desk.start(request, continuing: continued) }
+        // Only what was changed: otherwise it starts as a new session there would.
+        guard !picks.isEmpty, let options else { return await desk.start(request) }
+        let open = options.openModel
+        await desk.start(request, settings: .init(backend: options.backend, model: open == nil ? options.model : nil,
+                                                  effort: open == nil ? options.effort : nil, openModel: open))
+    }
+}
+
+/// Start there: the place (Change picks another), "Continue in" sessions already there doing
+/// the same work, or a new session with its agent and model. Start sends the choice.
+struct DeskStartPopover: View {
+    @State var step: DeskStartStep
+    let done: () -> Void
+    @State private var changingPlace = false
+    /// Which provider's models the model menu lists; nil: the one in use.
+    @State private var browsing: String?
+
+    private var placeKey: String { step.place.map { "\($0.kind)|\($0.id?.uuidString ?? $0.name)" } ?? "" }
+
+    var body: some View {
+        Group {
+            if changingPlace {
+                DeskPlacePicker(request: step.request, desk: step.desk) { changingPlace = false }
+            } else {
+                content.frame(width: 400)
+            }
+        }
+        .task(id: placeKey) { browsing = nil; await step.load() }
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Start there").font(.headline)
+                Text(step.request.text).font(.callout).foregroundStyle(.secondary).lineLimit(2)
+            }
+            if let place = step.place {
+                HStack(spacing: 8) {
+                    Image(systemName: DeskText.icon(place: place)).foregroundStyle(.secondary).frame(width: 18)
+                    Text(place.name).font(.body.weight(.medium)).lineLimit(1)
+                    Spacer(minLength: 8)
+                    Button("Change") { changingPlace = true }.controlSize(.small)
+                        .deskFrame("startChange")
+                }
+            }
+            threadChoices
+            if step.continuing == nil { modelChoice }
+            HStack {
+                if !step.loaded { ProgressView().controlSize(.small) }
+                Spacer()
+                Button("Cancel", action: done).keyboardShortcut(.cancelAction)
+                Button(step.continuing == nil ? "Start" : "Continue") {
+                    let step = step
+                    done()
+                    Task { await step.start() }
+                }
+                .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent)
+                .disabled(!step.loaded)
+                .deskFrame("startConfirm")
+            }
+        }
+        .padding(14)
+    }
+
+    /// Continue in each session like this work, or a new session; nothing when there are none.
+    @ViewBuilder private var threadChoices: some View {
+        if let threads = step.threads, !threads.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Already in \(step.place?.name ?? "this place")").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                ForEach(threads) { thread in
+                    DeskStartChoice(title: "Continue in \(thread.title)",
+                                    detail: [thread.isRunning ? "Working now; it goes next" : nil, thread.settings].compactMap { $0 }.joined(separator: " \u{00B7} "),
+                                    selected: step.continuing == thread.id) { step.continuing = thread.id }
+                        .deskFrame("thread:\(thread.id)")
+                }
+                DeskStartChoice(title: "New session", detail: "In \(step.place?.name ?? "this place")", selected: step.continuing == nil) { step.continuing = nil }
+                    .deskFrame("thread:new")
+            }
+        }
+    }
+
+    /// The provider, then its models in a menu, as the phone has them.
+    @ViewBuilder private var modelChoice: some View {
+        if let options = step.options {
+            let shown = browsing ?? step.provider
+            let models = step.models(of: shown)
+            let current = shown == step.provider ? models.first { $0.id == (options.openModel ?? options.model) } : nil
+            VStack(alignment: .leading, spacing: 6) {
+                Picker("Agent", selection: Binding(get: { shown }, set: { browsing = $0 == step.provider ? nil : $0 })) {
+                    Text("Claude").tag("claude")
+                    Text("Codex").tag("codex")
+                    if options.openModels != nil { Text("Open models").tag("open") }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .deskFrame("startProvider")
+                Picker("Model", selection: Binding(get: { current?.id }, set: { id in
+                    guard let id else { return }
+                    let change = step.change(picking: id, of: shown)
+                    browsing = nil
+                    Task { await step.pick(change) }
+                })) {
+                    if current == nil { Text("Choose a model").tag(String?.none) }
+                    ForEach(models) { Text($0.name).tag(Optional($0.id)) }
+                }
+                .pickerStyle(.menu)
+                .disabled(models.isEmpty)
+                .deskFrame("startModel")
+                if let detail = current?.detail, !detail.isEmpty {
+                    Text(detail).font(.caption).foregroundStyle(.secondary)
+                } else if current == nil, shown != step.provider {
+                    Text("Picking one switches to \(shown == "open" ? "an open model" : shown == "codex" ? "Codex" : "Claude").").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+}
+
+/// One choice in the start step: a radio-style row.
+private struct DeskStartChoice: View {
+    let title: String
+    let detail: String
+    let selected: Bool
+    let choose: () -> Void
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: choose) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: selected ? "largecircle.fill.circle" : "circle")
+                    .foregroundStyle(selected ? Color.accentColor : Color.secondary).padding(.top, 1)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title).lineLimit(1)
+                    if !detail.isEmpty { Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 6).padding(.vertical, 4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 6).fill(hovered ? Color.primary.opacity(0.07) : .clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 
