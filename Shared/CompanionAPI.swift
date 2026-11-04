@@ -386,6 +386,55 @@ enum Companion {
         var text: String? = nil
     }
 
+    // MARK: - Automations
+
+    /// A project's routine (GET /v1/automations): the Mac keeps one automation per weekday,
+    /// and those that share a project, name, instructions, time and agent show as one.
+    struct AutomationRoutine: Codable, Identifiable, Hashable {
+        /// Its first day's automation; any of `ids` names the routine in the routes.
+        var id: UUID
+        var ids: [UUID]
+        var title: String
+        var instructions: String
+        /// The project's name, and its folder.
+        var project: String
+        var projectFolder: String
+        /// "claude" or "codex": who does each run.
+        var agent: String
+        /// The model's name and the effort; nil: the agent's defaults.
+        var model: String? = nil
+        var effort: String? = nil
+        /// The weekdays it runs on, 1 Sunday to 7 Saturday.
+        var days: [Int]
+        var hour: Int
+        var minute: Int
+        /// On for any of its days.
+        var enabled: Bool
+        /// Days switched off on the Mac while others are on; nil when all match.
+        var pausedDays: [Int]? = nil
+        var lastRunAt: Date? = nil
+        /// The last run's session, while it's still there.
+        var lastThreadID: UUID? = nil
+        /// What the last run says last, as the session list shows it.
+        var lastResult: String? = nil
+        /// The last run is still working.
+        var isRunning: Bool? = nil
+        var nextRunAt: Date? = nil
+    }
+
+    /// POST /v1/automations/<id>: changes every day of the routine; leave the rest nil. New
+    /// days copy the routine, and days left out are deleted.
+    struct AutomationEdit: Codable {
+        var title: String? = nil
+        var instructions: String? = nil
+        var days: [Int]? = nil
+        var hour: Int? = nil
+        var minute: Int? = nil
+        var enabled: Bool? = nil
+        /// "claude" or "codex"; another agent starts on its default model and effort.
+        var agent: String? = nil
+    }
+
     /// Pin to Top on the Mac, or not.
     struct PinRequest: Codable {
         var pinned: Bool

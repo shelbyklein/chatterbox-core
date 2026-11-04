@@ -151,6 +151,12 @@ final class AppModel {
         if saved != pinnedThreadIDs { pinnedThreadIDs = saved }
     }
 
+    /// Goes up when the automations change from the phone ("automations.changed" from the
+    /// service): the Automations screens reload, rather than save over the change.
+    var automationsRevision = 0
+    /// Automations changed or ran from the phone (CompanionServer), where the app runs it itself.
+    func automationsChanged() { automationsRevision += 1 }
+
     /// Pin or unpin from the phone (CompanionServer), where the app runs it itself.
     func setPinned(_ session: ChatSession, _ pinned: Bool) {
         if pinned != isPinnedThread(session) { togglePinnedThread(session) }
@@ -1177,6 +1183,8 @@ final class AppModel {
         if event.kind=="connector.request",let id=event.payload?["id"]?.string,let client=event.payload?["client"]?.string{askToAllowConnector(id,client:client);return}
         // Pinned or unpinned on the phone: the service sends the new list.
         if event.kind=="pins.changed",let ids=event.payload?.array {pinnedThreadIDs=ids.compactMap{$0.string.flatMap(UUID.init(uuidString:))};return}
+        // Changed or run on the phone: the Automations screens read them again.
+        if event.kind=="automations.changed" {automationsChanged();return}
         if event.kind == "runtime.resync" { projectionRevisions.removeAll() }
         if event.kind=="runtime.resync" || event.kind=="runtime.configuration" || event.kind=="chat.created" || event.kind=="chat.deleted" {
             requestResync()

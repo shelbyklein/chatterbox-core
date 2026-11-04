@@ -377,6 +377,15 @@ final class CompanionServer {
                 }
                 return .json(CompanionMapper.detail(try DeskStore.shared.start(id, body), model: model))
             } catch { return failure(error) }
+        case ("GET", 2) where parts[1] == "automations":
+            return .json(CompanionMapper.automations(model))
+        case ("POST", 3) where parts[1] == "automations":
+            guard let id = UUID(uuidString: parts[2]) else { return .error(404, "That automation is gone.") }
+            guard let body = try? Companion.decoder.decode(Companion.AutomationEdit.self, from: request.body) else { return .error(400, "Bad change.") }
+            do { return .json(try editAutomation(id, body)) } catch { return failure(error) }
+        case ("POST", 4) where parts[1] == "automations" && parts[3] == "run":
+            guard let id = UUID(uuidString: parts[2]) else { return .error(404, "That automation is gone.") }
+            do { return .json(CompanionMapper.detail(try runAutomation(id), model: model)) } catch { return failure(error) }
         case ("GET", 2) where parts[1] == "new-chat-options":
             // What a new chat would start with, given the picks so far: nothing is created.
             let picks = Companion.SettingsRequest(backend: request.query["backend"], model: request.query["model"],
@@ -614,6 +623,55 @@ final class CompanionServer {
         }
     }
 
+    // MARK: - Automations
+
+    /// Changes a routine from the phone: every day of it, saved where the Mac's runner and its
+    /// Automations screens read them. The app is told, so it doesn't save over the change.
+    func editAutomation(_ id: UUID, _ change: Companion.AutomationEdit) throws -> Companion.AutomationRoutine {
+        guard let model else { throw Failure(status: 503, message: "Chatterbox is starting.") }
+        var change = change
+        change.title = change.title?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard change.title?.isEmpty != true else { throw Failure(status: 400, message: "Give the automation a name.") }
+        guard (change.instructions?.count ?? 0) <= 100_000 else { throw Failure(status: 400, message: "Those instructions are too long.") }
+        if let days = change.days, days.isEmpty || !days.allSatisfy((1...7).contains) {
+            throw Failure(status: 400, message: "Pick at least one day.")
+        }
+        guard (0...23).contains(change.hour ?? 0), (0...59).contains(change.minute ?? 0) else { throw Failure(status: 400, message: "That isn't a time.") }
+        guard change.agent.map({ Backend(rawValue: $0) != nil }) ?? true else { throw Failure(status: 400, message: "Pick Claude or Codex.") }
+        var all = ProjectAutomations.load()
+        // The agent it already has isn't a change: its model and effort stay.
+        if let agent = change.agent, let routine = ProjectAutomations.routines(in: all).first(where: { $0.contains { $0.id == id } }),
+           CompanionMapper.agent(of: routine[0], model: model) == agent { change.agent = nil }
+        guard let ids = ProjectAutomations.edit(id, change, in: &all) else { throw Failure(status: 404, message: "That automation is gone.") }
+        do { try ProjectAutomations.save(all) } catch { throw Failure(status: 503, message: "Couldn't save the automation: \(error.localizedDescription)") }
+        model.automationsChanged()
+        guard let routine = ProjectAutomations.routines(in: all).first(where: { $0.contains { ids.contains($0.id) } }) else {
+            throw Failure(status: 404, message: "That automation is gone.")
+        }
+        return CompanionMapper.routine(routine, state: ProjectAutomations.loadState(), model: model)
+    }
+
+    /// Runs a routine now, as Run Now on the Mac does, in a new session reporting to its
+    /// project's. The day that ran last is the one run, so a run of it still going is left alone.
+    func runAutomation(_ id: UUID) throws -> ChatSession {
+        guard let model else { throw Failure(status: 503, message: "Chatterbox is starting.") }
+        guard let routine = ProjectAutomations.routines(in: ProjectAutomations.load()).first(where: { $0.contains { $0.id == id } }) else {
+            throw Failure(status: 404, message: "That automation is gone.")
+        }
+        #if CHATTERBOX_HEADLESS
+        guard let runner = AutomationRunner.shared else { throw Failure(status: 503, message: "Automations aren't running yet.") }
+        let state = ProjectAutomations.loadState()
+        let latest = routine.max { (state[$0.id.uuidString]?.lastRun ?? .distantPast) < (state[$1.id.uuidString]?.lastRun ?? .distantPast) } ?? routine[0]
+        let thread: UUID
+        do { thread = try runner.run(latest, manual: true) } catch { throw Failure(status: 409, message: error.localizedDescription) }
+        model.automationsChanged()
+        guard let run = model.sessions.first(where: { $0.id == thread }) else { throw Failure(status: 503, message: "The run started, but its session isn't there.") }
+        return run
+        #else
+        throw Failure(status: 503, message: "Automations run in Chatterbox's background service, which isn't running.")
+        #endif
+    }
+
     private func pair(_ request: HTTPRequest) -> HTTPResponse {
         guard isEnabled else { return .error(403, "The iPhone app is turned off in Chatterbox's Settings.") }
         guard let body = try? Companion.decoder.decode(Companion.PairRequest.self, from: request.body) else {
@@ -744,6 +802,57 @@ enum CompanionMapper {
         }
         return Companion.ChatList(revision: model.companionListRevision, groups: groups,
                                   pins: nil, activity: Array(activity.prefix(500)))
+    }
+
+    // MARK: Automations
+
+    /// Every project's routines: the soonest to run first, then those switched off, by name.
+    static func automations(_ model: AppModel) -> [Companion.AutomationRoutine] {
+        let state = ProjectAutomations.loadState()
+        return ProjectAutomations.routines(in: ProjectAutomations.load()).map { routine($0, state: state, model: model) }.sorted { a, b in
+            switch (a.nextRunAt, b.nextRunAt) {
+            case let (x?, y?) where x != y: x < y
+            case (_?, nil): true
+            case (nil, _?): false
+            default: (a.title + "\u{0}" + a.project).localizedStandardCompare(b.title + "\u{0}" + b.project) == .orderedAscending
+            }
+        }
+    }
+
+    /// A routine's days (ProjectAutomations.routines) as the phone shows it: when it runs, who
+    /// runs it, and its last run.
+    static func routine(_ days: [ProjectAutomation], state: [String: AutomationRunState], model: AppModel, now: Date = Date()) -> Companion.AutomationRoutine {
+        let first = days[0]
+        let agent = agent(of: first, model: model)
+        let modelName = first.model.map { id in
+            agent == Backend.codex.rawValue ? CodexAppServer.shared.models.first { $0.model == id }?.displayName ?? id
+                : ClaudeModels.shared.models.first { $0.value == id }?.displayName ?? id
+        }
+        let last = days.compactMap { day in state[day.id.uuidString].flatMap { run in run.lastRun.map { (at: $0, thread: run.threadID) } } }
+            .max { $0.at < $1.at }
+        let run = last?.thread.flatMap { id in model.sessions.first { $0.id == id } }
+        let on = days.filter(\.enabled)
+        let paused = Array(Set(days.filter { !$0.enabled }.map(\.weekday))).sorted()
+        return .init(id: first.id, ids: days.map(\.id), title: first.title, instructions: first.instructions,
+                     project: projectSession(first.projectFolder, model: model)?.projectName ?? URL(fileURLWithPath: first.projectFolder).lastPathComponent,
+                     projectFolder: first.projectFolder, agent: agent, model: modelName, effort: first.effort.map(RuntimePaths.effortLabel),
+                     days: Array(Set(days.map(\.weekday))).sorted(), hour: first.hour, minute: first.minute,
+                     enabled: !on.isEmpty, pausedDays: on.isEmpty || paused.isEmpty ? nil : paused,
+                     lastRunAt: last?.at, lastThreadID: run?.id, lastResult: run?.lastActionSummary, isRunning: run?.isRunning,
+                     nextRunAt: on.compactMap { ProjectAutomations.nextOccurrence(of: $0, after: now) }.min())
+    }
+
+    /// Who does an automation's runs: its own agent, its preset's, or else its project's.
+    static func agent(of automation: ProjectAutomation, model: AppModel) -> String {
+        if let project = projectSession(automation.projectFolder, model: model) {
+            return ChatSession.automationBackend(automation, project: project).rawValue
+        }
+        return automation.backend.flatMap(Backend.init(rawValue:))?.rawValue ?? Backend.claude.rawValue
+    }
+
+    /// A project's own session, where its automations report.
+    private static func projectSession(_ folder: String, model: AppModel) -> ChatSession? {
+        model.activeSessions.first { $0.record.projectFolder == folder && $0.record.worktreeOf == nil && $0.record.sidechatOf == nil }
     }
 
     static func pin(_ pin: Pin) -> Companion.Pin {

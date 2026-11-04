@@ -483,6 +483,25 @@ final class MobileStore {
         return fresh
     }
 
+    // MARK: Automations
+
+    /// Every project's routines, the soonest to run first.
+    func automations() async throws -> [Companion.AutomationRoutine] {
+        try await call("/v1/automations")
+    }
+
+    /// Changes every day of a routine; the answer is the routine as it is now.
+    func editAutomation(_ id: UUID, _ change: Companion.AutomationEdit) async throws -> Companion.AutomationRoutine {
+        try await call("/v1/automations/\(id.uuidString)", method: "POST", body: try JSONEncoder().encode(change))
+    }
+
+    /// Runs a routine now, as Run Now on the Mac does; returns the run's session.
+    func runAutomation(_ id: UUID) async throws -> Companion.ChatDetail {
+        let run: Companion.ChatDetail = try await call("/v1/automations/\(id.uuidString)/run", method: "POST", body: Data("{}".utf8))
+        await loadChats()
+        return run
+    }
+
     // MARK: - Plumbing
 
     private func call<T: Decodable>(_ path: String, method: String = "GET", body: Data? = nil) async throws -> T {

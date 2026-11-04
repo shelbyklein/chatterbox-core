@@ -53,6 +53,9 @@ struct ChatListView: View {
     @State private var appearance = false
     @State private var notificationSettings = false
     @State private var showingActivity = false
+    @State private var showingAutomations = false
+    /// A run's session picked in Automations: opened once the sheet has closed.
+    @State private var automationPick: UUID?
     @State private var startingNewChat = false
     @State private var newChatStudio: UUID?
     @State private var activityPick: UUID?
@@ -110,6 +113,9 @@ struct ChatListView: View {
             // Opening a chat while the sheet is still closing is dropped; wait until it's gone.
             if let id = activityPick { activityPick = nil; MobilePushNotifications.shared.pendingChat = id }
         }) { MobileActivityView { activityPick = $0 }.environment(store) }
+        .sheet(isPresented: $showingAutomations, onDismiss: {
+            if let id = automationPick { automationPick = nil; MobilePushNotifications.shared.pendingChat = id }
+        }) { MobileAutomationsView { automationPick = $0 }.environment(store) }
         .sheet(isPresented: $startingNewChat) {
             MobileNewChatSheet(studios: newChatStudios, start: { open($0.summary) }, studio: newChatStudio).environment(store)
         }
@@ -595,6 +601,7 @@ struct ChatListView: View {
     private var connectionItems: some View {
         if let connection = store.connection { Text("Connected to \(connection.macName)") }
         Button { showingActivity = true } label: { Label("Activity", systemImage: "clock") }
+        Button { showingAutomations = true } label: { Label("Automations", systemImage: "clock.arrow.circlepath") }
         #if canImport(RoyalVNCKit)
         Button { store.showingMacScreen = true } label: { Label("Mac Screen", systemImage: "display") }
         #endif

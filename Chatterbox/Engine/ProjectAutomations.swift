@@ -98,6 +98,78 @@ enum ProjectAutomations {
         return latest > max(state?.lastRun ?? automation.createdAt, automation.createdAt)
     }
 
+    // MARK: - Routines
+
+    /// What a routine's days share: everything but the day, whether it's on, and their own ids.
+    private struct RoutineKey: Hashable {
+        var projectFolder: String
+        var title: String
+        var instructions: String
+        var hour: Int
+        var minute: Int
+        var backend: String?
+        var model: String?
+        var effort: String?
+        var preset: UUID?
+
+        init(_ automation: ProjectAutomation) {
+            projectFolder = automation.projectFolder; title = automation.title; instructions = automation.instructions
+            hour = automation.hour; minute = automation.minute
+            backend = automation.backend; model = automation.model; effort = automation.effort; preset = automation.preset
+        }
+    }
+
+    /// The automations as routines, as the phone shows them: a routine that runs on several
+    /// days is one automation per day, alike but for the day (and whether it's on). Each
+    /// routine's days in weekday order; routines in the order they were first set up.
+    static func routines(in automations: [ProjectAutomation]) -> [[ProjectAutomation]] {
+        var order: [RoutineKey] = []
+        var groups: [RoutineKey: [ProjectAutomation]] = [:]
+        for automation in automations {
+            let key = RoutineKey(automation)
+            if groups[key] == nil { order.append(key) }
+            groups[key, default: []].append(automation)
+        }
+        return order.compactMap { groups[$0]?.sorted { $0.weekday < $1.weekday } }
+    }
+
+    /// Changes every day of the routine `id` belongs to: what `change` sets, and its days (a
+    /// new day copies the routine; a day left out is deleted). New days and a new time run from
+    /// now on. An agent named starts on its default model and effort, as picking it on the Mac
+    /// does. `change` is already checked.
+    /// Returns the routine's ids after, or nil when there's no such automation.
+    static func edit(_ id: UUID, _ change: Companion.AutomationEdit, in automations: inout [ProjectAutomation], now: Date = Date()) -> [UUID]? {
+        guard let routine = routines(in: automations).first(where: { $0.contains { $0.id == id } }), let first = routine.first else { return nil }
+        var ids = Set(routine.map(\.id))
+        if let days = change.days.map({ Set($0) }) {
+            // New days go after the routine's others, and run from now on, not for a time already past.
+            var at = (automations.lastIndex { ids.contains($0.id) } ?? automations.count - 1) + 1
+            for day in days.subtracting(routine.map(\.weekday)).sorted() {
+                var copy = first
+                copy.id = UUID(); copy.weekday = day; copy.createdAt = now
+                copy.enabled = routine.contains(where: \.enabled)
+                automations.insert(copy, at: at); at += 1
+                ids.insert(copy.id)
+            }
+            automations.removeAll { ids.contains($0.id) && !days.contains($0.weekday) }
+            ids = ids.filter { id in automations.contains { $0.id == id } }
+        }
+        for index in automations.indices where ids.contains(automations[index].id) {
+            if let title = change.title { automations[index].title = title }
+            if let instructions = change.instructions { automations[index].instructions = instructions }
+            if let hour = change.hour { automations[index].hour = hour }
+            if let minute = change.minute { automations[index].minute = minute }
+            // A new time runs from now on: one already past today doesn't run the moment it's set.
+            if change.hour != nil || change.minute != nil { automations[index].createdAt = now }
+            if let enabled = change.enabled { automations[index].enabled = enabled }
+            if let agent = change.agent {
+                automations[index].backend = agent
+                automations[index].model = nil; automations[index].effort = nil; automations[index].preset = nil
+            }
+        }
+        return automations.filter { ids.contains($0.id) }.map(\.id)
+    }
+
     /// "Mondays at 9:00 AM".
     static func scheduleText(_ automation: ProjectAutomation) -> String {
         let day = Calendar.current.weekdaySymbols[max(0, min(6, automation.weekday - 1))]

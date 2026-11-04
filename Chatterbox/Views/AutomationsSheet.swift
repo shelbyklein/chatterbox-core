@@ -62,6 +62,8 @@ struct AutomationsSheet: View {
         }
         .frame(width: 640, height: 620)
         .task { reload() }
+        // Changed or run from the phone: read again, so the next change here doesn't save over it.
+        .onChange(of: model.automationsRevision) { reload() }
     }
 
     @ViewBuilder
@@ -131,7 +133,10 @@ struct AutomationsSheet: View {
         state = ProjectAutomations.loadState()
     }
 
+    /// Saves this project's automations; other projects' are kept as saved (the phone may
+    /// have changed them since).
     private func commit() {
+        automations = ProjectAutomations.load().filter { $0.projectFolder != projectFolder } + mine
         do { try ProjectAutomations.save(automations); problem = nil }
         catch { problem = "Couldn't save: \(error.localizedDescription)" }
     }
@@ -311,6 +316,7 @@ struct AutomationsCenter: View {
         .task {
             while !Task.isCancelled { reload(); do { try await Task.sleep(for: .seconds(15)) } catch { return } }
         }
+        .onChange(of: model.automationsRevision) { reload() }
     }
 }
 

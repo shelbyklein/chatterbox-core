@@ -27,6 +27,9 @@ struct MobileDeskView: View {
     @State private var loadProblem: String?
     /// An action that didn't go through.
     @State private var actionProblem: String?
+    @State private var showingAutomations = false
+    /// A run's session picked in Automations: opened once the sheet has closed.
+    @State private var automationPick: UUID?
 
     /// What the Desk's tab counts, as of its last answer: what needs you and requests
     /// waiting to be placed.
@@ -76,9 +79,20 @@ struct MobileDeskView: View {
             .scrollDismissesKeyboard(.interactively)
             .navigationTitle("Desk")
             .navigationBarTitleDisplayMode(.large)
-            .toolbar { ToolbarItem(placement: .topBarTrailing) { FeedbackButton() } }
+            .toolbar {
+                // Every project's routines, to change or run (MobileAutomations.swift).
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { showingAutomations = true } label: { Image(systemName: "clock.arrow.circlepath") }
+                        .accessibilityLabel("Automations")
+                        .accessibilityIdentifier("desk-automations")
+                }
+                ToolbarItem(placement: .topBarTrailing) { FeedbackButton() }
+            }
             .refreshable { await refresh() }
         }
+        .sheet(isPresented: $showingAutomations, onDismiss: {
+            if let id = automationPick { automationPick = nil; open(id) }
+        }) { MobileAutomationsView { automationPick = $0 }.environment(store) }
         .sheet(item: $choosing) { request in
             MobileDeskPlacePicker(current: place(for: request)) { chosen[request.id] = $0 }
                 .environment(store)
