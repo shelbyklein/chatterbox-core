@@ -783,6 +783,8 @@ struct BackgroundServiceSection: View {
     var restart = BackgroundServiceRestart.shared
     /// The service shuts down booted iOS simulators nothing has used for 30 minutes (SimulatorSweeper).
     @AppStorage("idleSimulatorShutdown") private var idleSimulatorShutdown = true
+    /// Open models on Shelby-PC offered in model pickers (PCModels.enabled); off while the PC is down.
+    @AppStorage("openModelsEnabled") private var openModelsEnabled = true
     /// The Mac's pressure (PressureMonitor): when it's busy or overloaded, and whether work
     /// threads wait. Defaults as MacPressure.Thresholds.
     @AppStorage("pressureHoldsWork") private var pressureHoldsWork = true
@@ -810,6 +812,9 @@ struct BackgroundServiceSection: View {
                 .accessibilityIdentifier("idle-simulator-shutdown")
             Text("Booted simulators no build, test or Simulator window has used for 30 minutes are shut down (never deleted) to free their memory. Logged in chatterboxd.log.")
                 .font(.caption).foregroundStyle(.secondary)
+            Toggle("Offer open models on \(RemoteMachine.pc.name)", isOn: $openModelsEnabled)
+                .help("Show the Open models choice in model pickers on the Mac and the phone. Turn it off while the PC is down; chats already on an open model keep theirs.")
+                .accessibilityIdentifier("open-models-enabled")
             LabeledContent("Mac load") { MacPressureBadge(alwaysLabelled: true) }
             Toggle("Hold back work threads when the Mac is under pressure", isOn: $pressureHoldsWork)
                 .help("While the Mac is busy, new work threads wait to start until it's OK; while it's overloaded, work threads don't start their next turn either. A reply already going is never stopped.")

@@ -1128,7 +1128,7 @@ enum CompanionMapper {
                      effort: isCodex ? (session.record.codex?.effort ?? "") : session.record.effort,
                      claudeModels: claude, codexModels: codex, modes: modes, mode: session.mode.id, presets: presets,
                      fastMode: session.supportsFastMode ? session.fastMode : nil,
-                     openModels: open, openModel: session.record.openModel)
+                     openModels: PCModels.enabled ? open : nil, openModel: session.record.openModel)
     }
 
     /// A chat that's never saved, set up as a new one would be, then with `picks` applied:

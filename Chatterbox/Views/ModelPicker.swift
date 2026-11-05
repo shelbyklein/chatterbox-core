@@ -120,7 +120,7 @@ struct ModelPopover: View {
                     Picker("Provider", selection: $provider) {
                         Text("Claude").tag(ModelProvider.claude)
                         Text("Codex").tag(ModelProvider.codex)
-                        Text("Open models").tag(ModelProvider.open)
+                        if PCModels.enabled || session.record.openModel != nil { Text("Open models").tag(ModelProvider.open) }
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()

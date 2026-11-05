@@ -183,7 +183,12 @@ final class PCModels {
     private(set) var reachable: Bool?
     private var checkedAt: Date?
 
+    /// Open models offered at all (Settings → Background service): off while the PC is down, so
+    /// pickers don't offer them and nothing reaches for the PC to list them.
+    nonisolated static var enabled: Bool { AppPreferences.defaults.object(forKey: "openModelsEnabled") as? Bool ?? true }
+
     func refresh(force: Bool = false) async {
+        guard Self.enabled else { models = []; reachable = nil; checkedAt = nil; return }
         if !force, let checkedAt, Date().timeIntervalSince(checkedAt) < 60 { return }
         checkedAt = Date()
         do {
