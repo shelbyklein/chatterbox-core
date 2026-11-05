@@ -907,6 +907,31 @@ struct SessionOriginLabel: View {
     }
 }
 
+/// A change made here (tags, name, place, settings…) the background service hasn't confirmed
+/// for a while: nothing shows for the first `RuntimeOutbox.slowAfter` seconds (RuntimeOutbox).
+struct PendingSaveLabel: View {
+    let session: ChatSession
+    var compact = false
+    var body: some View {
+        if let status = RuntimeOutbox.shared.status(session.id) {
+            switch status {
+            case .saving:
+                label("Saving\u{2026}", icon: "arrow.up.circle")
+                    .help("A change to this session is on its way to Chatterbox's background service.")
+            case .retrying(let problem):
+                label("Not saved yet", icon: "arrow.clockwise.circle")
+                    .help("A change to this session hasn't reached Chatterbox's background service yet; it keeps trying, and goes when it's back. (\(problem))")
+            }
+        }
+    }
+    private func label(_ text: String, icon: String) -> some View {
+        Group {
+            if compact { Image(systemName: icon).accessibilityLabel(text) } else { Label(text, systemImage: icon) }
+        }
+        .font(.caption2).foregroundStyle(.secondary)
+    }
+}
+
 /// A pinned session in the sidebar, as compact as an Activity row: its status, then its title.
 struct PinnedSidebarRow: View {
     @Environment(AppModel.self) private var model
@@ -930,6 +955,7 @@ struct PinnedSidebarRow: View {
             Text(session.record.projectFolder != nil ? session.projectName : session.title)
                 .font(.caption.weight(session.isWaitingOnYou ? .semibold : .regular)).lineLimit(1)
             Spacer(minLength: 6)
+            PendingSaveLabel(session: session, compact: true)
             // Where it's from, on the same line: "USA Archery", "Project", "Chat". A long
             // title gives way to it.
             Text(origin).font(.caption2).foregroundStyle(.secondary).lineLimit(1).fixedSize()
@@ -1039,6 +1065,7 @@ struct SidebarRow: View {
                     .help("A sidechat sharing its parent's folder. End Sidechat archives its history.")
             }
             Spacer(minLength: 0)
+            PendingSaveLabel(session: session, compact: true)
             // Waiting on you, or a finished reply you haven't seen.
             if Attention.shared.unread.contains(session.id)
                 || session.isWaitingOnYou {

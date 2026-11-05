@@ -24,6 +24,8 @@ import Darwin
     private(set) var connected=false
     private(set) var supportsPriorityList=false
     private(set) var supportsNavigationSummaries=false
+    /// The service's "metadata" op takes only the fields that changed (RuntimeOutbox).
+    private(set) var supportsMetadataFields=false
     private(set) var problem:String?
     var onEvent:((RuntimeEvent)->Void)?
     @ObservationIgnored private var socket:RuntimeSocket?
@@ -48,6 +50,7 @@ import Darwin
                         let hello = try await self.request("hello",body:["role":.string(self.role)])
                         self.supportsPriorityList = hello["priorityList"]?.bool == true
                         self.supportsNavigationSummaries = hello["navigationSummaries"]?.bool == true
+                        self.supportsMetadataFields = hello["metadataFields"]?.bool == true
                         let replay=try await self.request("subscribe",body:["after":.number(Double(self.cursor))])
                         self.connected=true;self.problem=nil;delay=1
                         // A full snapshot replaces expired/initial history. Replaying it first
@@ -127,14 +130,17 @@ import Darwin
         Task {
             do{_ = try await request(operation,body:body)}
             catch{
-                // Drafts and chat metadata are re-sent with the next change, so a slow reply
-                // to one isn't worth interrupting you; failed commands still show.
+                // Drafts are re-sent until confirmed, and session metadata, settings, pins,
+                // Studios and preferences go through RuntimeOutbox (kept until confirmed), so a
+                // slow reply to one isn't worth interrupting you; failed commands still show.
                 if Self.backgroundSyncs.contains(operation){NSLog("Chatterbox: background sync \(operation) failed: \(error.localizedDescription)")}
                 else{problem=error.localizedDescription}
             }
         }
     }
     func clearProblem(){problem=nil}
+    /// A failure worth showing that didn't come from `command` (RuntimeOutbox gives up on a change).
+    func report(_ problem:String){self.problem=problem}
     private static let backgroundSyncs:Set<String>=["setDraft","metadata","preferences","pins","studios"]
     private func receive(_ reply:RuntimeReply){
         if let event=reply.event{deliver(event);return}

@@ -452,6 +452,12 @@ final class AppModel {
         // The UI can crash or hang even when the daemon owns its conversations.
         Diagnostics.shared.start()
         if RuntimeClient.usesDaemon {
+            // Changes not confirmed before the last quit go again, and show meanwhile.
+            let outbox = RuntimeOutbox.shared
+            outbox.file = directory.deletingLastPathComponent().appendingPathComponent("mac-outbox.json")
+            outbox.localRecord = { [weak self] id in self?.sessions.first { $0.id == id }?.record }
+            outbox.onSettled = { [weak self] id in self?.refreshSession(id, immediately: true) }
+            outbox.load()
             restoreNavigationCache()
             // The Desk is new: the app's first start with it opens Home on the Desk, once.
             if Bundle.main.bundleIdentifier == Flavor.current.appBundleID, !AppPreferences.defaults.bool(forKey: "deskIntroduced") {
@@ -626,7 +632,7 @@ final class AppModel {
 
     func delete(_ session: ChatSession, selectingReplacement: Bool = true) {
         if RuntimeClient.usesDaemon {
-            RuntimeClient.shared.command("delete",body:["chatID":.string(session.id.uuidString)])
+            RuntimeOutbox.shared.delete(session.id)
             // Gone from the lists now, not after the service's next full chat list (seconds
             // when it's busy). If the delete fails, that list brings the chat back.
             sessions.removeAll { $0.id == session.id }
@@ -820,7 +826,10 @@ final class AppModel {
         let session = ChatSession(record: record)
         if RuntimeClient.usesDaemon {
             bindProjection(session)
-            if !projecting { RuntimeClient.shared.command("create",body:["record":(try? .value(record)) ?? .null]) }
+            if !projecting {
+                var base = record; base.items = []; serviceBase[record.id] = base
+                RuntimeOutbox.shared.enqueue(record.id, op: "create", value: (try? .value(record)) ?? .null)
+            }
             return session
         }
         session.onChange = { [weak self] session in
@@ -886,7 +895,7 @@ final class AppModel {
     private var studiosFile: URL { directory.deletingLastPathComponent().appendingPathComponent("Studios.json") }
 
     func saveStudios() {
-        if RuntimeClient.usesDaemon {RuntimeClient.shared.command("studios",body:["studios":(try? .value(studios)) ?? []]);return}
+        if RuntimeClient.usesDaemon {RuntimeOutbox.shared.enqueue(nil,op:"studios",value:(try? .value(studios)) ?? []);return}
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         do {
@@ -981,6 +990,9 @@ final class AppModel {
         let chatID=session.id
         session.remoteCommand = { [weak session] operation, payload in
             var body=payload.object ?? [:];body["chatID"] = .string(chatID.uuidString)
+            // Settings, the Brief, archiving and Remote Control are kept until the service has
+            // them (RuntimeOutbox), and show here meanwhile.
+            if let session, Self.outboxOperations.contains(operation) { Self.enqueue(operation, payload, for: session); return }
             guard operation=="setDraft" else { RuntimeClient.shared.command(operation,body:.object(body)); return }
             // A draft counts as saved only once the service confirms this exact text.
             let text=payload["text"]?.string
@@ -994,10 +1006,54 @@ final class AppModel {
             }
         }
         session.onChange = { [weak self] changed in
-            guard self?.projecting == false else{return}
-            var metadata=changed.record;metadata.items=[]
-            RuntimeClient.shared.command("metadata",body:["record":(try? .value(metadata)) ?? .null])
+            guard let self, !self.projecting else{return}
+            self.metadataChanged(changed)
         }
+    }
+    private static let outboxOperations: Set<String> = ["settings", "setBrief", "archive", "remoteControl"]
+    /// Settings fields that show on the record as they are (others the service works out).
+    private static let shownSettings: Set<String> = ["model", "effort", "personality"]
+    private static func enqueue(_ operation: String, _ payload: JSON, for session: ChatSession) {
+        let outbox = RuntimeOutbox.shared
+        switch operation {
+        case "settings":
+            let values = payload.object ?? [:]
+            var overlays: [String: [String: JSON]] = [:]
+            for (key, value) in values where shownSettings.contains(key) { overlays[key] = [key: value] }
+            if !overlays.isEmpty, let shown = session.record.merging(overlays.values.reduce(into: [:]) { $0.merge($1) { $1 } }) { session.record = shown }
+            outbox.enqueue(session.id, op: operation, values: values, overlays: overlays)
+        case "setBrief":
+            let text = payload["brief"]?.string ?? ""
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            session.record.brief = trimmed.isEmpty ? nil : trimmed
+            outbox.enqueue(session.id, op: operation, value: .string(text), overlay: ["brief": trimmed.isEmpty ? .null : .string(trimmed)])
+        case "archive":
+            let archived = payload["archived"]?.bool ?? true
+            let date: JSON = archived ? ((try? .value(session.record.archivedAt ?? Date())) ?? .string("")) : .null
+            outbox.enqueue(session.id, op: operation, value: .bool(archived), overlay: ["archivedAt": date])
+        case "remoteControl":
+            let on = payload["enabled"]?.bool ?? false
+            session.record.remoteControl = on
+            outbox.enqueue(session.id, op: operation, value: .bool(on), overlay: ["remoteControl": .bool(on)])
+        default: break
+        }
+    }
+    /// The service's copy of each session's metadata (as its last update had it), to tell what
+    /// changed here. Only those fields are sent: the rest may be stale.
+    @ObservationIgnored private var serviceBase: [UUID: ConversationRecord] = [:]
+    private func metadataChanged(_ session: ChatSession) {
+        let outbox = RuntimeOutbox.shared
+        let current = session.record.metadataFields()
+        let base = serviceBase[session.id]?.metadataFields() ?? [:]
+        // Fields a pending setting shows (its model, say) go with that setting.
+        let covered = outbox.overlayKeys(session.id, excluding: "metadata")
+        var changes: [String: JSON] = [:]
+        for key in ConversationRecord.metadataKeys where !covered.contains(key) {
+            let now = current[key] ?? .null
+            let known = outbox.value(session.id, op: "metadata", key: key) ?? base[key] ?? .null
+            if now != known { changes[key] = now }
+        }
+        outbox.enqueue(session.id, op: "metadata", values: changes, overlays: Dictionary(uniqueKeysWithValues: changes.map { ($0.key, [$0.key: $0.value]) }))
     }
     @ObservationIgnored private var projectionRevisions: [UUID: Int] = [:]
     @ObservationIgnored private var navigationStates: [UUID: RuntimeChatState] = [:]
@@ -1122,6 +1178,8 @@ final class AppModel {
 
     private func applyProjection(_ state: RuntimeChatState, updateAttention: Bool = true) {
         let id = state.record.id
+        // Deleted here; the service hasn't confirmed it yet.
+        if RuntimeOutbox.shared.deleting(id) { return }
         if let revision = projectionRevisions[id], state.revision < revision { return }
         if state.summaryOnly == true, projectionRevisions[id] == state.revision,
            sessions.contains(where: { $0.id == id }) {
@@ -1144,6 +1202,7 @@ final class AppModel {
         }
         session.applyingRemoteState = true
         var record = state.record
+        var base = state.record; base.items = []; serviceBase[id] = base
         if state.summaryOnly == true {
             if wantsTranscript(id) || !session.sentEchoes.isEmpty {
                 record.items = session.items
@@ -1160,6 +1219,8 @@ final class AppModel {
             } else { session.transcriptStart = state.historyStart ?? 0 }
             session.transcriptLoaded = true
         } else { record.items = []; session.transcriptLoaded = false }
+        // Changes made here that the service hasn't confirmed stay as they are.
+        if !RuntimeOutbox.shared.isEmpty { RuntimeOutbox.shared.project(&record, revision: state.revision, summary: state.summaryOnly == true) }
         session.record = record; session.isRunning = state.running
         session.listSummary = state.summary
         session.projectedPendingItems = state.pendingItems
@@ -1224,7 +1285,9 @@ final class AppModel {
         let started=Date()
         do {
             // Studio names and membership are small and needed when choosing the first chat.
-            studios=try await RuntimeClient.shared.request("getStudios").decode([Studio].self)
+            let remoteStudios=try await RuntimeClient.shared.request("getStudios").decode([Studio].self)
+            // Studios changed here and not confirmed yet keep this Mac's copy (RuntimeOutbox).
+            if !RuntimeOutbox.shared.has(nil, op: "studios") { studios=remoteStudios }
             let summaries = RuntimeClient.shared.supportsNavigationSummaries
             if !loadedSessionList {
                 sessionLoadStatus = "Loading working sessions…"
@@ -1238,7 +1301,9 @@ final class AppModel {
                 await Task.yield()
             }
             let states = try await RuntimeClient.shared.request("list", body: ["summaryOnly": .bool(summaries)], timeout: .seconds(60)).decode([RuntimeChatState].self)
-            let ids = Set(states.map { $0.record.id }); sessions.removeAll { !ids.contains($0.id) }
+            // A session made here that the service doesn't have yet stays (RuntimeOutbox).
+            let ids = Set(states.map { $0.record.id }); sessions.removeAll { !ids.contains($0.id) && !RuntimeOutbox.shared.creating($0.id) }
+            serviceBase = serviceBase.filter { ids.contains($0.key) }
             navigationStates = navigationStates.filter { ids.contains($0.key) }
             projectionRevisions = projectionRevisions.filter { ids.contains($0.key) }
             restoringNavigation = true
@@ -1253,7 +1318,8 @@ final class AppModel {
             for session in sessions { session.resendDraftIfUnsynced() }
             await RuntimePreferenceProjection.shared.start()
             reloadPinnedThreads()
-            PinStore.shared.applyRuntimePins(try await RuntimeClient.shared.request("getPins").decode([Pin].self))
+            let pins = try await RuntimeClient.shared.request("getPins").decode([Pin].self)
+            if !RuntimeOutbox.shared.has(nil, op: "pins") { PinStore.shared.applyRuntimePins(pins) }
             let elapsed=Date().timeIntervalSince(started)
             if elapsed > 2 { Diagnostics.note("Session list took \(String(format:"%.1f",elapsed)) s to load from the background service (\(states.count) sessions)") }
             return true
@@ -1290,7 +1356,11 @@ final class AppModel {
         if event.kind=="pins.changed",let ids=event.payload?.array {pinnedThreadIDs=ids.compactMap{$0.string.flatMap(UUID.init(uuidString:))};return}
         // Changed or run on the phone: the Automations screens read them again.
         if event.kind=="automations.changed" {automationsChanged();return}
-        if event.kind == "runtime.resync" { projectionRevisions.removeAll() }
+        if event.kind == "runtime.resync" {
+            projectionRevisions.removeAll()
+            // Connected again: changes the service hasn't confirmed go now, before the list.
+            RuntimeOutbox.shared.reconnected()
+        }
         if event.kind=="runtime.resync" || event.kind=="runtime.configuration" || event.kind=="chat.created" || event.kind=="chat.deleted" {
             requestResync()
         } else if let id = event.chatID {

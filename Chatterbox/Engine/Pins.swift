@@ -243,7 +243,8 @@ final class PinStore {
 
     private func save() {
         #if !CHATTERBOX_HEADLESS
-        if RuntimeClient.usesDaemon {RuntimeClient.shared.command("pins",body:["pins":(try? .value(pins)) ?? []]);return}
+        // Kept until the service has them (RuntimeOutbox).
+        if RuntimeClient.usesDaemon {RuntimeOutbox.shared.enqueue(nil,op:"pins",value:(try? .value(pins)) ?? []);return}
         #endif
         if let data = try? JSONEncoder().encode(pins) { AppPreferences.defaults.set(data, forKey: key) }
     }

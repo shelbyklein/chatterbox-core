@@ -839,6 +839,7 @@ struct ChatView: View {
                     .padding(.leading, 34)
             }
             if waitingCard != nil { waitingTray }
+            if RuntimeOutbox.shared.status(session.id) != nil { PendingSaveLabel(session: session).padding(.leading, 34) }
             if !commandMatches.isEmpty { commandMenu }
             if draft.hasPrefix("!") {
                 Label("Runs in your shell in \((session.workingFolder as NSString).abbreviatingWithTildeInPath). The output goes to \(session.record.backend.label) with your next message.",
