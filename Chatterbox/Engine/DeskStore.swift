@@ -82,13 +82,16 @@ final class DeskStore {
         /// Named after its thread (put on the Desk as the thread was made): the first message,
         /// then the thread's own name, renamed with it.
         var followsThread: Bool? = nil
+        /// Where it came from: a ClickUp task or an email (plans/source-linked-tasks.md).
+        var origin: Companion.DeskOrigin? = nil
 
         init(_ request: Companion.DeskRequest) {
             id = request.id; text = request.text; source = request.source; createdAt = request.createdAt
-            proposed = request.proposed; note = request.note
+            proposed = request.proposed; note = request.note; origin = request.origin
         }
         var request: Companion.DeskRequest {
-            .init(id: id, text: text, source: source, createdAt: createdAt, proposed: proposed, note: note)
+            .init(id: id, text: text, source: source, createdAt: createdAt, proposed: proposed, note: note,
+                  origin: origin, check: DeskOriginRules.check(origin, column: .todo, since: createdAt))
         }
         var isOpen: Bool { completedAt == nil }
     }
@@ -145,6 +148,10 @@ final class DeskStore {
         if let saved = try? Companion.decoder.decode(Saved.self, from: data) {
             // Requests from before tasks are tasks to do; sessions aren't made tasks.
             tasks = (saved.tasks ?? saved.requests.map(TaskRecord.init)).sorted { $0.createdAt > $1.createdAt }
+            // Tasks from before sources: a ClickUp link in the note or text is their source.
+            for index in tasks.indices where tasks[index].origin == nil {
+                tasks[index].origin = DeskOriginRules.clickUp(in: (tasks[index].note ?? "") + "\n" + tasks[index].text)
+            }
             silences = saved.silences ?? []
             // Sessions may have changed while the service was down.
             revision = saved.revision + 1
@@ -272,7 +279,17 @@ final class DeskStore {
         }
         // Whole seconds, as desk.json keeps it.
         let now = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down))
-        let request = Companion.DeskRequest(id: UUID(), text: text, source: source, createdAt: now, proposed: proposed, note: note)
+        var origin: Companion.DeskOrigin?
+        if let ref = Self.clean(body.origin) {
+            guard let parsed = DeskOriginRules.parse(ref) else {
+                throw Failure(status: 400, message: "A source is clickup:<task id or link> or email:<message id>.")
+            }
+            origin = parsed
+        } else {
+            origin = DeskOriginRules.clickUp(in: (note ?? "") + "\n" + text)
+        }
+        if let title = Self.clean(body.originTitle) { origin?.title = String(title.prefix(200)) }
+        let request = Companion.DeskRequest(id: UUID(), text: text, source: source, createdAt: now, proposed: proposed, note: note, origin: origin)
         tasks.insert(TaskRecord(request), at: 0)
         // The oldest to do go first; linked and done ones stay.
         let todo = tasks.filter(isToDo)
@@ -360,6 +377,43 @@ final class DeskStore {
         // Its newest task: one thread carries one task.
         if let index = tasks.firstIndex(where: { $0.chatID == chatID }) { tasks[index].completedAt = nil }
         changed()
+    }
+
+    /// What a task's source says now (`desk source`): every task with that source (or the one
+    /// named) takes the status, and its card warns where the board disagrees. The number updated.
+    @discardableResult
+    func reportOrigin(_ body: Companion.DeskOriginReport) throws -> Int {
+        guard let status = Self.clean(body.status) else { throw Failure(status: 400, message: "Say what the source's status is.") }
+        let wanted = try body.ref.map { ref -> Companion.DeskOrigin in
+            guard let parsed = DeskOriginRules.parse(ref) else { throw Failure(status: 400, message: "A source is clickup:<task id or link> or email:<message id>.") }
+            return parsed
+        }
+        guard wanted != nil || body.task != nil else { throw Failure(status: 400, message: "Say which source or task.") }
+        let now = Self.wholeSeconds()
+        var count = 0
+        for index in tasks.indices {
+            let matches = body.task == tasks[index].id
+                || (wanted.map { w in tasks[index].origin.map { $0.kind == w.kind && $0.id.lowercased() == w.id.lowercased() } ?? false } ?? false)
+            guard matches else { continue }
+            var origin = tasks[index].origin ?? wanted ?? Companion.DeskOrigin(kind: "clickup", id: "")
+            guard !origin.id.isEmpty else { continue }
+            let newReply = origin.kind == "email" && status.lowercased() == "new reply"
+            origin.status = String(status.prefix(60))
+            origin.checkedAt = now
+            if let title = Self.clean(body.title) { origin.title = String(title.prefix(200)) }
+            if let url = Self.clean(body.url) { origin.url = url }
+            if newReply {
+                origin.replyFrom = Self.clean(body.replyFrom) ?? origin.replyFrom
+                origin.replyAt = now
+            } else if origin.kind == "email" {
+                origin.replyFrom = nil; origin.replyAt = nil
+            }
+            tasks[index].origin = origin
+            count += 1
+        }
+        guard count > 0 else { throw Failure(status: 404, message: "No task on the Desk has that source.") }
+        changed()
+        return count
     }
 
     /// Mark done: a task to do that was done outside Chatterbox (no thread) goes straight to Done.
@@ -661,6 +715,10 @@ final class DeskStore {
             if agent { request.source = ["claude", "codex"].contains(request.source ?? "") ? request.source : "claude" }
             try add(request)
             return try .value(snapshot())
+        case "origin":
+            guard let report = try? body.decode(Companion.DeskOriginReport.self) else { throw Failure(status: 400, message: "Say which source and its status.") }
+            try reportOrigin(report)
+            return try .value(snapshot())
         case "ignore":
             try ignore(try Self.requestID(body))
             return try .value(snapshot())
@@ -735,6 +793,8 @@ final class DeskStore {
             if var shown {
                 shown.item.task = task?.id
                 shown.item.taskText = task?.text
+                shown.item.origin = task?.origin
+                shown.item.check = task.flatMap { DeskOriginRules.check($0.origin, column: .needsYou, since: $0.linkedAt ?? $0.createdAt) }
                 needs.append((shown.date, shown.item))
             } else if !all.isEmpty || task == nil {
                 // Waiting on something silenced is waiting, not working; a thread with no task
@@ -746,7 +806,8 @@ final class DeskStore {
                 working.append((session.record.turnStartedAt ?? session.record.updatedAt,
                                 .init(id: session.id, title: name.title, place: placeName(session), subtitle: name.subtitle,
                                       activity: session.lastActionSummary.map { Self.short($0, limit: 160) }, since: session.record.turnStartedAt,
-                                      task: task?.id, taskText: task?.text)))
+                                      task: task?.id, taskText: task?.text, origin: task?.origin,
+                                      check: task.flatMap { DeskOriginRules.check($0.origin, column: .working, since: $0.linkedAt ?? $0.createdAt) })))
             } else {
                 let finished = finished(session, task: task)
                 if let silence = silences.first(where: { $0.kind == "ready" && $0.chatID == session.id && $0.itemID == finished.replyID }) {
@@ -763,13 +824,15 @@ final class DeskStore {
             // Done outside Chatterbox: no thread; Reopen sends it back to To do (its id as the session's).
             if let completed = task.completedAt, task.chatID == nil {
                 done.append(.init(id: task.id, title: task.text, place: task.proposed?.name, subtitle: "Done outside Chatterbox", completedAt: completed,
-                                  task: task.id, taskText: task.text))
+                                  task: task.id, taskText: task.text, origin: task.origin,
+                                  check: DeskOriginRules.check(task.origin, column: .done, since: completed)))
                 continue
             }
             guard let completed = task.completedAt, let chat = task.chatID, let session = byID[chat], session.record.archivedAt != nil else { continue }
             let name = CompanionMapper.heading(session)
             done.append(.init(id: session.id, title: name.title, place: placeName(session), subtitle: name.subtitle, completedAt: completed,
-                              task: task.id, taskText: task.text))
+                              task: task.id, taskText: task.text, origin: task.origin,
+                              check: DeskOriginRules.check(task.origin, column: .done, since: completed)))
         }
         // To do: not linked, or linked to a thread that's gone (until its deletion unlinks it).
         let incoming = tasks.filter { $0.isOpen && ($0.chatID.map { byID[$0] == nil } ?? true) }.map(\.request)
@@ -822,7 +885,8 @@ final class DeskStore {
         let text = reply.flatMap { ChatSession.firstSentence(of: $0.text, limit: 160) } ?? (reply == nil ? "No reply yet." : "Finished its reply.")
         return Finished(date: date, item: .init(id: session.id, title: name.title, place: placeName(session), subtitle: name.subtitle,
                                                 text: text, finishedAt: date, task: task?.id, taskText: task?.text,
-                                                assets: reply.map { Self.assets(of: $0, folder: session.workingFolder) }.flatMap { $0.isEmpty ? nil : $0 }),
+                                                assets: reply.map { Self.assets(of: $0, folder: session.workingFolder) }.flatMap { $0.isEmpty ? nil : $0 },
+                                                origin: task?.origin, check: DeskOriginRules.check(task?.origin, column: .review, since: date)),
                         replyID: reply?.id ?? session.id)
     }
 
@@ -1072,5 +1136,56 @@ final class DeskStore {
         } catch {
             RuntimeHooks.note("The Desk couldn't save: \(error.localizedDescription)")
         }
+    }
+}
+
+/// Tasks from ClickUp and email (plans/source-linked-tasks.md): reading a source reference, and
+/// whether what the source last said agrees with the task's column. Warn only.
+enum DeskOriginRules {
+    enum Column { case todo, working, needsYou, review, done }
+
+    /// "clickup:<id or link>", "email:<message id>", or a bare ClickUp link.
+    static func parse(_ ref: String) -> Companion.DeskOrigin? {
+        let ref = ref.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let found = clickUp(in: ref), !ref.lowercased().hasPrefix("email:") { return found }
+        guard let colon = ref.firstIndex(of: ":") else { return nil }
+        let kind = ref[..<colon].lowercased()
+        let id = ref[ref.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+        guard !id.isEmpty, id.count <= 500 else { return nil }
+        switch kind {
+        case "clickup": return .init(kind: "clickup", id: id.hasPrefix("#") ? String(id.dropFirst()) : id)
+        case "email", "mail", "outlook": return .init(kind: "email", id: id)
+        default: return nil
+        }
+    }
+
+    /// The first ClickUp task link in `text` (app.clickup.com/t/<id>, or /t/<team>/<custom id>).
+    static func clickUp(in text: String) -> Companion.DeskOrigin? {
+        guard let range = text.range(of: #"https?://app\.clickup\.com/t/[A-Za-z0-9_/-]+"#, options: .regularExpression) else { return nil }
+        let url = String(text[range])
+        guard let id = url.split(separator: "/").last.map(String.init), !id.isEmpty, id != "t" else { return nil }
+        return .init(kind: "clickup", id: id, url: url)
+    }
+
+    /// Where the source disagrees with the board. `since` is when the task reached its column
+    /// (added, linked, finished its reply, completed): an email reply after it is news.
+    static func check(_ origin: Companion.DeskOrigin?, column: Column, since: Date) -> Companion.DeskOriginCheck? {
+        guard let origin, let raw = origin.status?.trimmingCharacters(in: .whitespaces), !raw.isEmpty else { return nil }
+        let status = raw.lowercased()
+        let shown = raw.prefix(1).uppercased() + raw.dropFirst()
+        if origin.kind == "email" {
+            guard status == "new reply", (origin.replyAt ?? origin.checkedAt ?? .distantPast) >= since else { return nil }
+            let who = origin.replyFrom ?? "them"
+            let when = column == .done ? " since this was marked Done" : column == .review ? " since this was ready for review" : ""
+            return .init(warning: "New reply from \(who)\(when)", writeBack: "Draft the reply to \(who)")
+        }
+        let closed = ["complete", "completed", "closed", "done", "resolved", "shipped"].contains(status)
+        let notStarted = ["to do", "todo", "open", "backlog", "new", "not started", "pending"].contains(status)
+        if column == .done {
+            return closed ? nil : .init(warning: "ClickUp still says \(shown)", writeBack: "Mark the ClickUp task complete")
+        }
+        if closed { return .init(warning: "ClickUp says \(shown)", match: "done") }
+        if notStarted, column != .todo { return .init(warning: "ClickUp still says \(shown)", writeBack: "Set ClickUp to In progress") }
+        return nil
     }
 }

@@ -143,14 +143,16 @@ enum Prompts {
     /// overloaded the Mac. Outside projects the note below replaces even this (`work start` still
     /// works when asked for; the Start a Work Thread menu action stays everywhere).
     static let workThreadsInstructions = """
-    Work threads: do the work in this session yourself, one change at a time; don't split it across threads on your own (parallel threads each build and test separately, which overloads the Mac). Start a work thread only when the user asks for one: run `work start "<short title>" --brief "<the brief>"` from your working folder (add `--agent claude|codex` or `--model M` only to use another agent or model than yours). It's a fresh session in the same folder, with its own task on the Desk, that starts from your brief alone, so make the brief self-contained: what to do, what's already decided, which files and plans to read, and what to report. When one finishes, its result arrives here as a new message and you carry on from it; `work list` shows them and their state. Once a work thread's work has shipped (or, for tooling that doesn't ship, landed on main), mark it complete with `work done <id>` (`work done --ready` for every finished one) so its task leaves the Desk's Ready column. A work thread doesn't start work threads of its own.
+    Work threads: do the work in this session yourself, one change at a time; don't split it across threads on your own (parallel threads each build and test separately, which overloads the Mac). Start a work thread only when the user asks for one: run `work start "<short title>" --brief "<the brief>"` from your working folder (add `--agent claude|codex` or `--model M` only to use another agent or model than yours). It's a fresh session in the same folder, with its own task on the Desk, that starts from your brief alone, so make the brief self-contained: what to do, what's already decided, which files and plans to read, and what to report. When one finishes, its result arrives here as a new message and you carry on from it; `work list` shows them and their state. Once a work thread's work has shipped (or, for tooling that doesn't ship, landed on main), mark it complete with `work done <id>` (`work done --ready` for every finished one) so its task leaves the Desk's Review column. A work thread doesn't start work threads of its own.
+
+    Desk tasks from ClickUp or email: when you put one on the Desk (`desk add`), add `--source clickup:<task id or link>` or `--source email:<message id>`; whenever you check a linked task's ClickUp status or email thread, report it with `desk source <ref> --status "<status>"` (an email's new reply: `--status "new reply" --from <name>`). The Desk only warns; change ClickUp or send email only when the user asks.
     """
 
     /// What a session outside a project is told instead, once it has heard about work threads.
     static let noWorkThreadsNote = "Work threads: this session isn't in a project, so the work-threads instructions don't apply here. Do the work in this session; start a work thread (`work start`) only if the user asks for one."
 
     /// Bump when `agentInstructions` gains something chats already in progress should hear.
-    static let instructionsVersion = 16
+    static let instructionsVersion = 17
 
     /// What a chat whose session started on an earlier version hears, once, before its next
     /// message. `workThreads`: whether its place is a project (ConversationRecord.isInProject);
@@ -178,7 +180,9 @@ enum Prompts {
 
     PC errands: for work on Shelby-PC, the user's Windows PC (its apps, such as Photoshop; its GPU or disk), run `pc-errand "<the task>"` from your working folder, adding `--file PATH` for each file it needs. It opens beside this session as a Sidechat running on the PC on your own agent, caught up on the conversation, with those files copied there. When it finishes, the files it made are copied to this Mac and its answer arrives here as a new message, naming those copies. Send one when the user asks for something to be done on the PC; tell the user you did, and finish your reply instead of waiting for it.
 
-    Work threads: do the work in this session yourself, one change at a time; don't split it across threads on your own (parallel threads each build and test separately, which overloads the Mac). Start a work thread only when the user asks for one: run `work start "<short title>" --brief "<the brief>"` from your working folder (add `--agent claude|codex` or `--model M` only to use another agent or model than yours). It's a fresh session in the same folder, with its own task on the Desk, that starts from your brief alone, so make the brief self-contained: what to do, what's already decided, which files and plans to read, and what to report. When one finishes, its result arrives here as a new message and you carry on from it; `work list` shows them and their state. Once a work thread's work has shipped (or, for tooling that doesn't ship, landed on main), mark it complete with `work done <id>` (`work done --ready` for every finished one) so its task leaves the Desk's Ready column. A work thread doesn't start work threads of its own.
+    Work threads: do the work in this session yourself, one change at a time; don't split it across threads on your own (parallel threads each build and test separately, which overloads the Mac). Start a work thread only when the user asks for one: run `work start "<short title>" --brief "<the brief>"` from your working folder (add `--agent claude|codex` or `--model M` only to use another agent or model than yours). It's a fresh session in the same folder, with its own task on the Desk, that starts from your brief alone, so make the brief self-contained: what to do, what's already decided, which files and plans to read, and what to report. When one finishes, its result arrives here as a new message and you carry on from it; `work list` shows them and their state. Once a work thread's work has shipped (or, for tooling that doesn't ship, landed on main), mark it complete with `work done <id>` (`work done --ready` for every finished one) so its task leaves the Desk's Review column. A work thread doesn't start work threads of its own.
+
+    Desk tasks from ClickUp or email: when you put one on the Desk (`desk add`), add `--source clickup:<task id or link>` or `--source email:<message id>`; whenever you check a linked task's ClickUp status or email thread, report it with `desk source <ref> --status "<status>"` (an email's new reply: `--status "new reply" --from <name>`). The Desk only warns; change ClickUp or send email only when the user asks.
 
     Drafts: when you write something the user will send or paste somewhere else (an email, a message, a post, a reply, text for a form), put exactly that text in a fenced ```draft block, and nothing else inside it: no notes, options or explanations. Markdown is fine inside. For an email, make the first line `Subject: …`. The chat shows the block as a card with a Copy button (and, for an email, Copy Subject and Open in Mail), so the user can take it in one click. Put your notes before or after the block; give each separate draft its own block, and when you revise one, give the whole new version in a new block.
 
@@ -291,7 +295,7 @@ enum Prompts {
 
         \(reply)
         </work_result>
-        Pick up from here: tell the user briefly what came back and what it means for the work, then carry on. Its task waits on the Desk as Ready for the user to mark complete.
+        Pick up from here: tell the user briefly what came back and what it means for the work, then carry on. Its task waits on the Desk in Review for the user to mark complete.
         """
     }
 

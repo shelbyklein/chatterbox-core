@@ -493,6 +493,10 @@ enum Companion {
         /// (shown here only because it needs you), or a service older than tasks.
         var task: UUID? = nil
         var taskText: String? = nil
+        /// Where it came from (a ClickUp task, an email) and whether that agrees with the board
+        /// (plans/source-linked-tasks.md). Nil when it has no source, or from an older service.
+        var origin: DeskOrigin? = nil
+        var check: DeskOriginCheck? = nil
     }
 
     /// Where work goes: a Studio, a project (its work starts as a Sidechat of it), or loose.
@@ -517,6 +521,10 @@ enum Companion {
         var proposed: DeskPlace?
         /// A line from the asker (why that place, or the plan).
         var note: String? = nil
+        /// Where it came from (a ClickUp task, an email) and whether that agrees with the board
+        /// (plans/source-linked-tasks.md). Nil when it has no source, or from an older service.
+        var origin: DeskOrigin? = nil
+        var check: DeskOriginCheck? = nil
     }
 
     struct DeskWorking: Codable, Identifiable, Hashable {
@@ -533,6 +541,10 @@ enum Companion {
         /// The task it's doing (Working shows only threads that carry one).
         var task: UUID? = nil
         var taskText: String? = nil
+        /// Where it came from (a ClickUp task, an email) and whether that agrees with the board
+        /// (plans/source-linked-tasks.md). Nil when it has no source, or from an older service.
+        var origin: DeskOrigin? = nil
+        var check: DeskOriginCheck? = nil
     }
 
     /// A task whose thread finished its reply and asks nothing: Ready to mark complete. Only
@@ -554,6 +566,10 @@ enum Companion {
         /// What its last reply made or points to, for review: images and files it names or
         /// attached, and web links (a published page, a ClickUp task). At most six.
         var assets: [DeskAsset]? = nil
+        /// Where it came from (a ClickUp task, an email) and whether that agrees with the board
+        /// (plans/source-linked-tasks.md). Nil when it has no source, or from an older service.
+        var origin: DeskOrigin? = nil
+        var check: DeskOriginCheck? = nil
     }
 
     struct DeskAsset: Codable, Hashable {
@@ -578,6 +594,53 @@ enum Companion {
         var completedAt: Date
         var task: UUID? = nil
         var taskText: String? = nil
+        /// Where it came from (a ClickUp task, an email) and whether that agrees with the board
+        /// (plans/source-linked-tasks.md). Nil when it has no source, or from an older service.
+        var origin: DeskOrigin? = nil
+        var check: DeskOriginCheck? = nil
+    }
+
+    /// Where a task came from: a ClickUp task or an email (plans/source-linked-tasks.md). Its
+    /// status is what an agent last reported (`desk source`); the app never reads ClickUp or
+    /// mail itself.
+    struct DeskOrigin: Codable, Hashable {
+        /// "clickup" or "email".
+        var kind: String
+        /// The ClickUp task's id, or the email's message id.
+        var id: String
+        var url: String? = nil
+        /// The ClickUp task's name, or the email's subject.
+        var title: String? = nil
+        /// As last reported: ClickUp's status ("in progress", "complete"); an email's "new reply",
+        /// "waiting on them" or "answered".
+        var status: String? = nil
+        var checkedAt: Date? = nil
+        /// An email's newest unanswered reply: who wrote it, and when.
+        var replyFrom: String? = nil
+        var replyAt: Date? = nil
+    }
+
+    /// The source disagreeing with where the task is on the board. Warns, never blocks; nothing
+    /// changes outside Chatterbox without Shelby's tap.
+    struct DeskOriginCheck: Codable, Hashable {
+        /// What disagrees, as the card says it ("ClickUp says Complete").
+        var warning: String
+        /// The change to offer in the source ("Mark the ClickUp task complete"); a tap asks the
+        /// task's thread (or an agent) to make it.
+        var writeBack: String? = nil
+        /// "done": the source is finished; moving the task to Done would match it.
+        var match: String? = nil
+    }
+
+    /// Socket action "origin" (agents may), POST /v1/desk/origin: what a task's source says now.
+    /// `ref` names it ("clickup:<id or url>", "email:<message id>"), or `task` the task's id.
+    struct DeskOriginReport: Codable {
+        var ref: String? = nil
+        var task: UUID? = nil
+        var status: String
+        var title: String? = nil
+        var url: String? = nil
+        var replyFrom: String? = nil
     }
 
     /// POST /v1/desk/complete (socket: action "complete"): archives the session, completing the
@@ -613,6 +676,10 @@ enum Companion {
         var source: String? = nil
         var place: String? = nil
         var note: String? = nil
+        /// Where it came from: "clickup:<id or url>", "email:<message id>", or a ClickUp link.
+        var origin: String? = nil
+        /// The ClickUp task's name or the email's subject.
+        var originTitle: String? = nil
     }
 
     /// POST /v1/desk/<id>/start: start it where proposed, or in `place` instead, on `agent`

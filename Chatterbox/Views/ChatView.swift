@@ -137,6 +137,9 @@ struct ChatView: View {
 
     private var chatMain: some View {
         VStack(spacing: 0) {
+            // Which thread this is, in the conversation itself, so a message never goes to the
+            // wrong one (the window title alone was easy to miss).
+            if tileContext == nil && !compact { titleHeader }
             if session.record.archivedAt != nil { archivedBanner }
             if session.isSidequest { SidequestBanner(session: session) }
             // A work thread (plans/work-threads.md) says whom it works for; a front thread lists
@@ -1089,6 +1092,41 @@ struct ChatView: View {
         attachments = []
         attachError = nil
         if now { session.sendNow(text, attachments: files) } else { session.send(text, attachments: files) }
+    }
+
+    /// The thread's name, large, with its Studio or project and its agent's color.
+    private var titleHeader: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Circle()
+                .fill(appearance.style.agentColor(for: session))
+                .frame(width: 10, height: 10)
+                .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 6 }
+            Text(session.title)
+                .font(.title2.weight(.semibold))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .textSelection(.enabled)
+                .accessibilityIdentifier("chat-title-header")
+            if let place = titlePlace, place != session.title {
+                Text(place)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 12)
+        .padding(.bottom, 10)
+        .overlay(alignment: .bottom) { Divider().opacity(0.6) }
+        .help(session.title)
+    }
+
+    /// The Studio or project the thread belongs to, if any.
+    private var titlePlace: String? {
+        if let id = session.record.studioID, let studio = model.studio(id) { return studio.name }
+        let project = session.projectName
+        return project.isEmpty ? nil : project
     }
 
     private var archivedBanner: some View {

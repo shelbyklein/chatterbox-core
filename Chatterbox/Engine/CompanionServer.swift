@@ -379,6 +379,11 @@ final class CompanionServer {
                 if parts[2] == "complete" { try DeskStore.shared.complete(body.chatID) } else { try DeskStore.shared.reopen(body.chatID) }
             } catch { return failure(error) }
             return .json(DeskStore.shared.snapshot())
+        case ("POST", 3) where parts[1] == "desk" && parts[2] == "origin":
+            // What a task's source (ClickUp, an email) says now (plans/source-linked-tasks.md).
+            guard let body = try? Companion.decoder.decode(Companion.DeskOriginReport.self, from: request.body) else { return .error(400, "Say which source and its status.") }
+            do { try DeskStore.shared.reportOrigin(body) } catch { return failure(error) }
+            return .json(DeskStore.shared.snapshot())
         case ("POST", 3) where parts[1] == "desk" && parts[2] == "task":
             // Make this a task (from a thread): a new task, already linked to it.
             guard let body = try? Companion.decoder.decode(Companion.DeskTaskRequest.self, from: request.body) else { return .error(400, "Say which session.") }
