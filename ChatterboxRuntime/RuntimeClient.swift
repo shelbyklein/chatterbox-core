@@ -72,13 +72,16 @@ import Darwin
         guard getpeereid(fd,&uid,&gid)==0,uid==getuid() else{Darwin.close(fd);throw RuntimeFailure("Unexpected runtime identity")}
         let connection=RuntimeSocket(fd);self.socket=connection;generation += 1;let generation=self.generation
         Thread { [weak self,connection] in
-            var buffer=Data(),bytes=[UInt8](repeating:0,count:65536)
+            // `scanned`: bytes already known to hold no newline. Looking through the whole buffer
+            // again for each chunk made a multi-megabyte reply take tens of seconds to read.
+            var buffer=Data(),bytes=[UInt8](repeating:0,count:65536),scanned=0
             while true {
                 let n=Darwin.read(connection.fd,&bytes,bytes.count)
                 if n<0,errno==EINTR{continue};if n<=0{break}
                 buffer.append(contentsOf:bytes.prefix(n));if buffer.count>16*1024*1024{break}
-                while let end=buffer.firstIndex(of:10){
-                    let line=buffer.subdata(in:buffer.startIndex..<end);buffer.removeSubrange(buffer.startIndex...end)
+                defer{scanned=buffer.count}
+                while let end=buffer[(buffer.startIndex+scanned)...].firstIndex(of:10){
+                    let line=buffer.subdata(in:buffer.startIndex..<end);buffer.removeSubrange(buffer.startIndex...end);scanned=0
                     let d=JSONDecoder();d.dateDecodingStrategy = .iso8601
                     guard let reply=try? d.decode(RuntimeReply.self,from:line) else{continue}
                     DispatchQueue.main.async {MainActor.assumeIsolated {guard self?.generation==generation else{return};self?.receive(reply)}}

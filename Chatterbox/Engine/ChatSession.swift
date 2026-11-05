@@ -203,6 +203,8 @@ final class ChatSession: Identifiable {
     @ObservationIgnored var sentEchoes: [SentEcho] = []
     /// Where this chat's question and approval rows are (see `pendingRequests`).
     @ObservationIgnored var requestRowCache = RequestRowCache()
+    /// Each row as it was last masked, so a save looks only at rows that changed (see `redactSecrets`).
+    @ObservationIgnored var scrubbedRows = ScrubbedRows()
     @ObservationIgnored var thumbnailLookupURL: URL?
     /// A projected, unopened session has navigation data, not an empty conversation.
     var listSummary: SessionListSummary?

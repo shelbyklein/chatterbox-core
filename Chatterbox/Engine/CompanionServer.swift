@@ -836,6 +836,14 @@ enum CompanionMapper {
 
     static func chatList(_ model: AppModel) -> Companion.ChatList {
         var groups: [Companion.ChatGroup] = []
+        let pinned = AppPreferences.defaults.stringArray(forKey: "macPinnedThreads") ?? []
+        func summary(_ session: ChatSession) -> Companion.ChatSummary {
+            Self.summary(session, revision: model.companionRevision(of: session.id), pinned: pinned)
+        }
+        if summaries.count > model.sessions.count * 2 {
+            let ids = Set(model.sessions.map(\.id))
+            summaries = summaries.filter { ids.contains($0.key) }
+        }
         let projects = model.sidebarProjects
         if !projects.isEmpty {
             // Each project followed by its worktrees, as nested under it in the sidebar.
@@ -941,7 +949,27 @@ enum CompanionMapper {
         return (title, repeats ? nil : own)
     }
 
-    static func summary(_ session: ChatSession) -> Companion.ChatSummary {
+    /// Each session's summary as of its revision (see AppModel.companionRevision), kept up to a
+    /// minute: turn counts and the thumbnail's file can change without one. The phone asks for
+    /// every session's on each refresh, and working them all out again held the main thread.
+    private static var summaries: [UUID: (revision: Int, running: Bool, made: Date, summary: Companion.ChatSummary)] = [:]
+
+    /// `revision` caches it; without one it's worked out afresh.
+    static func summary(_ session: ChatSession, revision: Int? = nil, pinned: [String]? = nil) -> Companion.ChatSummary {
+        let running = session.isRunning || session.hasBackgroundWork
+        var summary: Companion.ChatSummary
+        if let revision, let cached = summaries[session.id], cached.revision == revision, cached.running == running,
+           Date().timeIntervalSince(cached.made) < 60 {
+            summary = cached.summary
+        } else {
+            summary = makeSummary(session)
+            if let revision { summaries[session.id] = (revision, running, Date(), summary) }
+        }
+        summary.pinnedRank = (pinned ?? AppPreferences.defaults.stringArray(forKey: "macPinnedThreads") ?? []).firstIndex(of: session.id.uuidString)
+        return summary
+    }
+
+    private static func makeSummary(_ session: ChatSession) -> Companion.ChatSummary {
         let activity = activity(session)
         return .init(id: session.id, title: session.title,
                      project: projectName(session),
@@ -959,7 +987,6 @@ enum CompanionMapper {
                      turnsToday: activity.day, turnsThisWeek: activity.week, turnsPerDay: activity.perDay,
                      thumbnail: thumbnail(session), turnStartedAt: session.isRunning ? session.record.turnStartedAt : nil,
                      canPromote: ChatPromotion.eligible(session), brief: session.record.brief,
-                     pinnedRank: (AppPreferences.defaults.stringArray(forKey: "macPinnedThreads") ?? []).firstIndex(of: session.id.uuidString),
                      workOf: session.record.workOf)
     }
 
@@ -977,18 +1004,27 @@ enum CompanionMapper {
         let dates = session.record.turnDates ?? []
         let day = dates.filter { now.timeIntervalSince($0) < 86_400 }.count
         let week = dates.filter { now.timeIntervalSince($0) < 7 * 86_400 }.count
-        let turns = session.items.reduce(0) { $0 + ($1.kind == .user ? 1 : 0) }
+        let items = session.items
+        var turns = 0
+        for index in items.indices where items[index].kind == .user { turns += 1 }
         let days = max(1, now.timeIntervalSince(session.record.createdAt) / 86_400)
         return (day, week, (Double(turns) / days * 10).rounded() / 10)
     }
 
     static func detail(_ session: ChatSession, model: AppModel) -> Companion.ChatDetail {
-        let all = session.items.filter { !($0.kind == .thought && $0.text.isEmpty) }
-        let shown = all.suffix(Companion.itemLimit)
+        // The newest rows, without copying a long transcript to count the rest.
+        let items = session.items
+        var shown: [DisplayItem] = [], total = 0
+        for index in items.indices.reversed() where !(items[index].kind == .thought && items[index].text.isEmpty) {
+            total += 1
+            if shown.count < Companion.itemLimit { shown.append(items[index]) }
+        }
+        shown.reverse()
         let folder = session.workingFolder
-        return .init(revision: model.companionRevision(of: session.id), summary: summary(session),
+        let revision = model.companionRevision(of: session.id)
+        return .init(revision: revision, summary: summary(session, revision: revision),
                      settings: session.settingsDescription,
-                     items: shown.map { item($0, folder: folder) }, earlierCount: all.count - shown.count,
+                     items: shown.map { item($0, folder: folder) }, earlierCount: total - shown.count,
                      options: options(session), isArchived: session.record.archivedAt != nil,
                      canFork: model.canFork(session),
                      turnStartedAt: session.isRunning ? session.record.turnStartedAt : nil,

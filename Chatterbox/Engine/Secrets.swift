@@ -197,13 +197,22 @@ final class SecretVault {
     }
 
     /// Masks any saved value in text (8 characters or longer, so short words aren't caught).
+    /// Byte for byte, as the value was stored: a value leaks exactly as the agent's command got it.
     func redact(_ text: String) -> String {
         var result = text
         for entry in entries {
-            guard let value = values[entry.id], value.count >= 8, result.contains(value) else { continue }
-            result = result.replacingOccurrences(of: value, with: "••••(\(entry.variable))")
+            guard let value = values[entry.id], value.count >= 8, Self.contains(result, value) else { continue }
+            result = result.replacingOccurrences(of: value, with: "••••(\(entry.variable))", options: .literal)
         }
         return result
+    }
+
+    /// A byte search: Swift's own `contains` compares Characters and was most of each save's time.
+    private static func contains(_ text: String, _ value: String) -> Bool {
+        var text = text, value = value
+        return text.withUTF8 { t in
+            value.withUTF8 { v in t.count >= v.count && memmem(t.baseAddress, t.count, v.baseAddress, v.count) != nil }
+        }
     }
 
     var hasRedactableValues: Bool { values.values.contains { $0.count >= 8 } }
@@ -275,16 +284,46 @@ extension ChatSession {
     }
 
     /// Masks saved secret values in the transcript before it's shown or written to disk.
+    /// This runs before every save, once a second while a reply streams, and a long chat has
+    /// tens of thousands of rows: only rows new or changed since they were last masked with
+    /// these same secrets are looked through. An unchanged row still shares its text with the
+    /// copy kept here, so telling it apart costs nothing. A secret saved or changed in Settings
+    /// changes the vault's revision, and every row is looked through again once.
     func redactSecrets() {
         let vault = SecretVault.shared
-        guard vault.hasRedactableValues else { return }
-        for index in record.items.indices {
-            let text = vault.redact(record.items[index].text)
-            if text != record.items[index].text { record.items[index].text = text }
-            if let detail = record.items[index].detail {
-                let masked = vault.redact(detail)
-                if masked != detail { record.items[index].detail = masked }
+        guard vault.hasRedactableValues else { scrubbedRows = ScrubbedRows(); return }
+        var cache = scrubbedRows
+        scrubbedRows = ScrubbedRows()
+        if cache.revision != vault.revision { cache = ScrubbedRows(revision: vault.revision) }
+        var masked: [(index: Int, text: String, detail: String?)] = []
+        do {
+            let items = record.items
+            for index in items.indices {
+                let id = items[index].id, text = items[index].text, detail = items[index].detail
+                if index < cache.rows.count, cache.rows[index].id == id, cache.rows[index].text == text, cache.rows[index].detail == detail { continue }
+                let row = ScrubbedRow(id: id, text: vault.redact(text), detail: detail.map(vault.redact))
+                if index < cache.rows.count { cache.rows[index] = row } else { cache.rows.append(row) }
+                if row.text != text || row.detail != detail { masked.append((index, row.text, row.detail)) }
             }
+            if cache.rows.count > items.count { cache.rows.removeLast(cache.rows.count - items.count) }
         }
+        // Written once `items` is let go, so the transcript isn't copied for it.
+        for row in masked {
+            record.items[row.index].text = row.text
+            record.items[row.index].detail = row.detail
+        }
+        scrubbedRows = cache
     }
+}
+
+/// A chat's rows as they were last masked, by position, with the vault revision they were masked with.
+struct ScrubbedRows {
+    var revision = -1
+    var rows: [ScrubbedRow] = []
+}
+
+struct ScrubbedRow {
+    var id: UUID
+    var text: String
+    var detail: String?
 }

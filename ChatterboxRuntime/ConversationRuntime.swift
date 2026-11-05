@@ -62,6 +62,8 @@ struct CommandReceipt: Codable {
     private(set) var studios: [Studio] = []
     private(set) var state: RuntimeState
     var onEvent: ((RuntimeEvent) -> Void)?
+    /// Each automatic save's main-thread time: preparing the copies, and all of it (the benchmark).
+    var onFlushTimed: ((_ take: TimeInterval, _ total: TimeInterval) -> Void)?
     private let ownership: RuntimeOwnership
     private let root: URL
     private var dirty: Set<UUID> = []
@@ -78,6 +80,8 @@ struct CommandReceipt: Codable {
     /// Each chat's approval and question cards still waiting on the user.
     private var pendingByChat: [UUID: Set<UUID>] = [:]
     private var navigationSnapshots: [UUID: RuntimeChatState] = [:]
+    /// The same, ready to send: encoding all of them for each list took tens of milliseconds.
+    private var navigationJSON: [UUID: (revision: Int, json: JSON)] = [:]
     private let encoder: JSONEncoder = { let e=JSONEncoder();e.dateEncodingStrategy = .iso8601;return e }()
     private let decoder: JSONDecoder = { let d=JSONDecoder();d.dateDecodingStrategy = .iso8601;return d }()
 
@@ -218,7 +222,7 @@ struct CommandReceipt: Codable {
     func remove(_ id: UUID) throws {
         guard let s=session(id) else { throw RuntimeFailure("Conversation not found") }
         s.shutdown();sessions.removeAll { $0.id == id };dirty.remove(id)
-        navigationSnapshots[id] = nil
+        navigationSnapshots[id] = nil;navigationJSON[id] = nil
         // Retain attachments: deletion can otherwise destroy files used by forks or a retry.
         // After any save still queued for it, so the file doesn't come back.
         let url=file(id)
@@ -255,6 +259,17 @@ struct CommandReceipt: Codable {
         }
     }
 
+    /// The session list's summaries (`list` with summaryOnly), as sent.
+    func navigationList(workingOnly: Bool = false) throws -> JSON {
+        .array(try sessions.filter { !workingOnly || $0.isRunning }.map { s in
+            let snapshot = navigationSnapshot(s)
+            if let cached = navigationJSON[s.id], cached.revision == snapshot.revision { return cached.json }
+            let json = try JSON.value(snapshot)
+            navigationJSON[s.id] = (snapshot.revision, json)
+            return json
+        })
+    }
+
     func navigationSnapshot(_ s: ChatSession) -> RuntimeChatState {
         let revision = state.revisions[s.id.uuidString] ?? 0
         if let cached = navigationSnapshots[s.id], cached.revision == revision { return cached }
@@ -281,12 +296,18 @@ struct CommandReceipt: Codable {
         } else { action = preview(reply) }
         let summary = SessionListSummary(preview: preview(latest), reply: preview(reply), action: action,
             lastNotice: s.items.last.flatMap { $0.kind == .notice ? String($0.text.prefix(320)) : nil },
-            messageCount: s.items.filter { $0.kind == .user || $0.kind == .assistant }.count,
+            messageCount: messageCount(s.items),
             thumbnailPath: image?.path, imageDate: imageRow?.timestamp)
         let snapshot = RuntimeChatState(record: s.record.navigationMetadata(), running: s.isRunning,
             revision: revision, totalCount: s.items.count, pendingItems: pending, summary: summary, summaryOnly: true)
         navigationSnapshots[s.id] = snapshot
         return snapshot
+    }
+    /// Counted in place: copying a long transcript's rows to count them was most of the work.
+    private func messageCount(_ items: [DisplayItem]) -> Int {
+        var count = 0
+        for index in items.indices where items[index].kind == .user || items[index].kind == .assistant { count += 1 }
+        return count
     }
     func events(after cursor: Int) -> (resync: Bool, events: [RuntimeEvent]) {
         let oldest=state.events.first?.sequence ?? state.sequence
@@ -312,7 +333,9 @@ struct CommandReceipt: Codable {
     /// long session's whole transcript took most of the main thread, and requests waiting
     /// behind it timed out. The main thread only takes a copy; a serial queue writes it.
     private func flushInBackground() {
+        let start=DispatchTime.now().uptimeNanoseconds
         let snapshots=takeDirty()
+        let took=DispatchTime.now().uptimeNanoseconds
         saveQueue.async { [saveEncoder] in
             for (record,url) in snapshots {
                 do {
@@ -328,6 +351,7 @@ struct CommandReceipt: Codable {
         }
         finishFlush()
         do { try persistState() } catch { RuntimeHooks.note("Runtime save failed: \(error.localizedDescription)") }
+        onFlushTimed?(Double(took-start)/1e9,Double(DispatchTime.now().uptimeNanoseconds-start)/1e9)
     }
 
     /// Copies of the changed sessions, ready to write.

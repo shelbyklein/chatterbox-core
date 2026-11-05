@@ -71,8 +71,11 @@ struct PathLinks {
         return text.contains("/") || text.range(of: #"^[\w@+\-.]+\.[A-Za-z][A-Za-z0-9]{0,5}$"#, options: .regularExpression) != nil
     }
 
+    private static let codeSpan = try? NSRegularExpression(pattern: "`([^`\n]+)`")
+    private static let linkTarget = try? NSRegularExpression(pattern: #"\]\(<?([^)>]+)>?\)"#)
+
     private static func codeSpans(in text: String) -> [String] {
-        guard let regex = try? NSRegularExpression(pattern: "`([^`\n]+)`") else { return [] }
+        guard text.utf8.contains(UInt8(ascii: "`")), let regex = codeSpan else { return [] }
         let ns = text as NSString
         return regex.matches(in: text, range: NSRange(location: 0, length: ns.length)).map {
             ns.substring(with: $0.range(at: 1)).trimmingCharacters(in: .whitespaces)
@@ -82,9 +85,12 @@ struct PathLinks {
     /// Files a reply points to, in code (`out/logo.mp4`) or as links, that exist: absolute,
     /// or found in a folder the reply names, or the chat's folder.
     static func referencedFiles(in text: String, folder: String?) -> [String] {
+        // Most replies name nothing; the session lists look through hundreds of them.
+        let hasCode = text.utf8.contains(UInt8(ascii: "`")), hasLink = text.utf8.contains(UInt8(ascii: "]"))
+        guard hasCode || hasLink else { return [] }
         let context = context(for: text, folder: folder)
         var targets = codeSpans(in: text)
-        if let regex = try? NSRegularExpression(pattern: #"\]\(<?([^)>]+)>?\)"#) {
+        if hasLink, let regex = linkTarget {
             let ns = text as NSString
             targets += regex.matches(in: text, range: NSRange(location: 0, length: ns.length)).map { ns.substring(with: $0.range(at: 1)) }
         }
