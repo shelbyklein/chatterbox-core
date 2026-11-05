@@ -448,8 +448,49 @@ struct ChatDetailView: View {
                 .accessibilityHint(workingCount > 0 ? "\(workingCount) work threads working" : "")
                 .accessibilityIdentifier("chat-title")
             }
-            ToolbarItem(placement: .topBarTrailing) { FeedbackButton() }
+            // The session's tools, top to bottom on a Duo's rail: About (wide), Session Settings,
+            // its actions, Feedback. The list's own (New Chat and the rest) are on the list's bar.
+            if let aboutColumn { ToolbarItem(placement: .topBarTrailing) { aboutButton(aboutColumn) } }
+            ToolbarItem(placement: .topBarTrailing) { settingsButton }
             ToolbarItem(placement: .topBarTrailing) { chatMenu }
+            ToolbarItem(placement: .topBarTrailing) { FeedbackButton() }
+    }
+
+    /// Opens and closes the About column, highlighted while it's open like a selected tab; a dot
+    /// says something's happening behind it: work threads running, or the session needs you.
+    private func aboutButton(_ column: MobileAboutColumn) -> some View {
+        let open = column.isOpen
+        let dot: Color? = summary.isWaitingOnYou ? .attention : workingCount > 0 ? .blue : nil
+        return Button { withAnimation(.snappy(duration: 0.25)) { column.isOpen.toggle() } } label: {
+            Image(systemName: "sidebar.right")
+                .symbolVariant(open ? .fill : .none)
+                .foregroundStyle(open ? Color.white : Color.primary)
+                .frame(width: 30, height: 30)
+                .background(Circle().fill(open ? Color.accentColor : Color.clear))
+                .overlay(alignment: .topTrailing) {
+                    if let dot { Circle().fill(dot).frame(width: 8, height: 8).offset(x: 1, y: -1) }
+                }
+        }
+        .accessibilityLabel("About this thread")
+        .accessibilityValue([open ? "Open" : "Closed", summary.isWaitingOnYou ? "needs you" : nil,
+                             workingCount > 0 ? "\(workingCount) working" : nil].compactMap { $0 }.joined(separator: ", "))
+        .accessibilityAddTraits(open ? .isSelected : [])
+        .accessibilityIdentifier("about-rail-button")
+    }
+
+    /// Session Settings (model, effort, permissions), one tap from the session: its agent's glyph.
+    private var settingsButton: some View {
+        Button { showingSettings = true } label: {
+            Image(summary.backend == "codex" ? "AgentCodex" : "AgentClaude")
+                .resizable().renderingMode(.template).scaledToFit()
+                .frame(width: 18, height: 18)
+                .foregroundStyle(agentAccent)
+                .frame(width: 30, height: 30)
+        }
+        .disabled(detail?.options == nil)
+        .accessibilityLabel("Session Settings")
+        .accessibilityValue(ChatSettingsLabels.chip(detail?.options) ?? detail?.settings ?? "")
+        .accessibilityIdentifier("rail-settings")
     }
 
     private var chatMenu: some View {
@@ -502,7 +543,7 @@ struct ChatDetailView: View {
                 }
             }
         } label: {
-            Image(systemName: "ellipsis.circle")
+            Image(systemName: "ellipsis")
         }
         .accessibilityLabel("Session Menu")
     }
@@ -540,7 +581,13 @@ struct ChatDetailView: View {
             composing = true
         case .macScreen: store.showingMacScreen = true
         case .reveal(let item): revealRequest = item
-        case .open(let other): open(other)
+        case .open(let other):
+            // Wide, a work thread or sidechat of this session peeks in the right-hand column
+            // (as on the Mac); anything else, or on a narrow phone, opens in its place.
+            if let aboutColumn, [other.workOf, other.sidechatOf, other.sidequestOf].contains(chat.id) {
+                aboutColumn.peek = other
+                aboutColumn.isOpen = true
+            } else { open(other) }
         }
     }
 

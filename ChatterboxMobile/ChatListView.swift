@@ -77,34 +77,28 @@ struct ChatListView: View {
     @State private var promoting: ChatPromotionTarget?
     @State private var newTitle = ""
     @State private var managementError: String?
-    /// Wide (an iPad, an open iPhone Duo): About this thread is a column in the list's place,
-    /// toggled from the open session's title.
+    /// Wide (an iPad, an open iPhone Duo): About this thread is a column on the right, beside the
+    /// conversation, opened from the About button on the session's bar (or its title).
     @State private var aboutColumn = MobileAboutColumn()
+    /// The thread peeked at in that column, kept current like the open one.
+    @State private var peekHistory: MobileChatHistory?
 
     var body: some View {
         GeometryReader { geometry in
             let split = verticalDivision(in: geometry.size)
             if sizeClass == .regular || split != nil {
+                let listWidth = split?.minX ?? min(380, max(300, geometry.size.width * 0.38))
                 HStack(spacing: 0) {
-                    Group {
-                        if aboutColumn.isOpen, let chat = selectedChat {
-                            NavigationStack { aboutColumnContent(chat).background(SafeAreaToOwnFrame().allowsHitTesting(false)) }
-                                .accessibilityIdentifier("aboutColumn")
-                        } else {
-                            NavigationStack { configuredSidebar.background(SafeAreaToOwnFrame().allowsHitTesting(false)) }
-                                .accessibilityIdentifier("session-sidebar-pane")
-                        }
-                    }
-                    .frame(width: split?.minX ?? min(380, max(300, geometry.size.width * 0.38)))
+                    NavigationStack { configuredSidebar.background(SafeAreaToOwnFrame().allowsHitTesting(false)) }
+                        .accessibilityIdentifier("session-sidebar-pane")
+                        .frame(width: listWidth)
                     if let split {
                         Color(uiColor: .systemBackground).frame(width: split.width)
                             .accessibilityHidden(true)
                     } else {
                         Divider()
                     }
-                    NavigationStack { detail.environment(aboutColumn) }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .accessibilityIdentifier("session-detail-pane")
+                    conversationAndAbout(width: geometry.size.width - listWidth - (split?.width ?? 1))
                 }
                 // Unlike NavigationSplitView, these panes never offer a collapse button
                 // or hide the sidebar when the user opens a conversation.
@@ -197,7 +191,86 @@ struct ChatListView: View {
         }
     }
 
-    /// Shared list controls; only the surrounding navigation changes on a closed phone.
+    /// The open session, with About (or a peek) sliding in on its right: beside it when there's
+    /// room for both, over its right side when not (one screen of an open Duo).
+    private func conversationAndAbout(width: CGFloat) -> some View {
+        let chat = aboutColumn.isOpen ? selectedChat : nil
+        let columnWidth: CGFloat = aboutColumn.peek == nil ? 340 : 420
+        let docked = width - columnWidth - 1 >= 360
+        return HStack(spacing: 0) {
+            NavigationStack { detail.environment(aboutColumn) }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityIdentifier("session-detail-pane")
+            if let chat, docked {
+                Divider()
+                rightColumn(chat).frame(width: columnWidth)
+                    .transition(.move(edge: .trailing))
+            }
+        }
+        .overlay(alignment: .trailing) {
+            if let chat, !docked {
+                // Under the conversation's bar, so its buttons (About, Session Settings, •••)
+                // stay in reach while About covers the rest.
+                rightColumn(chat).frame(width: min(columnWidth, width - 24))
+                    .clipShape(UnevenRoundedRectangle(topLeadingRadius: 14))
+                    .shadow(color: .black.opacity(0.25), radius: 12)
+                    .padding(.top, Self.conversationBarHeight)
+                    .transition(.move(edge: .trailing))
+            }
+        }
+        .clipped()
+        .animation(.snappy(duration: 0.25), value: aboutColumn.isOpen)
+        .animation(.snappy(duration: 0.25), value: aboutColumn.peek?.id)
+        .onChange(of: selection) { aboutColumn.peek = nil }
+        .onChange(of: aboutColumn.peek?.id) { _, id in
+            if let id { if peekHistory?.id != id { peekHistory?.cancel(); peekHistory = MobileChatHistory(id: id) }; peekHistory?.refresh(in: store, force: true) }
+            else { peekHistory?.cancel(); peekHistory = nil }
+        }
+        // A peek stays live while it's shown.
+        .task(id: "\(aboutColumn.peek?.id.uuidString ?? "")|\(scenePhase)") {
+            guard aboutColumn.peek != nil, scenePhase == .active else { return }
+            while !Task.isCancelled {
+                await peekHistory?.refresh(in: store).value
+                do { try await Task.sleep(for: .seconds(peekHistory?.detail?.summary.isRunning == true ? 1.2 : 4)) } catch { return }
+            }
+        }
+    }
+
+    /// The height of a session's navigation bar, which a slid-over column leaves uncovered.
+    static let conversationBarHeight: CGFloat = 54
+
+    /// The right-hand column: a peeked thread, or About.
+    @ViewBuilder private func rightColumn(_ chat: Companion.ChatSummary) -> some View {
+        Group {
+            if let peek = aboutColumn.peek, let peekHistory, peekHistory.id == peek.id {
+                NavigationStack {
+                    ChatDetailView(chat: peek, open: open, history: peekHistory, closeChat: { aboutColumn.peek = nil })
+                        .id(peek.id)
+                        .toolbar {
+                            ToolbarItem(placement: .topBarLeading) {
+                                Button { aboutColumn.peek = nil } label: { Label("About", systemImage: "chevron.backward") }
+                                    .accessibilityIdentifier("peek-back")
+                            }
+                            ToolbarItem(placement: .topBarTrailing) {
+                                Button { let full = peek; aboutColumn.peek = nil; open(full) } label: {
+                                    Label("Open in Full", systemImage: "arrow.up.left.and.arrow.down.right")
+                                }
+                                .accessibilityIdentifier("peek-open-full")
+                            }
+                        }
+                }
+                .accessibilityIdentifier("peekColumn")
+            } else {
+                NavigationStack { aboutColumnContent(chat) }
+                    .accessibilityIdentifier("aboutColumn")
+            }
+        }
+        .background(Color(uiColor: .systemGroupedBackground))
+        .background(SafeAreaToOwnFrame().allowsHitTesting(false))
+    }
+
+    /// Shared list controls; only the surrounding navigation changes on a closed phone. The bar
+    /// holds the list's tools (•••, Feedback, New Chat); an open session's bar holds its own.
     private var configuredSidebar: some View {
         sidebar
             .safeAreaInset(edge: .top, spacing: 0) {
@@ -223,7 +296,7 @@ struct ChatListView: View {
                             Button { withAnimation { studioListMode.toggle() } } label: {
                                 Label(studioListMode ? "Show as Cards" : "Show as List", systemImage: studioListMode ? "square.grid.2x2" : "list.bullet")
                             }
-                        } label: { Image(systemName: "ellipsis.circle") }
+                        } label: { Image(systemName: "ellipsis") }
                         .accessibilityLabel("Studio options")
                     }
                 } else {
@@ -239,7 +312,7 @@ struct ChatListView: View {
                             Button { withAnimation(.easeOut(duration: 0.2)) { showsCards.toggle() } } label: {
                                 Label(showsCards ? "Show as List" : "Show as Cards", systemImage: showsCards ? "list.bullet" : "square.grid.2x2")
                             }
-                        } label: { Image(systemName: "ellipsis.circle") }
+                        } label: { Image(systemName: "ellipsis") }
                         .accessibilityLabel("Connection")
                     }
                 }
@@ -622,7 +695,7 @@ struct ChatListView: View {
         Button("Unpair This \(UIDevice.current.model)", role: .destructive) { store.forget() }
     }
 
-    /// About the open session, as a column beside it: its sections, and Sessions to go back to the list.
+    /// About the open session, as a column on its right: its sections, and Close.
     private func aboutColumnContent(_ chat: Companion.ChatSummary) -> some View {
         let shown = history?.id == chat.id ? history?.detail : nil
         return ScrollView {
@@ -634,9 +707,9 @@ struct ChatListView: View {
         .navigationTitle("About")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
+            ToolbarItem(placement: .topBarTrailing) {
                 Button { withAnimation(.snappy(duration: 0.25)) { aboutColumn.isOpen = false } } label: {
-                    Label("Sessions", systemImage: "sidebar.left")
+                    Label("Close", systemImage: "xmark")
                 }
                 .accessibilityIdentifier("about-column-close")
             }

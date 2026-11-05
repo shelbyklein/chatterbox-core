@@ -3,7 +3,8 @@ import SwiftUI
 
 // About this thread, on the phone (the Mac's thread sidebar): tapping a session's title drops it
 // down from under the title, half the screen, dragged to full; on a wide layout (an iPad, an open
-// iPhone Duo) it's a column beside the conversation instead, in the session list's place. The
+// iPhone Duo) it's a column on the right beside the conversation instead, opened from the About
+// button on the session list's bar like a tab; a work thread or sidechat peeks in it too. The
 // same sections as the Mac's, as compact rows, each hidden when it has nothing: Status, Where,
 // Task & work, Outputs, Notes, Tools, Runs here. Actions that open a sheet of the session's
 // (settings, the Brief, a sidequest, a work thread) go back to it as `MobileAboutAction`s.
@@ -20,11 +21,21 @@ enum MobileAboutAction: Equatable {
     static func == (a: Self, b: Self) -> Bool { String(describing: a) == String(describing: b) }
 }
 
-/// On a wide layout: whether the About column shows (in the session list's place) and what the
-/// column last asked the open session to do.
+/// On a wide layout: whether the About column shows (on the right, beside the conversation),
+/// what it peeks at, and what it last asked the open session to do.
 @MainActor @Observable
 final class MobileAboutColumn {
-    var isOpen = false
+    static let openKey = "mobileAboutColumnOpen"
+    /// Remembered: About stays open across sessions and launches, like a selected tab.
+    var isOpen = UserDefaults.standard.bool(forKey: MobileAboutColumn.openKey) {
+        didSet {
+            UserDefaults.standard.set(isOpen, forKey: Self.openKey)
+            if !isOpen { peek = nil }
+        }
+    }
+    /// A work thread or sidechat of the open session, shown live in the column in About's place
+    /// (the Mac's peek, PeekPanel.swift) until Back.
+    var peek: Companion.ChatSummary?
     /// The newest request, numbered so the same action twice still arrives.
     private(set) var request: (number: Int, action: MobileAboutAction)?
     func send(_ action: MobileAboutAction) { request = ((request?.number ?? 0) + 1, action) }
@@ -322,37 +333,38 @@ struct MobileAboutPanel: View {
                     .accessibilityIdentifier("work-chip-\(thread.id.uuidString)")
                 }
                 // Starting things: a work thread, a sidequest, the Desk task.
-                ScrollView(.horizontal) {
-                    HStack(spacing: 8) {
-                        if canStartWork { actionChip("Start a Work Thread", "arrow.triangle.branch", "about-start-work") { perform(.startWork) } }
-                        if !summary.isSidequest, detail?.isArchived != true {
-                            actionChip("Sidequest to \(summary.otherAgentLabel)", "point.topleft.down.to.point.bottomright.curvepath", "about-sidequest") { perform(.sidequest) }
-                        }
-                        if tasksKept {
-                            if let task = carriedTask {
-                                actionChip("Unlink from Task", "link", "about-unlink-task") { perform(.unlinkTask(task.id)) }
-                            } else {
-                                actionChip("Make This a Task", "checklist", "about-make-task") { perform(.makeTask) }
-                                if !(store.latestDesk?.incoming ?? []).isEmpty {
-                                    actionChip("Link to a Task", "link.badge.plus", "about-link-task") { perform(.linkTask) }
-                                }
+                // Two to a row, filling the width: a narrow column (an open Duo) never cuts one off.
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], alignment: .leading, spacing: 8) {
+                    if canStartWork { actionChip("Work Thread", "Start a Work Thread", "arrow.triangle.branch", "about-start-work") { perform(.startWork) } }
+                    if !summary.isSidequest, detail?.isArchived != true {
+                        actionChip("Sidequest", "Sidequest to \(summary.otherAgentLabel)", "point.topleft.down.to.point.bottomright.curvepath", "about-sidequest") { perform(.sidequest) }
+                    }
+                    if tasksKept {
+                        if let task = carriedTask {
+                            actionChip("Unlink Task", "Unlink from Task", "link", "about-unlink-task") { perform(.unlinkTask(task.id)) }
+                        } else {
+                            actionChip("Make Task", "Make This a Task", "checklist", "about-make-task") { perform(.makeTask) }
+                            if !(store.latestDesk?.incoming ?? []).isEmpty {
+                                actionChip("Link Task", "Link to a Task", "link.badge.plus", "about-link-task") { perform(.linkTask) }
                             }
                         }
                     }
                 }
-                .scrollIndicators(.hidden)
             }
         }
     }
 
-    private func actionChip(_ title: String, _ icon: String, _ id: String, action: @escaping () -> Void) -> some View {
+    /// A short label that fits half a narrow column; the full name for VoiceOver.
+    private func actionChip(_ title: String, _ full: String, _ icon: String, _ id: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Label(title, systemImage: icon).font(.caption.weight(.medium)).lineLimit(1)
-                .padding(.horizontal, 10).padding(.vertical, 7)
+            Label(title, systemImage: icon).font(.caption.weight(.medium)).lineLimit(1).minimumScaleFactor(0.8)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 8).padding(.vertical, 8)
                 .background(Capsule().fill(Color(uiColor: .tertiarySystemFill)))
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(full)
         .accessibilityIdentifier(id)
     }
 
