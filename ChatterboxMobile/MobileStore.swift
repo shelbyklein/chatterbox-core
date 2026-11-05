@@ -503,7 +503,7 @@ final class MobileStore {
         return try await changeDesk { try await self.call("/v1/desk/unsilence", method: "POST", body: body) }
     }
 
-    /// Silences a session Ready to mark complete: off the board until something new happens in it.
+    /// Silences a session Review: off the board until something new happens in it.
     @discardableResult
     func silenceDesk(_ ready: Companion.DeskReady) async throws -> Companion.Desk {
         let body = try JSONEncoder().encode(Companion.DeskSilenceRequest(chatID: ready.id, id: ready.id, text: ready.text))

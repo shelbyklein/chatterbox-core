@@ -2,7 +2,7 @@ import AppKit
 import Observation
 import SwiftUI
 
-// The Desk on the Mac, a board: To do · Working · Needs you · Ready to mark complete · Done.
+// The Desk on the Mac, a board: To do · Working · Needs you · Review · Done.
 // plans/front-desk.md, plans/desk-board.md
 //
 // Home's first page: Desk at the top of its left column, the toolbar's Desk button, and
@@ -42,7 +42,7 @@ struct DeskNeed: Identifiable, Equatable {
 struct DeskSections: Equatable {
     /// The columns, left to right.
     enum Section: String, CaseIterable, Identifiable {
-        case todo = "To do", working = "Working", needsYou = "Needs you", ready = "Ready to mark complete", done = "Done"
+        case todo = "To do", working = "Working", needsYou = "Needs you", ready = "Review", done = "Done"
         var id: String { key }
         /// For DeskDebug's frames ("section:needsYou").
         var key: String {
@@ -227,7 +227,7 @@ final class DeskModel {
     // MARK: What it shows
 
     /// Needs you and Working from this Mac's sessions; To do (incoming requests), replies that
-    /// ask you something, what was silenced, Ready to mark complete and Done from the service's
+    /// ask you something, what was silenced, Review and Done from the service's
     /// Desk. As the service has it for the phone: a session's oldest request not silenced,
     /// newest sessions first; Needs you wins over Working, and a session waiting only on what
     /// was silenced is in neither. A ready session this Mac sees working, waiting or archived
@@ -751,7 +751,7 @@ private extension View {
 
 // MARK: - The page
 
-/// The Desk as a board: To do · Working · Needs you · Ready to mark complete · Done, side by
+/// The Desk as a board: To do · Working · Needs you · Review · Done, side by
 /// side at a fixed width, each scrolling on its own; the board scrolls sideways when they don't
 /// all fit (shown at Needs you when something does).
 struct DeskView: View {
@@ -1653,7 +1653,7 @@ struct DeskLinkPopover: View {
     }
 }
 
-// MARK: - Working, Ready to mark complete, Done
+// MARK: - Working, Review, Done
 
 /// A session working now: its name, place and what it's doing; a click opens it.
 private struct DeskWorkingCard: View {
@@ -1727,6 +1727,7 @@ private struct DeskReadyRow: View {
             DeskTaskText(text: item.taskText, title: item.title, subtitle: item.subtitle)
             Text(item.text).font(.subheadline).foregroundStyle(Color.metadata).lineLimit(3)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            if let assets = item.assets, !assets.isEmpty { DeskAssetLinks(assets: assets) }
             HStack(spacing: 8) {
                 Button("Mark complete") { Task { await desk.complete(item) } }
                     .buttonStyle(.accent)
@@ -1785,5 +1786,32 @@ private struct DeskDoneRow: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(item.title), completed")
         .deskFrame("done:\(item.id)")
+    }
+}
+
+
+/// What a finished thread made or points to, under its Review card: files and images open in
+/// their app (Quick Look-able), links in the browser.
+private struct DeskAssetLinks: View {
+    let assets: [Companion.DeskAsset]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(assets, id: \.self) { asset in
+                Button { open(asset) } label: {
+                    Label(asset.title, systemImage: asset.kind == "image" ? "photo" : asset.kind == "link" ? "link" : "doc")
+                        .font(.subheadline).lineLimit(1).truncationMode(.middle)
+                }
+                .buttonStyle(.link)
+                .help(asset.path ?? asset.url ?? "")
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("What it made")
+    }
+
+    private func open(_ asset: Companion.DeskAsset) {
+        if let path = asset.path { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }
+        else if let link = asset.url.flatMap(URL.init(string:)) { NSWorkspace.shared.open(link) }
     }
 }

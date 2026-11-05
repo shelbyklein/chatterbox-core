@@ -1,7 +1,7 @@
 import Foundation
 
 // The Desk: tasks (desk.json), place proposals, and what needs Shelby. plans/front-desk.md
-// The board's Ready to mark complete and Done: plans/desk-board.md
+// The board's Review and Done: plans/desk-board.md
 // Tasks linked to threads, and work threads: plans/work-threads.md
 
 /// The Desk: what needs Shelby, work waiting to be placed, and what's working. It never does
@@ -11,7 +11,7 @@ import Foundation
 ///
 /// A request is a **task**: it stays on the Desk once started, linked to the thread doing it
 /// (one task per thread, one thread per task), and moves across the board with that thread:
-/// To do (not linked), Working, Needs you, Ready to mark complete, Done (its thread archived,
+/// To do (not linked), Working, Needs you, Review, Done (its thread archived,
 /// for a week). Threads with no task show only when they need Shelby.
 ///
 /// Only the tasks and what was silenced are kept (desk.json in the data folder). What needs
@@ -47,14 +47,14 @@ final class DeskStore {
     static let replyWindow: TimeInterval = 48 * 3600
     /// How long a completed task stays in Done (and in desk.json).
     static let doneWindow: TimeInterval = 7 * 86_400
-    /// The most tasks Ready to mark complete shows, newest first.
+    /// The most tasks Review shows, newest first.
     static let readyLimit = 50
     static let loose = Companion.DeskPlace(kind: "loose", id: nil, name: "Loose session",
                                            detail: "A session of its own, in no Studio or project.")
 
     /// One waiting thing silenced. An approval, plan or questions is its own item; a reply is
     /// the reply itself and the question it ends on, so a newer reply that asks shows again.
-    /// A session Ready to mark complete ("ready") is its last reply: anything newer shows it again.
+    /// A session Review ("ready") is its last reply: anything newer shows it again.
     struct Silence: Codable, Hashable {
         var chatID: UUID
         /// The approval's, plan's or questions' item, or the reply's.
@@ -317,7 +317,7 @@ final class DeskStore {
     /// Unsilence: puts something silenced back on the Desk, on every device (Undo after
     /// silencing, and the "silenced" list). The body names it as `silence` did: an approval's,
     /// plan's or questions' item, or the session's id for a reply (with what it asks) or for a
-    /// session Ready to mark complete. True when a silence went.
+    /// session Review. True when a silence went.
     @discardableResult
     func unsilence(_ body: Companion.DeskSilenceRequest) -> Bool {
         let before = silences.count
@@ -811,7 +811,7 @@ final class DeskStore {
         return changed || tasks.count < before
     }
 
-    /// A thread carrying a task, idle and asking nothing: Ready to mark complete, however long
+    /// A thread carrying a task, idle and asking nothing: Review, however long
     /// ago it finished, with its last reply's first sentence. The caller has checked it waits
     /// on nothing.
     private func finished(_ session: ChatSession, task: TaskRecord?) -> Finished {
@@ -821,8 +821,36 @@ final class DeskStore {
         let date = reply?.timestamp ?? session.record.updatedAt
         let text = reply.flatMap { ChatSession.firstSentence(of: $0.text, limit: 160) } ?? (reply == nil ? "No reply yet." : "Finished its reply.")
         return Finished(date: date, item: .init(id: session.id, title: name.title, place: placeName(session), subtitle: name.subtitle,
-                                                text: text, finishedAt: date, task: task?.id, taskText: task?.text),
+                                                text: text, finishedAt: date, task: task?.id, taskText: task?.text,
+                                                assets: reply.map { Self.assets(of: $0, folder: session.workingFolder) }.flatMap { $0.isEmpty ? nil : $0 }),
                         replyID: reply?.id ?? session.id)
+    }
+
+    /// What a finished reply made or points to, for the Review column: files and images it
+    /// attached or names (that exist), then its web links. Newest reply only, at most six.
+    static func assets(of reply: DisplayItem, folder: String?, limit: Int = 6) -> [Companion.DeskAsset] {
+        var seen = Set<String>()
+        var found: [Companion.DeskAsset] = []
+        let fm = FileManager.default
+        func addFile(_ path: String) {
+            var directory: ObjCBool = false
+            guard found.count < limit, seen.insert(path).inserted, fm.fileExists(atPath: path, isDirectory: &directory), !directory.boolValue else { return }
+            let url = URL(fileURLWithPath: path)
+            let image = MediaKind.isStillImage(path) || url.pathExtension.lowercased() == "gif"
+            found.append(.init(kind: image ? "image" : "file", title: url.lastPathComponent, path: path))
+        }
+        reply.attachments?.forEach { addFile($0.url.path) }
+        ChatSession.referencedImages(in: reply.text, folder: folder).forEach { addFile($0.path) }
+        PathLinks.referencedFiles(in: reply.text, folder: folder).forEach(addFile)
+        if let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) {
+            let text = reply.text
+            for match in detector.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+                guard found.count < limit, let url = match.url, ["http", "https"].contains(url.scheme ?? ""), seen.insert(url.absoluteString).inserted else { continue }
+                let title = (url.host ?? url.absoluteString).replacingOccurrences(of: "www.", with: "") + (url.path.count > 1 ? url.path : "")
+                found.append(.init(kind: "link", title: String(title.prefix(60)), url: url.absoluteString))
+            }
+        }
+        return found
     }
 
     /// What a session waits on Shelby for, oldest first: its approvals, plans and questions,

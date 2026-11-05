@@ -551,6 +551,19 @@ enum Companion {
         var finishedAt: Date
         var task: UUID? = nil
         var taskText: String? = nil
+        /// What its last reply made or points to, for review: images and files it names or
+        /// attached, and web links (a published page, a ClickUp task). At most six.
+        var assets: [DeskAsset]? = nil
+    }
+
+    struct DeskAsset: Codable, Hashable {
+        /// "image", "file" or "link".
+        var kind: String
+        var title: String
+        /// A file's path on the Mac; nil for a link.
+        var path: String? = nil
+        /// A link's address; nil for a file.
+        var url: String? = nil
     }
 
     /// A task marked complete (its thread archived, from the board or elsewhere); Reopen

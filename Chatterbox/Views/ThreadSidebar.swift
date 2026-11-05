@@ -303,7 +303,7 @@ struct ThreadSidebar: View {
         switch state {
         case .working: "Working"
         case .needsYou: "Needs you"
-        case .ready: "Ready to mark complete"
+        case .ready: "Review"
         case .done: "Done"
         }
     }

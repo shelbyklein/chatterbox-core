@@ -16,12 +16,12 @@ enum MobileDeskColumn: String, CaseIterable, Identifiable {
         case .todo: "To do"
         case .working: "Working"
         case .needsYou: "Needs you"
-        case .ready: "Ready to mark complete"
+        case .ready: "Review"
         case .done: "Done"
         }
     }
     /// On the phone's tabs.
-    var short: String { self == .ready ? "Ready" : title }
+    var short: String { title }
     /// A column with nothing in it: one quiet line.
     var empty: String {
         switch self {
@@ -36,7 +36,7 @@ enum MobileDeskColumn: String, CaseIterable, Identifiable {
 
 /// The home's first tab: the Desk as a board. To do: requests waiting to be placed (start where
 /// the Desk proposes, or choose another place). Working: sessions mid-reply. Needs you: approve
-/// or deny in place, open, or swipe left (or long-press) to silence. Ready to mark complete:
+/// or deny in place, open, or swipe left (or long-press) to silence. Review:
 /// sessions that finished and ask nothing; swipe left (or Mark Complete) archives one into Done,
 /// where Reopen brings it back. The Desk never does work itself: starting a request (a step to
 /// pick the model, or a session already there to continue) runs it in its Studio or project in
@@ -941,6 +941,21 @@ private struct DeskReadyCard: View {
             .accessibilityAction(named: "Mark Complete", complete)
             .accessibilityAction(named: "Silence", silence)
             .accessibilityIdentifier("desk-ready-\(item.id.uuidString)")
+            // What it made: links open in Safari; files and images are in the session.
+            if let assets = item.assets, !assets.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(assets, id: \.self) { asset in
+                        Button(action: taps {
+                            if let link = asset.url.flatMap(URL.init(string:)) { UIApplication.shared.open(link) } else { open() }
+                        }) {
+                            Label(asset.title, systemImage: asset.kind == "image" ? "photo" : asset.kind == "link" ? "link" : "doc")
+                                .font(.subheadline).lineLimit(1).truncationMode(.middle)
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                }
+                .accessibilityIdentifier("desk-ready-assets-\(item.id.uuidString)")
+            }
             HStack(spacing: 8) {
                 Button("Mark Complete", action: taps(complete))
                     .buttonStyle(.borderedProminent)
