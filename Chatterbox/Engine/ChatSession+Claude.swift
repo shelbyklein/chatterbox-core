@@ -104,6 +104,7 @@ extension ChatSession {
         expirePendingApprovals()
         clearQueuedMessages()
         clearBackgroundTasks()
+        owedWakeups.removeAll()
         remoteURL = nil
         restartForToolsAfterTurn = false
         claudeStopRequested = false
@@ -334,6 +335,7 @@ extension ChatSession {
 
         case "user":
             if message["isReplay"]?.bool == true {
+                if let text = message["message"]?["content"]?.string { claudeNotificationsDelivered(text) }
                 claudeMessageReplayed(message)
                 break
             }
@@ -479,6 +481,7 @@ extension ChatSession {
         expirePendingApprovals()
         clearQueuedMessages()
         clearBackgroundTasks()
+        owedWakeups.removeAll()
         remoteURL = nil
         isRunning = false
         onChange?(self)
@@ -503,15 +506,36 @@ extension ChatSession {
         case "task_updated":
             guard let id = message["task_id"]?.string, let status = message["patch"]?["status"]?.string,
                   status != "running", status != "pending" else { return }
-            finishBackgroundTask(id, failed: status == "failed")
+            claudeBackgroundTaskEnded(id, status: status)
         case "task_notification":
             guard let id = message["task_id"]?.string else { return }
-            finishBackgroundTask(id, failed: message["status"]?.string == "failed")
+            claudeBackgroundTaskEnded(id, status: message["status"]?.string)
         case "background_tasks_changed":
             let live = Set((message["tasks"]?.array ?? []).compactMap { $0["task_id"]?.string })
             clearBackgroundTasks { $0.detached && !live.contains($0.id) }
         default:
             break
+        }
+    }
+
+    /// A background command, monitor or subagent ended. Claude Code wakes its agent with the
+    /// news (a `<task-notification>`), so until a turn starts it's owed that wake-up: a turn
+    /// ending meanwhile isn't the end of the work (ChatSession.workTurnEnded). One the agent
+    /// stopped itself (killed) wakes nothing.
+    private func claudeBackgroundTaskEnded(_ id: String, status: String?) {
+        guard let task = finishBackgroundTask(id, failed: status == "failed"), task.detached,
+              status != "killed", status != "stopped" else { return }
+        owedWakeups.insert(id)
+    }
+
+    /// A notification Claude Code handed its agent within the running turn (echoed like a
+    /// message: `<task-notification><task-id>…`): that wake-up isn't owed any more.
+    private func claudeNotificationsDelivered(_ text: String) {
+        guard text.contains("<task-notification>") else { return }
+        let parts = text.components(separatedBy: "<task-id>").dropFirst()
+        for part in parts {
+            guard let end = part.range(of: "</task-id>") else { continue }
+            owedWakeups.remove(String(part[..<end.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines))
         }
     }
 

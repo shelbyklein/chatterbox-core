@@ -30,6 +30,8 @@ final class ChatSession: Identifiable {
         didSet {
             guard isRunning != oldValue else { return }
             if isRunning {
+                // A new turn hands the agent any notifications it was owed (see owedWakeups).
+                owedWakeups.removeAll()
                 if record.turnStartedAt == nil {
                     record.turnStartedAt = Date()
                     // A new turn (not one picked back up after a restart): kept for "most active" sorting.
@@ -115,6 +117,10 @@ final class ChatSession: Identifiable {
     @ObservationIgnored var draft = "" {didSet{syncRemoteDraft()}}
     /// The reply in progress answers a message Chatterbox sent on its own (a sidequest's result).
     @ObservationIgnored var automaticTurn = false
+    /// Background tasks that ended without their agent being told yet. Claude Code tells it
+    /// itself: in the turn running now, or, when that turn is already giving its last answer,
+    /// in a new turn of its own right after. Cleared when a turn starts.
+    @ObservationIgnored var owedWakeups: Set<String> = []
     /// Chatterbox's usual "finished" alert is skipped for this turn.
     @ObservationIgnored var skipFinishedAlert = false
     /// Restart Claude Code once this reply ends, so the next message gets new tools.

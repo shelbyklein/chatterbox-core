@@ -27,6 +27,11 @@ extension ChatSession {
     /// nothing running, before it reports what it has (in case its agent never picks back up).
     static var workIdleReport: TimeInterval = 30 * 60
 
+    /// How long a work thread waits, after a turn that ended owing its agent a wake-up
+    /// (`owedWakeups`), for that turn to start before reporting anyway. Claude Code starts it
+    /// within a second; this is for when it doesn't.
+    static var workWakeupGrace: TimeInterval = 20
+
     /// The newest final reply not yet reported to the front thread.
     var unreportedWorkReply: DisplayItem? {
         guard isWorkThread, let reply = items.last(where: { $0.kind == .assistant && $0.phase == .final }),
@@ -43,9 +48,11 @@ extension ChatSession {
     var isWorkingOn: Bool { isRunning || hasBackgroundWork || isWorkPending }
 
     /// After a work thread's turn: its finished reply goes to the front thread, unless it asks
-    /// for an approval or answers first, the turn already reported (`work report`), or
-    /// background work it started still runs (it reports after the turn that ends with
-    /// nothing running; see `reportIdleWork` for when that turn never comes).
+    /// for an approval or answers first, the turn already reported (`work report`), background
+    /// work it started still runs or has just ended and is about to wake its agent (it reports
+    /// after the turn that ends with nothing running; see `reportIdleWork` for when that turn
+    /// never comes), or, failing those, the reply itself says it's waiting on something
+    /// (`readsAsInterim`).
     func workTurnEnded(front: ChatSession?) {
         let previous = record.workTurnEndedAt
         record.workTurnEndedAt = Date()
@@ -59,14 +66,59 @@ extension ChatSession {
             onChange?(self)
             return
         }
-        if hasBackgroundWork {
+        if hasBackgroundWork || !owedWakeups.isEmpty {
             // A background command or subagent still runs, and the agent picks up when it
-            // finishes: this reply says how it's going, not what came of it.
+            // finishes; or one finished while this reply was being written, and Claude Code is
+            // about to start a turn to tell it: this reply says how it's going, not what came of it.
+            record.workPendingSince = Date()
+            if !hasBackgroundWork { reportIfNotWoken(front: front, reply: reply.id) }
+            onChange?(self)
+            return
+        }
+        if Self.readsAsInterim(reply.text) {
+            // Nothing Chatterbox can see still runs, but the agent says it's waiting on something
+            // (a job it detached itself, say): progress, until it picks back up or the safety net.
+            RuntimeHooks.note("Work thread \u{201C}\(title)\u{201D} ended a turn saying it's waiting: holding its report")
             record.workPendingSince = Date()
             onChange?(self)
             return
         }
         reportWork(reply.text, to: front, reply: reply.id)
+    }
+
+    /// The wake-up a turn ended owing doesn't come within `workWakeupGrace`: nothing will
+    /// pick back up, so the reply that ended it reports (unless it reads as waiting, which the
+    /// idle safety net covers).
+    private func reportIfNotWoken(front: ChatSession, reply: UUID) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.workWakeupGrace) { [weak self, weak front] in
+            guard let self, let front, self.isWorkPending, !self.isRunning, !self.hasBackgroundWork, !self.isWaitingOnYou,
+                  self.unreportedWorkReply?.id == reply else { return }
+            self.owedWakeups.removeAll()
+            guard let text = self.unreportedWorkReply?.text, !Self.readsAsInterim(text) else { return }
+            RuntimeHooks.note("Work thread \u{201C}\(self.title)\u{201D}: no turn came for its finished background work, reporting its reply")
+            self.reportWork(text, to: front, reply: reply)
+        }
+    }
+
+    /// A short reply that says the agent is waiting to carry on ("I'll pick up when they
+    /// finish", "Still waiting on the retest", "I'll be notified…") rather than giving a result.
+    /// Only a backstop for background work Chatterbox can't see: waiting on you ("…when you
+    /// say ship") and long replies (a result that mentions what's next) don't count.
+    static func readsAsInterim(_ text: String) -> Bool {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\u{2019}", with: "'").lowercased()
+        guard !text.isEmpty, text.count <= 600 else { return false }
+        let notYou = #"(?!\s*(?:you\b|you'|your\b|shelby\b|the user\b))"#
+        let patterns = [
+            // "I'll pick up when they finish", "I'll carry on once the test reports"
+            #"\bi(?:'ll| will) (?:pick (?:it |this |that |them |things )?(?:back )?up|carry on|continue|resume|report back|check back|follow up|get back to (?:it|this)|come back to (?:it|this))\b[^.!?\n]{0,60}?\b(?:when|once|after|as soon as)\b"# + notYou,
+            // "I'll be notified when the suite finishes"
+            #"\bi(?:'ll| will) (?:be|get) (?:notified|pinged|woken)\b"#,
+            #"\b(?:when|once) (?:the |its |a )?notification (?:arrives|comes|lands)\b"#,
+            // "Waiting for the rest.", "Still waiting on the retest", "I'm waiting for the build"
+            #"(?:^|[.!?;:]\s+|\bi'm |\bi am |\bnow )(?:still )?waiting (?:for|on)\b"# + notYou,
+        ]
+        return patterns.contains { text.range(of: $0, options: .regularExpression) != nil }
     }
 
     /// The safety net, checked now and then by whoever runs the conversation: a work thread
