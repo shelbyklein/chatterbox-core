@@ -912,3 +912,24 @@ extension Companion.ChatList {
         pressure = try? c.decodeIfPresent(Companion.Pressure.self, forKey: .pressure)
     }
 }
+
+/// A thread family's card (a session with its Sidechats and work threads inside), on the Mac
+/// and the phone, in list and card view: most recent first, at most `collapsedLimit` shown until
+/// it's expanded ("Show N more"). One that needs you or is working is always among the shown.
+enum ThreadFamilyLimit {
+    static let collapsedLimit = 3
+
+    static func visible<Child>(_ children: [Child], expanded: Bool, updatedAt: (Child) -> Date,
+                               isActive: (Child) -> Bool) -> (shown: [Child], hidden: Int) {
+        let ordered = children.enumerated().sorted { a, b in
+            let x = updatedAt(a.element), y = updatedAt(b.element)
+            return x != y ? x > y : a.offset < b.offset
+        }.map(\.element)
+        guard !expanded, ordered.count > collapsedLimit else { return (ordered, 0) }
+        let active = ordered.indices.filter { isActive(ordered[$0]) }
+        var keep = Set(active)
+        for index in ordered.indices where keep.count < collapsedLimit { keep.insert(index) }
+        let shown = ordered.indices.filter(keep.contains).map { ordered[$0] }
+        return (shown, ordered.count - shown.count)
+    }
+}

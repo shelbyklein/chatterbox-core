@@ -80,6 +80,16 @@ final class Attention: NSObject, UNUserNotificationCenterDelegate {
             .sorted { $0.record.updatedAt == $1.record.updatedAt ? $0.id.uuidString < $1.id.uuidString : $0.record.updatedAt > $1.record.updatedAt }
     }
 
+    /// Activity (the sidebar strip, the bell, the menu bar) leaves work threads out: their
+    /// front thread's Work strip and the Desk show them, and the front thread shows here when
+    /// it replies or works. One waiting on you shows as its front thread's row (workNeedingYou).
+    func activityFinished(in model: AppModel) -> [ChatSession] { finishedChats(in: model).filter { $0.record.workOf == nil } }
+    func activityWorking(in model: AppModel) -> [ChatSession] { workingChats(in: model).filter { $0.record.workOf == nil } }
+    /// Work threads waiting on you (an approval or a question), newest first.
+    func workNeedingYou(in model: AppModel) -> [ChatSession] {
+        model.activeSessions.filter { $0.record.workOf != nil && $0.isWaitingOnYou }.sorted { $0.record.updatedAt > $1.record.updatedAt }
+    }
+
     struct ViewCounts: Equatable {
         var projects = 0
         var studios = 0

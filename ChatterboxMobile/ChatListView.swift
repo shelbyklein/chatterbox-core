@@ -371,7 +371,7 @@ struct ChatListView: View {
         var families: [[Companion.ChatSummary]] = []
         for group in groups {
             for chat in group.chats {
-                if (chat.worktreeBranch != nil || chat.sidechatOf != nil), group.chats.first?.id != chat.id, !families.isEmpty { families[families.count - 1].append(chat) }
+                if (chat.worktreeBranch != nil || chat.sidechatOf != nil || chat.workOf != nil), group.chats.first?.id != chat.id, !families.isEmpty { families[families.count - 1].append(chat) }
                 else { families.append([chat]) }
             }
         }
@@ -391,7 +391,7 @@ struct ChatListView: View {
         func families(_ chats: [Companion.ChatSummary]) -> [[Companion.ChatSummary]] {
             var result: [[Companion.ChatSummary]] = []
             for chat in chats {
-                if (chat.worktreeBranch != nil || chat.sidechatOf != nil), !result.isEmpty { result[result.count - 1].append(chat) }
+                if (chat.worktreeBranch != nil || chat.sidechatOf != nil || chat.workOf != nil), !result.isEmpty { result[result.count - 1].append(chat) }
                 else { result.append([chat]) }
             }
             return result
@@ -521,10 +521,14 @@ struct ChatListView: View {
                     ForEach(groups) { group in
                         VStack(alignment: .leading, spacing: 8) {
                             if showsHeader(group) { header(group).font(.footnote.weight(.semibold)).foregroundStyle(.secondary).textCase(.uppercase) }
-                            LazyVGrid(columns: cardColumns, spacing: 10) {
-                                ForEach(group.chats) { chat in
-                                    ChatCard(chat: chat, showsThumbnail: page == .studios || (page == .all && studioChatIDs.contains(chat.id)), selected: sizeClass == .regular && selection == chat.id, activity: sort == .active ? Self.activityLine(chat) : nil) { open(chat) }
-                                        .contextMenu { chatActions(chat) }
+                            ForEach(Self.cardSegments(group.chats)) { segment in
+                                switch segment {
+                                case .grid(let chats):
+                                    LazyVGrid(columns: cardColumns, spacing: 10) {
+                                        ForEach(chats) { chat in card(chat) }
+                                    }
+                                case .family(let parent, let children):
+                                    familyCard(parent, children)
                                 }
                             }
                         }
@@ -534,6 +538,103 @@ struct ChatListView: View {
             .padding(16)
         }
         .background(Color(uiColor: .systemGroupedBackground))
+    }
+
+    private func card(_ chat: Companion.ChatSummary, embedded: Bool = false) -> some View {
+        ChatCard(chat: chat, showsThumbnail: page == .studios || (page == .all && studioChatIDs.contains(chat.id)), selected: sizeClass == .regular && selection == chat.id,
+                 activity: sort == .active ? Self.activityLine(chat) : nil, embedded: embedded) { open(chat) }
+            .contextMenu { chatActions(chat) }
+    }
+
+    /// A session with its Sidechats and work threads: one card the width of the page, the
+    /// session on top and each of them a row inside it.
+    private func familyCard(_ parent: Companion.ChatSummary, _ children: [Companion.ChatSummary]) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
+        let selected = sizeClass == .regular && selection == parent.id
+        let visible = MobileFamilyExpansion.shared.visible(children, of: parent.id)
+        return VStack(alignment: .leading, spacing: 0) {
+            card(parent, embedded: true)
+            ForEach(visible.shown) { child in
+                Divider().padding(.leading, 12)
+                NestedChatRow(chat: child, parent: parent, selected: sizeClass == .regular && selection == child.id) { open(child) }
+                    .contextMenu { chatActions(child) }
+            }
+            if let toggle = familyToggle(parent, hidden: visible.hidden) {
+                Divider().padding(.leading, 12)
+                toggle.padding(.horizontal, 12)
+            }
+        }
+        .padding(.bottom, 4)
+        .background(shape.fill(Color(uiColor: .secondarySystemGroupedBackground)))
+        .overlay(shape.strokeBorder(parent.isWaitingOnYou ? Color.yellow.opacity(0.6) : selected ? Color.accentColor : Color.primary.opacity(0.06),
+                                    lineWidth: parent.isWaitingOnYou || selected ? 1.5 : 1))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("family-\(parent.id.uuidString)")
+    }
+
+    /// "Show N more" under a family's first children, "Show less" once it's open.
+    private func familyToggle(_ parent: Companion.ChatSummary, hidden: Int) -> AnyView? {
+        let expansion = MobileFamilyExpansion.shared
+        let open = expansion.ids.contains(parent.id)
+        guard hidden > 0 || open else { return nil }
+        return AnyView(Button {
+            withAnimation(.easeOut(duration: 0.2)) { expansion.toggle(parent.id) }
+        } label: {
+            Text(open ? "Show less" : "Show \(hidden) more").font(.subheadline.weight(.medium))
+                .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).foregroundStyle(Color.accentColor)
+        .accessibilityIdentifier("family-toggle-\(parent.id.uuidString)"))
+    }
+
+    /// A group's chats as families: each top-level chat with the Sidechats and work threads
+    /// listed under it (list mode puts each family in a card of its own).
+    struct Family: Identifiable {
+        let parent: Companion.ChatSummary
+        let children: [Companion.ChatSummary]
+        var first = false
+        var id: UUID { parent.id }
+    }
+    static func families(_ chats: [Companion.ChatSummary]) -> [Family] {
+        let ids = Set(chats.map(\.id))
+        var children: [UUID: [Companion.ChatSummary]] = [:]
+        for chat in chats { if let parent = nestingParent(chat, in: ids) { children[parent, default: []].append(chat) } }
+        return chats.filter { nestingParent($0, in: ids) == nil }.enumerated().map { Family(parent: $1, children: children[$1.id] ?? [], first: $0 == 0) }
+    }
+
+    /// Cards in a group's order: a run of plain cards goes two to a row; a session whose
+    /// Sidechats or work threads are listed in the group becomes one card holding them.
+    enum CardSegment: Identifiable {
+        case grid([Companion.ChatSummary])
+        case family(Companion.ChatSummary, [Companion.ChatSummary])
+        var id: UUID {
+            switch self {
+            case .grid(let chats): chats[0].id
+            case .family(let parent, _): parent.id
+            }
+        }
+    }
+
+    /// The parent a chat sits inside, when that parent is in `chats`: Sidechats and work
+    /// threads (worktrees keep cards of their own).
+    static func nestingParent(_ chat: Companion.ChatSummary, in ids: Set<UUID>) -> UUID? {
+        guard chat.worktreeBranch == nil, let parent = chat.workOf ?? chat.sidechatOf, parent != chat.id, ids.contains(parent) else { return nil }
+        return parent
+    }
+
+    static func cardSegments(_ chats: [Companion.ChatSummary]) -> [CardSegment] {
+        let ids = Set(chats.map(\.id))
+        var children: [UUID: [Companion.ChatSummary]] = [:]
+        for chat in chats { if let parent = nestingParent(chat, in: ids) { children[parent, default: []].append(chat) } }
+        var segments: [CardSegment] = [], run: [Companion.ChatSummary] = []
+        for chat in chats where nestingParent(chat, in: ids) == nil {
+            if let nested = children[chat.id] {
+                if !run.isEmpty { segments.append(.grid(run)); run = [] }
+                segments.append(.family(chat, nested))
+            } else { run.append(chat) }
+        }
+        if !run.isEmpty { segments.append(.grid(run)) }
+        return segments
     }
 
     /// Studios keep their own workspace selected; search can still find any Studio chat.
@@ -651,20 +752,23 @@ struct ChatListView: View {
                 }
                 emptyPage.listRowBackground(Color.clear)
                 ForEach(groups) { group in
+                    // Each family a card of its own: the session, then its Sidechats and work threads.
+                    ForEach(Self.families(group.chats)) { family in
                     Section {
-                        if search.isEmpty, let pins = group.pins, !pins.isEmpty {
+                        if family.first, search.isEmpty, let pins = group.pins, !pins.isEmpty {
                             MobilePinPills(pins: pins)
                         }
-                        ForEach(group.chats) { chat in
-                            ChatRow(chat: chat, activity: sort == .active ? Self.activityLine(chat) : nil) { open(chat) }
-                                .listRowBackground(sizeClass == .regular && selection == chat.id ? Color.primary.opacity(0.08) : nil)
-                                .contextMenu { chatActions(chat) }
-                                .swipeActions(edge: .trailing) {
-                                    Button(role: .destructive) { archive(chat) } label: { Label("Archive", systemImage: "archivebox") }
-                                }
+                        listRow(ChatRow(chat: family.parent, activity: sort == .active ? Self.activityLine(family.parent) : nil) { open(family.parent) }, family.parent)
+                        let visible = MobileFamilyExpansion.shared.visible(family.children, of: family.parent.id)
+                        ForEach(visible.shown) { child in
+                            listRow(NestedChatRow(chat: child, parent: family.parent, compact: true) { open(child) }, child)
+                                .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 8))
+                        }
+                        if let toggle = familyToggle(family.parent, hidden: visible.hidden) {
+                            toggle.listRowInsets(EdgeInsets(top: 0, leading: 48, bottom: 0, trailing: 8))
                         }
                     } header: {
-                        if showsHeader(group) {
+                        if family.first, showsHeader(group) {
                             HStack {
                                 Label(group.title, systemImage: group.kind == .studio ? "paintpalette" : group.kind == .projects ? "folder" : "bubble.left.and.bubble.right")
                                 Spacer()
@@ -674,6 +778,7 @@ struct ChatListView: View {
                                 }
                             }
                         }
+                    }
                     }
                 }
             }
@@ -788,9 +893,19 @@ struct ChatListView: View {
         }
     }
 
+    /// A row in list mode, with the open session's tint, its menu and Archive on a swipe.
+    private func listRow(_ content: some View, _ chat: Companion.ChatSummary) -> some View {
+        content
+            .listRowBackground(sizeClass == .regular && selection == chat.id ? Color.primary.opacity(0.08) : nil)
+            .contextMenu { chatActions(chat) }
+            .swipeActions(edge: .trailing) {
+                Button(role: .destructive) { archive(chat) } label: { Label("Archive", systemImage: "archivebox") }
+            }
+    }
+
     @ViewBuilder private func chatActions(_ chat: Companion.ChatSummary) -> some View {
-        // Pins are the Mac's: worktrees and sidechats stay with their session there.
-        if chat.worktreeBranch == nil, chat.sidechatOf == nil {
+        // Pins are the Mac's: worktrees, sidechats and work threads stay with their session there.
+        if chat.worktreeBranch == nil, chat.sidechatOf == nil, chat.workOf == nil {
             Button { pin(chat, chat.pinnedRank == nil) } label: {
                 Label(chat.pinnedRank == nil ? "Pin to Top" : "Unpin", systemImage: chat.pinnedRank == nil ? "pin" : "pin.slash")
             }
@@ -903,6 +1018,56 @@ private struct ChatRow: View {
     }
 }
 
+/// Which families show all their children (ThreadFamilyLimit), for as long as the app runs.
+@MainActor @Observable final class MobileFamilyExpansion {
+    static let shared = MobileFamilyExpansion()
+    var ids: Set<UUID> = []
+    func toggle(_ id: UUID) { if ids.contains(id) { ids.remove(id) } else { ids.insert(id) } }
+    func visible(_ children: [Companion.ChatSummary], of parent: UUID) -> (shown: [Companion.ChatSummary], hidden: Int) {
+        ThreadFamilyLimit.visible(children, expanded: ids.contains(parent), updatedAt: \.updatedAt) { $0.isWaitingOnYou || $0.isRunning }
+    }
+}
+
+/// A Sidechat or work thread as a row inside its session's card: its name, latest line and state.
+private struct NestedChatRow: View {
+    let chat: Companion.ChatSummary
+    let parent: Companion.ChatSummary
+    var selected = false
+    /// In a list row, which brings its own insets.
+    var compact = false
+    var open: () -> Void
+
+    var body: some View {
+        Button(action: open) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: chat.workOf != nil ? "arrow.turn.down.right" : "bubble.left.and.bubble.right")
+                    .font(.caption).foregroundStyle(.secondary).frame(width: 16)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(chat.title).font(.subheadline.weight(.medium)).lineLimit(1)
+                    if let subtitle = chat.subtitle {
+                        Text(subtitle).font(.caption)
+                            .foregroundStyle(chat.isWaitingOnYou ? Color.attention : Color.secondary).lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 0)
+                if chat.isWaitingOnYou {
+                    Circle().fill(Color.attention).frame(width: 8, height: 8).accessibilityLabel("Waiting on you")
+                } else if chat.isRunning {
+                    MobileWorkingMark(size: .mini)
+                }
+            }
+            .padding(.horizontal, compact ? 0 : 12).padding(.vertical, compact ? 4 : 8)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .background(selected ? Color.primary.opacity(0.08) : Color.clear)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("chat-\(chat.id.uuidString)")
+        .accessibilityHint(chat.workOf != nil ? "Work thread of \(parent.project ?? parent.title)" : "Sidechat of \(parent.project ?? parent.title)")
+    }
+}
+
 /// A chat as a card: its agent, name, latest line and state, sized to sit two to a row.
 private struct ChatCard: View {
     @Environment(MobileStore.self) private var store
@@ -912,6 +1077,8 @@ private struct ChatCard: View {
     var selected = false
     var isNew = false
     var activity: String? = nil
+    /// Inside a family card (ChatListView.familyCard), which draws the card around it.
+    var embedded = false
     var open: () -> Void
 
     var body: some View {
@@ -956,10 +1123,10 @@ private struct ChatCard: View {
                 if let activity { Label(activity, systemImage: "flame").font(.caption2).foregroundStyle(.orange) }
             }
             .padding(12)
-            .frame(maxWidth: .infinity, minHeight: 104, alignment: .topLeading)
-            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color(uiColor: .secondarySystemGroupedBackground)))
+            .frame(maxWidth: .infinity, minHeight: embedded ? nil : 104, alignment: .topLeading)
+            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(embedded ? Color.clear : Color(uiColor: .secondarySystemGroupedBackground)))
             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(chat.isWaitingOnYou ? Color.yellow.opacity(0.6) : selected ? Color.accentColor : Color.primary.opacity(0.06),
+                .strokeBorder(embedded ? Color.clear : chat.isWaitingOnYou ? Color.yellow.opacity(0.6) : selected ? Color.accentColor : Color.primary.opacity(0.06),
                               lineWidth: chat.isWaitingOnYou || selected ? 1.5 : 1))
             .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             }

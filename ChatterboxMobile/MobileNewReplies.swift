@@ -125,19 +125,25 @@ struct MobileNewReplies: View {
         var id: UUID { chat.id }
     }
 
+    // Work threads stay out of Activity: their front thread's Work strip and the Desk show
+    // them, and the front thread shows here when it replies or works.
     private var replies: [Companion.TurnCompletion] {
         MobileSeenReplies.shared.newest(in: activity.filter {
-            summary($0.chatID) != nil && !MobileActivityDismissals.shared.hides($0)
+            summary($0.chatID).map { $0.workOf == nil } == true && !MobileActivityDismissals.shared.hides($0)
         }, limit: 3)
     }
     private var working: [Companion.ChatSummary] {
-        chats.filter { $0.isRunning && !MobileActivityDismissals.shared.hides($0, activity: activity) }
+        chats.filter { $0.isRunning && $0.workOf == nil && !MobileActivityDismissals.shared.hides($0, activity: activity) }
+    }
+    /// Work threads waiting on you: one row each, under their front thread's name.
+    private var workNeedingYou: [Companion.ChatSummary] {
+        chats.filter { $0.workOf != nil && $0.isWaitingOnYou }
     }
 
     var body: some View {
         let replies = replies
         let working = working
-        let entries = working.map { entry($0, reply: nil) }
+        let entries = workNeedingYou.map(needsYouEntry) + working.map { entry($0, reply: nil) }
             + replies.compactMap { reply in summary(reply.chatID).map { entry($0, reply: reply) } }
         // How hard the Mac is working, when it's under pressure (MobilePressure.swift).
         let pressure = store.chatList?.pressure.flatMap { $0.isOK ? nil : $0 }
@@ -203,6 +209,12 @@ struct MobileNewReplies: View {
         return MobileActivityEntry(chat: chat, reply: reply, source: parent.map { $0.project ?? $0.title })
     }
 
+    /// "Chatterbox · Needs you in Phone tabs": the front thread's row; it opens the work thread.
+    private func needsYouEntry(_ work: Companion.ChatSummary) -> MobileActivityEntry {
+        let front = work.workOf.flatMap { id in chats.first { $0.id == id } }
+        return MobileActivityEntry(chat: work, reply: nil, source: front.map { $0.project ?? $0.title } ?? work.title, needsYouIn: work.title)
+    }
+
     private func dismiss(_ entry: MobileActivityEntry) {
         MobileActivityDismissals.shared.dismiss(entry.chat, reply: entry.reply, activity: activity)
     }
@@ -230,9 +242,14 @@ private struct MobileActivityEntry: Identifiable, Equatable {
     let chat: Companion.ChatSummary
     let reply: Companion.TurnCompletion?
     let source: String?
-    var title: String { source ?? chat.worktreeBranch ?? chat.project ?? chat.title }
-    var subtitle: String? { chat.isSidequest ? chat.sidequestTask ?? chat.subtitle : chat.subtitle }
-    var id: String { reply.map { "reply:\($0.id)" } ?? "working:\(chat.id)" }
+    /// A work thread waiting on you, shown as its front thread's row (`source`).
+    var needsYouIn: String? = nil
+    var title: String {
+        let name = source ?? chat.worktreeBranch ?? chat.project ?? chat.title
+        return needsYouIn.map { name + " · needs you in " + $0 } ?? name
+    }
+    var subtitle: String? { needsYouIn != nil ? chat.subtitle : chat.isSidequest ? chat.sidequestTask ?? chat.subtitle : chat.subtitle }
+    var id: String { reply.map { "reply:\($0.id)" } ?? (needsYouIn != nil ? "needs:\(chat.id)" : "working:\(chat.id)") }
     var backend: String { reply?.backend ?? chat.backend }
 }
 
@@ -431,16 +448,20 @@ private final class MobileActivityCell: UITableViewCell {
         let accent = UIColor(MobileConversationStyle.accent(for: entry.backend))
         provider.image = UIImage(named: (Backend(rawValue: entry.backend) ?? .claude).iconName)?.withRenderingMode(.alwaysTemplate)
         provider.tintColor = accent; spinner.color = accent
-        dot.isHidden = entry.reply == nil
-        let working = entry.reply == nil
+        // New reply: blue. A work thread waiting on you: the attention color.
+        dot.isHidden = entry.reply == nil && entry.needsYouIn == nil
+        dot.backgroundColor = entry.needsYouIn != nil ? UIColor(Color.attention) : .systemBlue
+        let working = entry.reply == nil && entry.needsYouIn == nil
         lastSeen.isHidden = !(working && stale)
         if working && !stale { spinner.startAnimating() } else { spinner.stopAnimating() }
         if busy { time.text = "Updating…" }
         else if let reply = entry.reply {
             let formatter = RelativeDateTimeFormatter(); formatter.unitsStyle = .short
             time.text = formatter.localizedString(for: reply.endedAt, relativeTo: now)
-        } else { time.text = stale ? "Last seen working" : "Working" }
-        accessibilityLabel = "\(working ? (stale ? "Last seen working" : "Working") : "New reply"): \(chat.isSidequest ? entry.title + " · Sidequest" : chat.title)"
+        } else if entry.needsYouIn != nil { time.text = "Needs you" }
+        else { time.text = stale ? "Last seen working" : "Working" }
+        if entry.needsYouIn != nil { accessibilityLabel = "Needs you: \(entry.title)" }
+        else { accessibilityLabel = "\(working ? (stale ? "Last seen working" : "Working") : "New reply"): \(chat.isSidequest ? entry.title + " · Sidequest" : chat.title)" }
         accessibilityValue = [entry.subtitle, time.text].compactMap { $0 }.joined(separator: ", ")
         accessibilityHint = "Opens the chat. Swipe left to clear it from Activity, right to archive or delete."
         accessibilityTraits = busy ? [.button, .notEnabled] : .button

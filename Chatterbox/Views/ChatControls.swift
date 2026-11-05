@@ -261,7 +261,7 @@ struct StarShape: Shape {
 struct FinishedChatsBell: View {
     @Environment(AppModel.self) private var model
     @State private var open = false
-    private var chats: [ChatSession] { Attention.shared.finishedChats(in: model) }
+    private var chats: [ChatSession] { Attention.shared.activityFinished(in: model) }
     var body: some View {
         Button { open.toggle() } label: {
             HStack(spacing: 4) {
@@ -272,7 +272,7 @@ struct FinishedChatsBell: View {
             .padding(.leading, 4).padding(.trailing, 12)
         }
         .buttonStyle(.plain)
-        .help("\(chats.count) unseen finished sessions · \(Attention.shared.workingChats(in: model).count) working")
+        .help("\(chats.count) unseen finished sessions · \(Attention.shared.activityWorking(in: model).count) working")
         .accessibilityLabel("Session activity, \(chats.count) unseen")
         .popover(isPresented: $open, arrowEdge: .bottom) {
             FinishedChatsList { open = false }.environment(model)
@@ -284,8 +284,8 @@ struct FinishedChatsList: View {
     @Environment(AppModel.self) private var model
     var close: () -> Void = {}
     private let appearance = ReaderStyleSettings()
-    private var chats: [ChatSession] { Attention.shared.finishedChats(in: model) }
-    private var working: [ChatSession] { Attention.shared.workingChats(in: model) }
+    private var chats: [ChatSession] { Attention.shared.activityFinished(in: model) }
+    private var working: [ChatSession] { Attention.shared.activityWorking(in: model) }
     private var recent: [ChatSession] { Attention.shared.recentChats(in: model) }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -378,13 +378,14 @@ struct SidebarActivityStrip: View {
     @Environment(AppModel.self) private var model
     @AppStorage("sidebarActivityExpanded") private var expanded = true
     private let appearance = ReaderStyleSettings()
-    private var finished: [ChatSession] { Attention.shared.finishedChats(in: model) }
-    private var working: [ChatSession] { Attention.shared.workingChats(in: model) }
+    private var finished: [ChatSession] { Attention.shared.activityFinished(in: model) }
+    private var working: [ChatSession] { Attention.shared.activityWorking(in: model) }
 
     var body: some View {
         let replies = finished
         let running = working
-        let count = replies.count + running.count
+        let needsYou = Attention.shared.workNeedingYou(in: model)
+        let count = replies.count + running.count + needsYou.count
         if showsEmptyState || count > 0 {
             VStack(alignment: .leading, spacing: 3) {
                 Button { withAnimation(.smooth(duration: 0.2)) { expanded.toggle() } } label: {
@@ -409,6 +410,10 @@ struct SidebarActivityStrip: View {
                     } else {
                         ScrollView {
                             VStack(alignment: .leading, spacing: 0) {
+                                if !needsYou.isEmpty {
+                                    heading("Needs you")
+                                    ForEach(needsYou) { needsYouRow($0) }
+                                }
                                 if !replies.isEmpty {
                                     heading("New replies")
                                     ForEach(replies) { row($0, running: false) }
@@ -418,7 +423,7 @@ struct SidebarActivityStrip: View {
                                     ForEach(running) { row($0, running: true) }
                                 }
                             }
-                        }.frame(height: min(160, CGFloat(count) * 24 + CGFloat((replies.isEmpty ? 0 : 1) + (running.isEmpty ? 0 : 1)) * 20))
+                        }.frame(height: min(160, CGFloat(count) * 24 + CGFloat((replies.isEmpty ? 0 : 1) + (running.isEmpty ? 0 : 1) + (needsYou.isEmpty ? 0 : 1)) * 20))
                     }
                 }
                 // Below: the strip sits at the top, above the sessions.
@@ -436,6 +441,24 @@ struct SidebarActivityStrip: View {
         let source = session.record.sidequestOf.flatMap { id in model.sessions.first { $0.id == id } }
         let title = source.map { "\($0.record.projectFolder != nil ? $0.projectName : $0.title) · \(session.title)" } ?? session.title
         return "\(title) · \(running ? session.record.provider.label + " is working" : "New reply")"
+    }
+
+    /// A work thread waiting on you, as its front thread's row: "Chatterbox · Phone tabs".
+    /// It opens the work thread, where the approval or question is.
+    private func needsYouRow(_ work: ChatSession) -> some View {
+        let front = work.record.workOf.flatMap { id in model.sessions.first { $0.id == id } }
+        let name = front.map { $0.record.projectFolder != nil ? $0.projectName : $0.title } ?? work.title
+        return Button { model.selectedID = work.id } label: {
+            HStack(spacing: 7) {
+                Circle().fill(Color.attention).frame(width: 6, height: 6).frame(width: 11, height: 11)
+                Text(name).font(.caption).lineLimit(1).layoutPriority(1)
+                Text("needs you in \(work.title)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }.padding(.vertical, 4).padding(.horizontal, 2).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Open \(name): needs you in \(work.title)")
+        .help("\(name) · \(work.title) needs you")
     }
 
     private func row(_ session: ChatSession, running: Bool) -> some View {
@@ -481,7 +504,7 @@ struct UnseenRepliesStrip: View {
     @Environment(AppModel.self) private var model
     @AppStorage("sidebarUnseenRepliesExpanded") private var expanded = true
     private let appearance = ReaderStyleSettings()
-    private var chats: [ChatSession] { Attention.shared.finishedChats(in: model) }
+    private var chats: [ChatSession] { Attention.shared.activityFinished(in: model) }
     var body: some View {
         if showsEmptyState || !chats.isEmpty {
             VStack(alignment: .leading, spacing: 4) {

@@ -279,6 +279,7 @@ struct CommandCenterThreadChooser: View {
                                         Text(session.record.projectFolder != nil ? session.projectName : session.title).lineLimit(1)
                                         if let branch = session.record.worktreeBranch { Label(branch, systemImage: "arrow.triangle.branch").font(.caption).foregroundStyle(.secondary) }
                                         else if session.record.automationID != nil { Text("Automation thread").font(.caption).foregroundStyle(.secondary) }
+                                        else if session.record.workOf != nil { Text("Work thread").font(.caption).foregroundStyle(.secondary) }
                                         else if session.record.sidechatOf != nil { Text("Temporary Sidechat").font(.caption).foregroundStyle(.secondary) }
                                     }
                                     Spacer()

@@ -9,8 +9,8 @@ struct MenuBarLabel: View {
 
     var body: some View {
         let waiting = model.activeSessions.contains { $0.isWaitingOnYou }
-        let replies = !Attention.shared.finishedChats(in: model).isEmpty
-        let working = !Attention.shared.workingChats(in: model).isEmpty
+        let replies = !Attention.shared.activityFinished(in: model).isEmpty
+        let working = !Attention.shared.activityWorking(in: model).isEmpty
         let name = Flavor.current.appName
         let icon = Image(systemName: waiting ? "exclamationmark.bubble.fill"
               : replies ? "bubble.left.and.bubble.right.fill"
@@ -25,14 +25,23 @@ struct MenuBarLabel: View {
 
 struct MenuBarPanel: View {
     let model: AppModel
+
+    /// Waiting on you; a work thread waiting shows as its front thread (Attention.activityFinished).
+    private var waitingThreads: [ChatSession] {
+        var waiting = model.activeSessions.filter { $0.isWaitingOnYou && $0.record.workOf == nil }
+        for work in Attention.shared.workNeedingYou(in: model) {
+            if let front = model.activeSessions.first(where: { $0.id == work.record.workOf }), !waiting.contains(where: { $0 === front }) { waiting.append(front) }
+        }
+        return waiting
+    }
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismiss) private var dismiss
     private let appearance = ReaderStyleSettings()
 
     var body: some View {
-        let waiting = model.activeSessions.filter { $0.isWaitingOnYou }
-        let replies = Attention.shared.finishedChats(in: model).filter { !$0.isWaitingOnYou }
-        let working = Attention.shared.workingChats(in: model).filter { !$0.isWaitingOnYou }
+        let waiting = waitingThreads
+        let replies = Attention.shared.activityFinished(in: model).filter { !$0.isWaitingOnYou }
+        let working = Attention.shared.activityWorking(in: model).filter { !$0.isWaitingOnYou }
         let recent = Array(Attention.shared.recentChats(in: model).filter { !$0.isWaitingOnYou && $0.hasMessages }.prefix(5))
         VStack(alignment: .leading, spacing: 10) {
             HStack {

@@ -229,13 +229,13 @@ struct ChildChatCardRow: View {
     var scale: CGFloat = 1
     @Environment(AppModel.self) private var model
     private let appearance = ReaderStyleSettings()
-    private var kind: String { chat.isSidequest ? "Sidequest" : "Sidechat" }
+    private var kind: String { chat.isSidequest ? "Sidequest" : chat.isWorkThread ? "Work thread" : "Sidechat" }
     private var title: String { chat.record.sidequestTask ?? chat.title }
 
     var body: some View {
         Button { model.selectedID = chat.id } label: {
             HStack(spacing: 5) {
-                Image(systemName: chat.isSidequest ? "point.topleft.down.to.point.bottomright.curvepath" : "bubble.left.and.bubble.right")
+                Image(systemName: chat.isSidequest ? "point.topleft.down.to.point.bottomright.curvepath" : chat.isWorkThread ? "arrow.turn.down.right" : "bubble.left.and.bubble.right")
                     .font(.system(size: 9 * scale)).foregroundStyle(.secondary)
                 Image(chat.record.provider.iconName).resizable().scaledToFit()
                     .foregroundStyle(appearance.style.color(for: chat))

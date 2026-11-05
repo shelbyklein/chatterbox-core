@@ -71,6 +71,7 @@ struct ThreadCard: View {
     }
     private var relation: String? {
         if session.record.automationID != nil { return "Automation" }
+        if session.record.workOf != nil { return "Work" }
         if session.record.sidechatOf != nil { return "Temporary" }
         if let branch = session.record.worktreeBranch { return branch }
         return nil
@@ -157,7 +158,7 @@ struct ThreadCard: View {
                     .lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
                 if model.isPinnedThread(session) { SessionOriginLabel(session: session) }
                 if let relation {
-                    Label(relation, systemImage: session.record.sidechatOf != nil ? "bubble.left.and.bubble.right" : "arrow.triangle.branch")
+                    Label(relation, systemImage: session.record.workOf != nil ? "arrow.turn.down.right" : session.record.sidechatOf != nil ? "bubble.left.and.bubble.right" : "arrow.triangle.branch")
                         .font(.caption2).foregroundStyle(Color.metadata).lineLimit(1)
                 }
                 if expanded, let parentID = session.record.sidechatOf {
@@ -182,8 +183,27 @@ struct ThreadCard: View {
                     .lineLimit(expanded ? 4 : 2).frame(maxWidth: .infinity, alignment: .leading)
                 let children = model.childChats(of: session)
                 if !children.isEmpty {
+                    // At most three until Show more (ThreadFamilyLimit); what needs you or works always shows.
+                    let expansion = FamilyExpansion.shared
+                    let visible = expansion.visible(children, of: session.id)
                     VStack(alignment: .leading, spacing: 3) {
-                        ForEach(children) { ChildChatCardRow(chat: $0, scale: scale) }
+                        ForEach(visible.shown) { child in
+                            ChildChatCardRow(chat: child, scale: scale)
+                                #if DEBUG
+                                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { MacHomeDebug.childRows[child.id] = $0 }
+                                #endif
+                        }
+                        if visible.hidden > 0 || expansion.ids.contains(session.id) {
+                            Button { withAnimation(.smooth(duration: 0.2)) { expansion.toggle(session.id) } } label: {
+                                Text(expansion.ids.contains(session.id) ? "Show less" : "Show \(visible.hidden) more")
+                                    .font(.system(size: 10 * scale, weight: .medium)).foregroundStyle(Color.accentColor)
+                                    .padding(.horizontal, 6 * scale).padding(.vertical, 2 * scale).contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            #if DEBUG
+                            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { MacHomeDebug.familyToggles[session.id] = $0 }
+                            #endif
+                        }
                     }
                 }
                 Spacer(minLength: 0)
@@ -345,6 +365,9 @@ struct DesktopOverviewControls: View {
 @MainActor enum MacHomeDebug {
     /// Pinned cards and inspector rows, by thread.
     static var cards: [UUID: CGRect] = [:]
+    /// Child rows inside cards, and the cards' Show more / Show less buttons.
+    static var childRows: [UUID: CGRect] = [:]
+    static var familyToggles: [UUID: CGRect] = [:]
     /// Left-column entries: "pinned" or a Studio's id.
     static var entries: [String: CGRect] = [:]
     static var pinnedGroups: [String: CGRect] = [:]

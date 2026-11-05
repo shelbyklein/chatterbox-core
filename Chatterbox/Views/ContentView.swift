@@ -461,7 +461,7 @@ extension ContentView {
             } else {
                 ForEach(chats.filter(isShown)) { session in
                     // Dropping onto a chat in the Studio moves the dragged one in too.
-                    rowWithSidechats(session, numbers: numbers)
+                    familyCard(session)
                         .dropDestination(for: String.self) { ids, _ in drop(ids, into: studio) }
                 }
             }
@@ -554,32 +554,6 @@ extension ContentView {
         .fixedSize()
         .help(section == .studios ? "Sort and filter sessions" : section == .chats ? "Sort and filter chats" : "Sort and filter projects")
         .accessibilityLabel(section == .studios ? "Sort and Filter Sessions" : "Sort and Filter")
-    }
-
-    private func rowWithSidechats(_ session: ChatSession, numbers: [UUID: Int]) -> some View {
-        Group {
-            row(session, number: numbers[session.id])
-            ForEach(model.sidechats(of: session).filter(isShown)) { sidechat in
-                row(sidechat, number: numbers[sidechat.id])
-                    .padding(.leading, 18)
-                    .overlay(alignment: .leading) {
-                        Image(systemName: "bubble.left.and.bubble.right")
-                            .font(.system(size: 10)).foregroundStyle(.tertiary)
-                    }
-            }
-            if session.record.convertedProjectFolder != nil {
-                ForEach(model.worktrees(of: session)) { worktree in
-                    row(worktree, number: numbers[worktree.id])
-                        .padding(.leading, 18)
-                        .overlay(alignment: .leading) {
-                            Image(systemName: "arrow.triangle.branch").font(.system(size: 10)).foregroundStyle(.tertiary)
-                        }
-                    ForEach(model.sidechats(of: worktree).filter(isShown)) { sidechat in
-                        row(sidechat, number: numbers[sidechat.id]).padding(.leading, 36)
-                    }
-                }
-            }
-        }
     }
 
     private func row(_ session: ChatSession, number: Int?, card: Bool = false, expanded: Bool = false, iconOnly: Bool = false, forceList: Bool = false) -> some View {
@@ -990,6 +964,13 @@ struct SidebarRow: View {
     var pins: [Pin] = []
     /// Called before a pill opens, so the page opens with this chat beside it.
     var onOpenPin: () -> Void = {}
+    /// Inside a family card under its parent: a smaller name.
+    var compact = false
+    /// The parent's tags, not repeated on a child's row.
+    var parentTags: [String] = []
+    private var tags: [String] {
+        session.tags.filter { tag in !parentTags.contains { $0.caseInsensitiveCompare(tag) == .orderedSame } }
+    }
     private let appearance = ReaderStyleSettings()
     /// Settings → Appearance → Sidebar: room between a row's lines.
     @AppStorage("sidebarLineSpacing") private var lineSpacing = 2.0
@@ -1018,10 +999,10 @@ struct SidebarRow: View {
                 .help(session.record.provider == session.record.backend ? session.record.provider.label : "Claude model via Codex")
             if session.record.projectFolder != nil {
                 VStack(alignment: .leading, spacing: lineSpacing) {
-                    Text(session.projectName).lineLimit(1)
+                    Text(session.projectName).font(compact ? .callout : nil).lineLimit(1)
                     if model.isPinnedThread(session) { SessionOriginLabel(session: session) }
-                    if !session.tags.isEmpty {
-                        TagPills(tags: session.tags)
+                    if !tags.isEmpty {
+                        TagPills(tags: tags)
                     }
                     if !pins.isEmpty {
                         PinPills(pins: pins, onOpen: onOpenPin)
@@ -1052,14 +1033,17 @@ struct SidebarRow: View {
                 .task(id: session.record.projectFolder) { ProjectIcons.shared.load(session.record.projectFolder) }
             } else {
                 VStack(alignment: .leading, spacing: lineSpacing) {
-                    Text(session.title).lineLimit(1)
+                    Text(session.title).font(compact ? .callout : nil).lineLimit(1)
                     if model.isPinnedThread(session) { SessionOriginLabel(session: session) }
-                    if !session.tags.isEmpty { TagPills(tags: session.tags) }
+                    if !tags.isEmpty { TagPills(tags: tags) }
                 }
             }
             if session.record.automationID != nil {
                 Label("Automation", systemImage: "clock.arrow.circlepath").font(.caption2).foregroundStyle(.secondary)
                     .help("This project's Automation thread: its scheduled runs report and ask here.")
+            } else if session.record.workOf != nil {
+                Text("Work").font(.caption2).foregroundStyle(.secondary)
+                    .help("A work thread: it reports back to its front thread when it's done.")
             } else if session.record.sidechatOf != nil {
                 Text("Temporary").font(.caption2).foregroundStyle(.secondary)
                     .help("A sidechat sharing its parent's folder. End Sidechat archives its history.")
@@ -1434,16 +1418,14 @@ extension ContentView {
     }
 
     private func listSection(_ section: SidebarSection) -> some View {
-        // ⌘-numbers follow the full sidebar, so they don't shift while filtering.
-        let numbers = Dictionary(uniqueKeysWithValues: model.sidebarOrder.prefix(9).enumerated().map { ($1.id, $0 + 1) })
-        return List {
+        List {
             switch section {
             case .projects:
                 let projects = model.sidebarProjects.filter { !model.isPinnedThread($0) }.filter(isShown).filter(projectActivity.includes)
                 if showsTagPills, !model.allTags.isEmpty {
                     tagPills.listRowSeparator(.hidden)
                 }
-                ForEach(projects) { session in projectRows(session, numbers: numbers) }
+                ForEach(projects) { session in familyCard(session) }
                 if projects.isEmpty {
                     Text(isFiltering || activeTag != nil || projectActivity != .all ? "No matching projects" : "Open or create a project from the + menu.")
                         .font(.caption).foregroundStyle(.secondary)
@@ -1451,13 +1433,13 @@ extension ContentView {
             case .studios:
                 if let studio = model.sidebarStudio {
                     let chats = model.sortedChats(in: studio).filter { !model.isPinnedThread($0) }.filter(isShown).filter(studioActivity.includes)
-                    ForEach(chats) { session in rowWithSidechats(session, numbers: numbers) }
+                    ForEach(chats) { session in familyCard(session) }
                     if chats.isEmpty { Text("No matching sessions").font(.caption).foregroundStyle(.secondary) }
                 }
             case .chats:
                 let chats = model.sidebarChats.filter { !model.isPinnedThread($0) }.filter(isShown).filter(chatActivity.includes)
                 if showsTagPills, !model.allTags.isEmpty { tagPills.listRowSeparator(.hidden) }
-                ForEach(chats) { session in rowWithSidechats(session, numbers: numbers) }
+                ForEach(chats) { session in familyCard(session) }
                 if chats.isEmpty {
                     Text(isFiltering || chatActivity != .all ? "No matching chats" : "Chats that aren't in a project or a Studio.")
                         .font(.caption).foregroundStyle(.secondary)
@@ -1468,19 +1450,74 @@ extension ContentView {
         .accessibilityLabel(section.title)
     }
 
-    /// A project and its worktrees, indented beneath it.
-    @ViewBuilder
-    private func projectRows(_ session: ChatSession, numbers: [UUID: Int]) -> some View {
-        rowWithSidechats(session, numbers: numbers)
-        ForEach(model.worktrees(of: session)) { worktree in
-            rowWithSidechats(worktree, numbers: numbers)
-                .padding(.leading, 18)
-                .overlay(alignment: .leading) {
-                    Image(systemName: "arrow.triangle.branch")
-                        .font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
-                        .padding(.leading, 2)
+    /// A thread family in list view, as one card: the thread on top, then its Sidechats and
+    /// work threads (at most three until "Show N more"), then a project's worktrees with theirs.
+    private func familyCard(_ root: ChatSession) -> some View {
+        let children = model.sidechats(of: root).filter(isShown)
+        let expansion = FamilyExpansion.shared
+        let visible = expansion.visible(children, of: root.id)
+        let branches = root.record.worktreeOf == nil && (root.record.projectFolder != nil || root.record.convertedProjectFolder != nil)
+            ? model.worktrees(of: root) : []
+        return VStack(alignment: .leading, spacing: 1) {
+            familyRow(root, depth: 0)
+            ForEach(visible.shown) { familyRow($0, depth: 1, under: root) }
+            if visible.hidden > 0 || expansion.ids.contains(root.id) {
+                Button { withAnimation(.smooth(duration: 0.2)) { expansion.toggle(root.id) } } label: {
+                    Text(expansion.ids.contains(root.id) ? "Show less" : "Show \(visible.hidden) more")
+                        .font(.caption.weight(.medium)).foregroundStyle(Color.accentColor)
+                        .padding(.leading, 46).padding(.vertical, 3)
+                        .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel(expansion.ids.contains(root.id) ? "Show fewer threads" : "Show \(visible.hidden) more threads")
+                #if DEBUG
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { SidebarDebug.familyToggles[root.id] = $0 }
+                #endif
+            }
+            ForEach(branches) { branch in
+                familyRow(branch, depth: 1, under: root)
+                ForEach(model.sidechats(of: branch).filter(isShown)) { familyRow($0, depth: 2, under: branch) }
+            }
         }
+        .padding(4)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.045)))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Color.primary.opacity(0.09)))
+        #if DEBUG
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { SidebarDebug.families[root.id] = $0 }
+        #endif
+        .listRowSeparator(.hidden)
+        .listRowBackground(Color.clear)
+        .listRowInsets(EdgeInsets(top: 4, leading: 10, bottom: 4, trailing: 10))
+    }
+
+    /// One thread's row inside a family card; children indented, smaller, with their kind's mark.
+    private func familyRow(_ session: ChatSession, depth: Int, under parent: ChatSession? = nil) -> some View {
+        SidebarRow(session: session, shortcut: nil, compact: depth > 0, parentTags: parent?.tags ?? [])
+            .padding(.vertical, depth > 0 ? 3 : sidebarRowSpacing / 2 + 3)
+            .padding(.horizontal, 6)
+            .padding(.leading, CGFloat(depth) * 20)
+            .overlay(alignment: .leading) {
+                if depth > 0 {
+                    Image(systemName: session.record.worktreeOf != nil ? "arrow.triangle.branch"
+                          : session.record.workOf != nil ? "arrow.turn.down.right" : "bubble.left.and.bubble.right")
+                        .font(.system(size: 9, weight: .semibold)).foregroundStyle(.tertiary)
+                        .padding(.leading, CGFloat(depth) * 20 - 13)
+                }
+            }
+            .background(
+                // The open chat: a quiet accent tint. Waiting on you: the leading bar (SessionMarks).
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(model.selectedID == session.id ? SessionMarks.selectedFill : Color.clear)
+                    .needsYouBar(session.isWaitingOnYou)
+            )
+            .contentShape(Rectangle())
+            .onTapGesture { model.selectedID = session.id }
+            // Drag onto a Studio to move the chat in. Project chats stay put.
+            .modifier(ChatDrag(id: session.record.projectFolder == nil ? session.id : nil))
+            .contextMenu { threadMenu(session) }
+            #if DEBUG
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { SidebarDebug.rows[session.id] = $0 }
+            #endif
     }
 
     /// Global pins ignore the selected page and its tag/activity filters.
@@ -1681,8 +1718,23 @@ extension ContentView {
     static var pinned: CGRect = .zero
     static var headers: [String: CGRect] = [:]
     static var pinnedRows: [UUID: CGRect] = [:]
+    /// List view's family cards, their rows, and their Show more / Show less buttons.
+    static var families: [UUID: CGRect] = [:]
+    static var rows: [UUID: CGRect] = [:]
+    static var familyToggles: [UUID: CGRect] = [:]
 }
 #endif
+
+/// Which thread families show all their children (ThreadFamilyLimit) in the sidebar's list and
+/// cards, for as long as the app runs.
+@MainActor @Observable final class FamilyExpansion {
+    static let shared = FamilyExpansion()
+    var ids: Set<UUID> = []
+    func toggle(_ id: UUID) { if ids.contains(id) { ids.remove(id) } else { ids.insert(id) } }
+    func visible(_ children: [ChatSession], of parent: UUID) -> (shown: [ChatSession], hidden: Int) {
+        ThreadFamilyLimit.visible(children, expanded: ids.contains(parent), updatedAt: \.lastActivity) { $0.isWaitingOnYou || $0.isRunning }
+    }
+}
 
 /// The grab area of a divider between sidebar sections: drag to resize (reports how far the
 /// pointer has moved down since the press), double-click to reset.
