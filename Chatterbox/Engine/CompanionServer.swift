@@ -419,11 +419,15 @@ final class CompanionServer {
                 place = found
             }
             do { return .json(try DeskStore.shared.threads(for: id, place: place, all: request.query["all"] == "1")) } catch { return failure(error) }
-        case ("POST", 4) where parts[1] == "desk" && (parts[3] == "start" || parts[3] == "ignore"):
+        case ("POST", 4) where parts[1] == "desk" && (parts[3] == "start" || parts[3] == "ignore" || parts[3] == "done"):
             guard let id = UUID(uuidString: parts[2]) else { return .error(404, "That request is gone.") }
             do {
                 if parts[3] == "ignore" {
                     try DeskStore.shared.ignore(id)
+                    return .json(DeskStore.shared.snapshot())
+                }
+                if parts[3] == "done" {
+                    try DeskStore.shared.markDone(id)
                     return .json(DeskStore.shared.snapshot())
                 }
                 guard let body = request.body.isEmpty ? Companion.DeskStartRequest() : try? Companion.decoder.decode(Companion.DeskStartRequest.self, from: request.body) else {

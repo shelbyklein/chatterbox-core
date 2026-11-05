@@ -597,6 +597,17 @@ final class DeskModel {
         } catch { note(error, "ignore it") }
     }
 
+    /// Done outside Chatterbox: straight to Done, no thread.
+    func markDone(_ request: Companion.DeskRequest) async {
+        guard !busy.contains(request.id) else { return }
+        busy.insert(request.id)
+        defer { busy.remove(request.id) }
+        do {
+            load(try await send(["action": "markDone", "id": .string(request.id.uuidString)]).decode(Companion.Desk.self))
+            problem = nil
+        } catch { note(error, "mark it done") }
+    }
+
     func loadPlaces() async {
         guard canReachService, !loadingPlaces, !unsupported else { return }
         loadingPlaces = true
@@ -1112,6 +1123,11 @@ private struct DeskRequestRow: View {
                         .deskFrame("link:\(request.id)")
                 }
                 Spacer(minLength: 0)
+                Button("Mark done") { Task { await desk.markDone(request) } }
+                    .buttonStyle(.borderless)
+                    .disabled(busy)
+                    .help("Done outside Chatterbox: move it to Done without starting a thread")
+                    .deskFrame("markDone:\(request.id)")
                 Button("Remove") { Task { await desk.ignore(request) } }
                     .buttonStyle(.borderless)
                     .disabled(busy)

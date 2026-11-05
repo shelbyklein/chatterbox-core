@@ -376,6 +376,7 @@ struct MobileDeskView: View {
                                 start: { start(request) },
                                 change: { choosing = request },
                                 ignore: { ignore(request) },
+                                markDone: { markDone(request) },
                                 link: hasTasks && place(for: request) != nil ? { linking = request } : nil)
             }
         case .working:
@@ -606,6 +607,18 @@ struct MobileDeskView: View {
                 // It runs in the background; the Desk stays, with a note to open it.
                 withAnimation { started = (name, detail.summary.id, body.continueChat != nil) }
                 _ = try? await store.desk()
+            } catch { actionProblem = Self.describe(error) }
+        }
+    }
+
+    private func markDone(_ request: Companion.DeskRequest) {
+        guard busy.insert(request.id).inserted else { return }
+        Task {
+            defer { busy.remove(request.id) }
+            do {
+                _ = try await store.markDeskDone(request.id)
+                settled.insert(request.id)
+                chosen[request.id] = nil
             } catch { actionProblem = Self.describe(error) }
         }
     }
@@ -1133,6 +1146,8 @@ private struct DeskRequestCard: View {
     let change: () -> Void
     /// Takes it off the Desk (the service's ignore).
     let ignore: () -> Void
+    /// Done outside Chatterbox: straight to Done, no thread.
+    var markDone: (() -> Void)? = nil
     /// Link a thread already in its place; nil from a Mac older than tasks, or with no place.
     var link: (() -> Void)? = nil
 
@@ -1190,6 +1205,13 @@ private struct DeskRequestCard: View {
                             .accessibilityIdentifier("desk-link-\(request.id.uuidString)")
                     }
                     Spacer(minLength: 0)
+                    if let markDone {
+                        Button(action: taps(markDone)) { Label("Done", systemImage: "checkmark") }
+                            .buttonStyle(.borderless)
+                            .accessibilityLabel("Mark done")
+                            .accessibilityHint("Done outside Chatterbox: moves it to Done without starting a thread")
+                            .accessibilityIdentifier("desk-done-\(request.id.uuidString)")
+                    }
                     removeButton(taps)
                 }
             }

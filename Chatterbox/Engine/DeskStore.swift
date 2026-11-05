@@ -348,10 +348,25 @@ final class DeskStore {
 
     /// Reopen: unarchives the session, and its task leaves Done (to wherever its thread is now).
     func reopen(_ chatID: UUID) throws {
+        // A task marked done without a thread (its id stands in for the session's): back to To do.
+        if model?.sessions.contains(where: { $0.id == chatID }) != true,
+           let index = tasks.firstIndex(where: { $0.id == chatID && $0.chatID == nil && $0.completedAt != nil }) {
+            tasks[index].completedAt = nil
+            changed()
+            return
+        }
         guard let session = model?.sessions.first(where: { $0.id == chatID }) else { throw Failure(status: 404, message: "That session is gone.") }
         if session.record.archivedAt != nil { session.setArchived(false) }
         // Its newest task: one thread carries one task.
         if let index = tasks.firstIndex(where: { $0.chatID == chatID }) { tasks[index].completedAt = nil }
+        changed()
+    }
+
+    /// Mark done: a task to do that was done outside Chatterbox (no thread) goes straight to Done.
+    func markDone(_ id: UUID) throws {
+        guard let index = tasks.firstIndex(where: { $0.id == id && isToDo($0) }) else { throw Failure(status: 404, message: "That request is gone.") }
+        tasks[index].chatID = nil
+        tasks[index].completedAt = Self.wholeSeconds()
         changed()
     }
 
@@ -649,6 +664,9 @@ final class DeskStore {
         case "ignore":
             try ignore(try Self.requestID(body))
             return try .value(snapshot())
+        case "markDone":
+            try markDone(try Self.requestID(body))
+            return try .value(snapshot())
         case "silence":
             guard let request = try? body.decode(Companion.DeskSilenceRequest.self) else { throw Failure(status: 400, message: "Say what to silence.") }
             silence(request)
@@ -742,6 +760,12 @@ final class DeskStore {
         // Done: tasks completed this week whose threads are still archived.
         var done: [Companion.DeskDone] = []
         for task in tasks {
+            // Done outside Chatterbox: no thread; Reopen sends it back to To do (its id as the session's).
+            if let completed = task.completedAt, task.chatID == nil {
+                done.append(.init(id: task.id, title: task.text, place: task.proposed?.name, subtitle: "Done outside Chatterbox", completedAt: completed,
+                                  task: task.id, taskText: task.text))
+                continue
+            }
             guard let completed = task.completedAt, let chat = task.chatID, let session = byID[chat], session.record.archivedAt != nil else { continue }
             let name = CompanionMapper.heading(session)
             done.append(.init(id: session.id, title: name.title, place: placeName(session), subtitle: name.subtitle, completedAt: completed,

@@ -476,6 +476,12 @@ final class MobileStore {
         return started
     }
 
+    /// Done outside Chatterbox: straight to Done, no thread.
+    @discardableResult
+    func markDeskDone(_ request: UUID) async throws -> Companion.Desk {
+        try await changeDesk { try await self.call("/v1/desk/\(request.uuidString)/done", method: "POST", body: Data("{}".utf8)) }
+    }
+
     @discardableResult
     func ignoreDesk(_ request: UUID) async throws -> Companion.Desk {
         try await changeDesk { try await self.call("/v1/desk/\(request.uuidString)/ignore", method: "POST", body: Data("{}".utf8)) }
