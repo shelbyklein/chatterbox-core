@@ -53,7 +53,7 @@ extension ChatSession {
                 record.sentPersonality = record.personality
             }
             if (record.instructionsVersion ?? 1) < Prompts.instructionsVersion {
-                content.append(.text(Prompts.instructionsUpdate))
+                content.append(.text(Prompts.instructionsUpdate(from: record.instructionsVersion ?? 1, workThreads: record.isInProject)))
                 record.instructionsVersion = Prompts.instructionsVersion
             }
             let user = Prompts.userInstructions
@@ -172,7 +172,7 @@ extension ChatSession {
             effort: record.openModel == nil ? record.effort : "",
             permissionMode: claudePermissionMode,
             appendSystemPrompt: Prompts.fullInstructions(record.personality, backend: .claude, projectFolder: machine == nil ? record.boundFolder : nil,
-                                                         studio: studio, brief: record.brief)
+                                                         studio: studio, brief: record.brief, workThreads: record.isInProject)
                 + pcInstructions(workspace: cwd),
             resumeSessionID: record.claudeSessionID,
             extraDirectories: machine == nil ? [Attachments.directory.path] : [],

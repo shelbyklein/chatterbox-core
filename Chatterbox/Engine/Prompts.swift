@@ -55,8 +55,8 @@ enum Prompts {
 
     /// Everything Chatterbox adds for an agent: its own block, then yours, then the project's
     /// file meant for the other agent.
-    static func fullInstructions(_ p: Personality, backend: Backend, projectFolder: String?, studio: Studio? = nil, brief: String? = nil) -> String {
-        var parts = [agentInstructions(p)]
+    static func fullInstructions(_ p: Personality, backend: Backend, projectFolder: String?, studio: Studio? = nil, brief: String? = nil, workThreads: Bool = true) -> String {
+        var parts = [agentInstructions(p, workThreads: workThreads)]
         if let studio { parts.append(studioNote(studio)) }
         if let brief = brief?.trimmingCharacters(in: .whitespacesAndNewlines), !brief.isEmpty { parts.append(briefBlock(brief)) }
         let user = userInstructions
@@ -113,7 +113,7 @@ enum Prompts {
 
     /// Added to Claude Code's system prompt and to Codex's developer instructions.
     /// Both agents bring their own base prompt; this adds the tone and the app context.
-    static func agentInstructions(_ p: Personality) -> String {
+    static func agentInstructions(_ p: Personality, workThreads: Bool = true) -> String {
         """
         \(personalitySpec(p))
 
@@ -130,9 +130,7 @@ enum Prompts {
 
         Sidequests: to hand a task to the other agent (Claude and Codex each have their strengths; Codex usually makes the images, and Claude usually double-checks work), run `sidequest "<the task>"` from your working folder. It opens beside this chat as a Sidechat on the other agent, which reads this whole conversation first, so the task can be short. When it finishes, its answer arrives here as a new message and you carry on from it. Start one when the user asks for it, or when the other agent is clearly the better fit; tell the user you did, and finish your reply instead of waiting for it.
 
-        Work threads: when a piece of work needs more than a few steps or many files (a feature, a fix across files, a migration), keep this session short and start a work thread for it: run `work start "<short title>" --brief "<the brief>"` from your working folder (add `--agent claude|codex` or `--model M` only to use another agent or model than yours). It's a fresh session in the same folder, with its own task on the Desk, that starts from your brief alone, so make the brief self-contained: what to do, what's already decided, which files and plans to read, and what to report. You can start several. When one finishes, its result arrives here as a new message and you carry on from it; `work list` shows them and their state. Tell the user you started it, and finish your reply instead of waiting. A work thread doesn't start work threads of its own.
-
-        PC errands: for work on Shelby-PC, the user's Windows PC (its apps, such as Photoshop; its GPU or disk), run `pc-errand "<the task>"` from your working folder, adding `--file PATH` for each file it needs. It opens beside this session as a Sidechat running on the PC on your own agent, caught up on the conversation, with those files copied there. When it finishes, the files it made are copied to this Mac and its answer arrives here as a new message, naming those copies. Send one when the user asks for something to be done on the PC; tell the user you did, and finish your reply instead of waiting for it.
+        \(workThreads ? workThreadsInstructions + "\n\n" : "")PC errands: for work on Shelby-PC, the user's Windows PC (its apps, such as Photoshop; its GPU or disk), run `pc-errand "<the task>"` from your working folder, adding `--file PATH` for each file it needs. It opens beside this session as a Sidechat running on the PC on your own agent, caught up on the conversation, with those files copied there. When it finishes, the files it made are copied to this Mac and its answer arrives here as a new message, naming those copies. Send one when the user asks for something to be done on the PC; tell the user you did, and finish your reply instead of waiting for it.
 
         Drafts: when you write something the user will send or paste somewhere else (an email, a message, a post, a reply, text for a form), put exactly that text in a fenced ```draft block, and nothing else inside it: no notes, options or explanations. Markdown is fine inside. For an email, make the first line `Subject: …`. The chat shows the block as a card with a Copy button (and, for an email, Copy Subject and Open in Mail), so the user can take it in one click. Put your notes before or after the block; give each separate draft its own block, and when you revise one, give the whole new version in a new block.
 
@@ -140,11 +138,28 @@ enum Prompts {
         """
     }
 
+    /// Only a project's threads orchestrate (Shelby, 2026-11-04): loose chats and Studio sessions
+    /// stay one thread, so they aren't told to start work threads (`work start` still works
+    /// there when asked for; the Start a Work Thread menu action stays everywhere).
+    static let workThreadsInstructions = """
+    Work threads: when a piece of work needs more than a few steps or many files (a feature, a fix across files, a migration), keep this session short and start a work thread for it: run `work start "<short title>" --brief "<the brief>"` from your working folder (add `--agent claude|codex` or `--model M` only to use another agent or model than yours). It's a fresh session in the same folder, with its own task on the Desk, that starts from your brief alone, so make the brief self-contained: what to do, what's already decided, which files and plans to read, and what to report. You can start several. When one finishes, its result arrives here as a new message and you carry on from it; `work list` shows them and their state. Tell the user you started it, and finish your reply instead of waiting. A work thread doesn't start work threads of its own.
+    """
+
+    /// What a session outside a project is told instead, once it has heard about work threads.
+    static let noWorkThreadsNote = "Work threads: this session isn't in a project, so the work-threads instructions don't apply here. Do the work in this session; start a work thread (`work start`) only if the user asks for one."
+
     /// Bump when `agentInstructions` gains something chats already in progress should hear.
     static let instructionsVersion = 14
 
+    /// What a chat whose session started on an earlier version hears, once, before its next
+    /// message. `workThreads`: whether its place is a project (ConversationRecord.isInProject);
+    /// elsewhere the work-threads paragraph gives way to a note that it doesn't apply.
+    static func instructionsUpdate(from version: Int, workThreads: Bool) -> String {
+        workThreads ? instructionsUpdateText : instructionsUpdateText.replacingOccurrences(of: workThreadsInstructions, with: noWorkThreadsNote)
+    }
+
     /// What changed since earlier versions, sent once to chats whose session started before.
-    static let instructionsUpdate = """
+    static let instructionsUpdateText = """
     <app_note>
     Correction about showing files: a file on disk shows in the session only when your final reply names its path. Images (PNG, JPG, screenshots, renders, proofs), GIFs, videos, and Lottie files you name appear under the reply; .html, .svg, and .pdf paths open beside the session when clicked. Reading or viewing a file yourself doesn't show it to the user, so when they ask to see something, name each file's full path, like ![Full page](/path/to/full-page.png), or the folder that holds them. HTML and SVG code blocks still render as live previews. Don't open files in a browser or another app unless the user asks.
 

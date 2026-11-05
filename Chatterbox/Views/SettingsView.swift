@@ -781,6 +781,8 @@ func openForEditing(_ path: String) {
 /// Uses the shared idle-safe job; status survives closing Settings or reopening the app.
 struct BackgroundServiceSection: View {
     var restart = BackgroundServiceRestart.shared
+    /// The service shuts down booted iOS simulators nothing has used for 30 minutes (SimulatorSweeper).
+    @AppStorage("idleSimulatorShutdown") private var idleSimulatorShutdown = true
 
     var body: some View {
         Section {
@@ -793,9 +795,14 @@ struct BackgroundServiceSection: View {
                 Spacer()
                 Button("Restart Background Service") { Task { await restart.restart() } }
                     .disabled(restart.pending)
-                    .help("Wait for active replies to finish, then restart the service and reconnect")
+                    .help("Restart the service between turns, as soon as no reply is mid-stream (replies carry on in their hosts), and reconnect")
                     .accessibilityIdentifier("restart-background-service")
             }
+            Toggle("Shut down idle iOS simulators", isOn: $idleSimulatorShutdown)
+                .help("Every 10 minutes, shut down booted simulators that no build, test or Simulator window has used for 30 minutes. Devices are never deleted.")
+                .accessibilityIdentifier("idle-simulator-shutdown")
+            Text("Booted simulators no build, test or Simulator window has used for 30 minutes are shut down (never deleted) to free their memory. Logged in chatterboxd.log.")
+                .font(.caption).foregroundStyle(.secondary)
             if !restart.message.isEmpty {
                 HStack(alignment: .top, spacing: 12) {
                     Text(restart.message)
@@ -810,7 +817,7 @@ struct BackgroundServiceSection: View {
             }
         } header: { Text("Background service") }
         footer: {
-            Text("Waits for active replies to finish. Chatterbox reconnects automatically; chats and drafts are kept.")
+            Text("Restarts between turns: as soon as no reply is mid-stream for a few seconds, 20 minutes at the latest. Replies carry on in their hosts; Chatterbox reconnects automatically, and chats and drafts are kept.")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .task {

@@ -54,10 +54,12 @@ import Darwin
         let rawPID = (try? String(contentsOf: lockURL, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
         let alive = rawPID.flatMap(Int32.init).map { $0 > 1 && kill($0, 0) == 0 } ?? false
         if alive {
-            if line.contains("restarting chatterboxd") {
+            if line.contains("restarting chatterboxd") || line.contains("restart rule:") {
                 phase = .restarting; message = "Restarting the background service. Reconnecting…"
-            } else if line.contains("waiting for every chat") {
-                phase = .waiting; message = "Waiting for active replies to finish."
+            } else if line.contains("waiting for") {
+                // Between turns: once no reply has produced anything for a few seconds (the
+                // hosts carry the agents across the restart), 20 minutes at the latest.
+                phase = .waiting; message = "Waiting for a gap between replies."
             } else {
                 phase = .queued; message = "Restart queued…"
             }

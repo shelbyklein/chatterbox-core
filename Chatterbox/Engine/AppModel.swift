@@ -6,7 +6,9 @@ import Observation
 @MainActor
 @Observable
 final class AppModel {
-    private(set) var sessions: [ChatSession] = []
+    private(set) var sessions: [ChatSession] = [] {
+        didSet { sessionsChanged() }
+    }
     /// Startup progress remains visible until the first complete list is available.
     private(set) var sessionLoadStatus: String?
     private var loadedSessionList = false
@@ -130,7 +132,50 @@ final class AppModel {
         webPage = WebPage(url: url)
     }
 
-    var activeSessions: [ChatSession] { sessions.filter { $0.record.archivedAt == nil } }
+    var activeSessions: [ChatSession] { sessionIndex.active }
+
+    // MARK: Session index
+
+    /// Who's whose, looked up once per change rather than scanned per row. The sidebar and the
+    /// Home list ask for a thread's Sidechats and worktrees for every thread they draw, and with
+    /// hundreds of sessions those scans held the main thread (40% CPU and hang reports while
+    /// the Mac was busy). Rebuilt when the session list changes or a session's place does:
+    /// ChatSession reports the latter through `placeChanged` (see ConversationRecord.Place).
+    struct SessionIndex {
+        var active: [ChatSession] = []
+        var activeByID: [UUID: ChatSession] = [:]
+        /// Sidechats (and work threads) by the parent they're under.
+        var sidechatsOf: [UUID: [ChatSession]] = [:]
+        /// Sidequests by the chat that sent them.
+        var sidequestsOf: [UUID: [ChatSession]] = [:]
+        /// Worktree chats by their project's folder (normalized).
+        var worktreesOf: [String: [ChatSession]] = [:]
+    }
+    @ObservationIgnored private var cachedIndex: (revision: Int, index: SessionIndex)?
+    /// Goes up on every change to the sessions' structure; whoever reads the index observes it.
+    private(set) var sessionIndexRevision = 0
+    private var sessionIndex: SessionIndex {
+        if let cachedIndex, cachedIndex.revision == sessionIndexRevision { return cachedIndex.index }
+        var index = SessionIndex()
+        for session in sessions where session.record.archivedAt == nil {
+            index.active.append(session)
+            index.activeByID[session.id] = session
+            if let parent = session.record.sidechatOf { index.sidechatsOf[parent, default: []].append(session) }
+            if let parent = session.record.sidequestOf { index.sidequestsOf[parent, default: []].append(session) }
+            if let folder = session.record.worktreeOf { index.worktreesOf[Self.normalize(folder), default: []].append(session) }
+        }
+        cachedIndex = (sessionIndexRevision, index)
+        sessionIndexRebuilds += 1
+        return index
+    }
+    private func sessionsChanged() {
+        sessionIndexRevision += 1
+        for session in sessions where session.placeChanged == nil {
+            session.placeChanged = { [weak self] in self?.sessionIndexRevision += 1 }
+        }
+    }
+    /// How many times the index was rebuilt (tests check that drawing doesn't rebuild it).
+    @ObservationIgnored private(set) var sessionIndexRebuilds = 0
 
     /// Threads pinned to the top of the sidebar, in pin order; kept in this Mac's preferences.
     var pinnedThreadIDs: [UUID] = (AppPreferences.defaults.stringArray(forKey: "macPinnedThreads") ?? []).compactMap(UUID.init) {
@@ -138,7 +183,8 @@ final class AppModel {
     }
     /// The pinned threads still open (archived ones drop out until they're unarchived).
     var pinnedThreads: [ChatSession] {
-        pinnedThreadIDs.compactMap { id in activeSessions.first { $0.id == id } }
+        let index = sessionIndex
+        return pinnedThreadIDs.compactMap { index.activeByID[$0] }
     }
     func isPinnedThread(_ session: ChatSession) -> Bool { pinnedThreadIDs.contains(session.id) }
     /// Top-level threads only: a worktree or Sidechat stays under its parent.
@@ -236,29 +282,31 @@ final class AppModel {
 
     func hasVisibleSidechatParent(_ chat: ChatSession) -> Bool {
         guard let parent = chat.record.sidechatOf else { return false }
-        return activeSessions.contains { $0.id == parent }
+        return sessionIndex.activeByID[parent] != nil
     }
 
     func sidechats(of parent: ChatSession) -> [ChatSession] {
-        activeSessions.filter { $0.record.sidechatOf == parent.id }.sorted { $0.lastActivity > $1.lastActivity }
+        (sessionIndex.sidechatsOf[parent.id] ?? []).sorted { $0.lastActivity > $1.lastActivity }
     }
 
     /// Sidechats and sidequests live inside the original parent's card. Once that parent
     /// is archived they get cards of their own again.
     func showsInsideParentCard(_ session: ChatSession) -> Bool {
         guard let parent = session.record.sidechatOf ?? session.record.sidequestOf else { return false }
-        return activeSessions.contains { $0.id == parent }
+        return sessionIndex.activeByID[parent] != nil
     }
 
     /// Every child shown inside this card, including sidequests, in creation order.
     func childChats(of parent: ChatSession) -> [ChatSession] {
-        activeSessions.filter { ($0.record.sidechatOf ?? $0.record.sidequestOf) == parent.id }
-            .sorted { $0.record.createdAt < $1.record.createdAt }
+        let index = sessionIndex
+        // A chat that is both (a sidequest under a Sidechat anchor) counts once, as a Sidechat.
+        let sidequests = (index.sidequestsOf[parent.id] ?? []).filter { $0.record.sidechatOf == nil }
+        return ((index.sidechatsOf[parent.id] ?? []) + sidequests).sorted { $0.record.createdAt < $1.record.createdAt }
     }
 
     /// The sidequests a chat started, oldest first.
     func sidequests(of parent: ChatSession) -> [ChatSession] {
-        activeSessions.filter { $0.record.sidequestOf == parent.id }.sorted { $0.record.createdAt < $1.record.createdAt }
+        (sessionIndex.sidequestsOf[parent.id] ?? []).sorted { $0.record.createdAt < $1.record.createdAt }
     }
 
     @discardableResult
@@ -619,7 +667,7 @@ final class AppModel {
     /// A project's worktree chats, newest first.
     func worktrees(of project: ChatSession) -> [ChatSession] {
         guard let folder = (project.record.projectFolder ?? project.record.convertedProjectFolder).map(Self.normalize) else { return [] }
-        return activeSessions.filter { $0.record.worktreeOf.map(Self.normalize) == folder && $0.record.studioID == project.record.studioID }
+        return (sessionIndex.worktreesOf[folder] ?? []).filter { $0.record.studioID == project.record.studioID }
             .sorted { $0.record.createdAt > $1.record.createdAt }
     }
 

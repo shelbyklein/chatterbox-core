@@ -13,7 +13,19 @@ import Observation
 @MainActor
 @Observable
 final class ChatSession: Identifiable {
-    var record: ConversationRecord
+    var record: ConversationRecord {
+        didSet {
+            // Where the chat sits changed (archived, moved, made a Sidechat…): AppModel's
+            // session index is rebuilt. Compared to a copy kept here, not `oldValue`: naming
+            // oldValue would keep a second reference to the record during every mutation and
+            // make each appended item copy the whole transcript.
+            let place = record.place
+            if place != lastPlace { lastPlace = place; placeChanged?() }
+        }
+    }
+    @ObservationIgnored private var lastPlace: ConversationRecord.Place
+    /// Set by AppModel: called when the record's place changes.
+    @ObservationIgnored var placeChanged: (() -> Void)?
     var isRunning = false {
         didSet {
             guard isRunning != oldValue else { return }
@@ -243,6 +255,7 @@ final class ChatSession: Identifiable {
     init(record: ConversationRecord) {
         self.id = record.id
         self.record = record
+        self.lastPlace = record.place
         for (key, usage) in record.savedContext ?? [:] {
             if let backend = Backend(rawValue: key) { contextUsage[backend] = usage }
         }

@@ -261,6 +261,27 @@ struct ConversationRecord: Codable {
     /// The folder this chat is tied to: its project's, or its Studio's.
     var boundFolder: String? { sidechatFolder ?? projectFolder ?? studioWorkingFolder ?? studioFolder }
 
+    /// Whether the chat's place is a project: its session, a worktree of it (which has a project
+    /// folder of its own), or a Sidechat (a work thread) in it. Not a Studio's chats, nor a
+    /// project converted into a Studio. Only project places act as orchestrators
+    /// (plans/work-threads.md).
+    var isInProject: Bool { studioID == nil && (projectFolder != nil || sidechatProjectFolder != nil) }
+
+    /// Where the chat sits in the sidebar, as AppModel's session index groups it.
+    struct Place: Equatable {
+        var archived: Bool
+        var sidechatOf: UUID?
+        var sidequestOf: UUID?
+        var worktreeOf: String?
+        var projectFolder: String?
+        var convertedProjectFolder: String?
+        var studioID: UUID?
+    }
+    var place: Place {
+        Place(archived: archivedAt != nil, sidechatOf: sidechatOf, sidequestOf: sidequestOf, worktreeOf: worktreeOf,
+              projectFolder: projectFolder, convertedProjectFolder: convertedProjectFolder, studioID: studioID)
+    }
+
     /// The agent processes this chat has in the background host, so a relaunch can pick up
     /// a reply that kept going while the app was closed. Older records leave these unset.
     var claudeHost: HostLink?

@@ -181,7 +181,7 @@ extension ChatSession {
                 record.pendingHandoff = nil
             }
             if (record.instructionsVersion ?? 1) < Prompts.instructionsVersion {
-                input.append(Self.textInput(Prompts.instructionsUpdate))
+                input.append(Self.textInput(Prompts.instructionsUpdate(from: record.instructionsVersion ?? 1, workThreads: record.isInProject)))
                 record.instructionsVersion = Prompts.instructionsVersion
             }
             let user = Prompts.userInstructions
@@ -292,7 +292,7 @@ extension ChatSession {
             "approvalPolicy": approvalPolicy(settings),
             "sandbox": .string(["readOnly": "read-only", "fullAccess": "danger-full-access"][settings.modeID] ?? "workspace-write"),
             "developerInstructions": .string(Prompts.fullInstructions(record.personality, backend: .codex, projectFolder: runMachine == nil ? record.boundFolder : nil,
-                                                                         studio: studio, brief: record.brief) + pcInstructions(workspace: codexFolder(settings))),
+                                                                         studio: studio, brief: record.brief, workThreads: record.isInProject) + pcInstructions(workspace: codexFolder(settings))),
         ]
         if let model = codexTurnModel(settings).model { params["model"] = .string(model) }
         // Always explicit, so a thread that used another connection switches cleanly.

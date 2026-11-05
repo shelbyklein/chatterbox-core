@@ -9,7 +9,7 @@ enum RuntimePreferences {
         "companionEnabled","companionDevices","pins","openWebsitePinsInApp",
         "plugin.nextSteps.enabled","plugin.nextSteps.minAnswerChars","plugin.nextSteps.suggestCommands",
         "mobilePushEnabled","mobilePushLastStatus","modelPresetsJSON","lastModel.chats","lastModel.studios","lastModel.projects","macPinnedThreads"
-        ,"mobilePushConfigured","mobilePushPreviews","mobilePushSound"
+        ,"mobilePushConfigured","mobilePushPreviews","mobilePushSound","idleSimulatorShutdown"
     ]
     static var file:URL{RuntimePaths.data.appendingPathComponent("runtime-preferences.plist")}
     static func load() throws {
