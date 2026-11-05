@@ -196,6 +196,13 @@ struct ConversationRecord: Codable {
     var workOf: UUID?
     var workReported: UUID?
     var workReportedAt: Date?
+    /// When its last turn ended, so a `work report` can be placed in a turn.
+    var workTurnEndedAt: Date?
+    /// Set when a turn ended with background work still running (the agent picks up when it
+    /// finishes, so that reply was progress, not the result), and refreshed while anything
+    /// runs: the work thread is still working, and reports after a turn ends with nothing
+    /// running, or once it's been idle for `ChatSession.workIdleReport` past this.
+    var workPendingSince: Date?
     var sidechatFolder: String?
     /// Parent project scope for existing project-only secrets; no new access is granted.
     var sidechatProjectFolder: String?

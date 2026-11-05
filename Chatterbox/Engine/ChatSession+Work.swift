@@ -3,9 +3,10 @@ import Foundation
 /// Work threads (plans/work-threads.md): a project keeps one front thread Shelby talks to, and
 /// real pieces of work go to fresh threads in the same folder. Each starts with a brief (what to
 /// do, what's decided, which files to read) rather than the front thread's transcript, carries
-/// its own task on the Desk, and reports its result back to the front thread when it finishes
-/// its reply (or calls `work report`). One level only: a work thread doesn't start work threads.
-/// The background service runs both ends, so the report happens with the app closed.
+/// its own task on the Desk, and reports its result back to the front thread when it's done (a
+/// turn ends with no background work still running) or calls `work report`. One level only: a
+/// work thread doesn't start work threads. The background service runs both ends, so the report
+/// happens with the app closed.
 extension ChatSession {
     var isWorkThread: Bool { record.workOf != nil }
 
@@ -22,6 +23,10 @@ extension ChatSession {
         return record
     }
 
+    /// How long a work thread whose turn ended with background work running may then sit idle,
+    /// nothing running, before it reports what it has (in case its agent never picks back up).
+    static var workIdleReport: TimeInterval = 30 * 60
+
     /// The newest final reply not yet reported to the front thread.
     var unreportedWorkReply: DisplayItem? {
         guard isWorkThread, let reply = items.last(where: { $0.kind == .assistant && $0.phase == .final }),
@@ -29,18 +34,57 @@ extension ChatSession {
         return reply
     }
 
+    /// Between turns but not done: a turn ended with background work running, and the result
+    /// hasn't gone back yet. Its task stays Working; its last reply is progress.
+    var isWorkPending: Bool { isWorkThread && record.workPendingSince != nil && record.archivedAt == nil }
+
+    /// Working, as the Work strip and the board say it: replying, running something in the
+    /// background, or between turns waiting on that (`isWorkPending`).
+    var isWorkingOn: Bool { isRunning || hasBackgroundWork || isWorkPending }
+
     /// After a work thread's turn: its finished reply goes to the front thread, unless it asks
-    /// for an approval or answers first, or the turn already reported (`work report`).
+    /// for an approval or answers first, the turn already reported (`work report`), or
+    /// background work it started still runs (it reports after the turn that ends with
+    /// nothing running; see `reportIdleWork` for when that turn never comes).
     func workTurnEnded(front: ChatSession?) {
+        let previous = record.workTurnEndedAt
+        record.workTurnEndedAt = Date()
         guard let front, !isWaitingOnYou, let reply = unreportedWorkReply else { return }
         // Reported during this turn, after the message that started it (not one added while
-        // it worked): that was the result.
-        let asked = items.last(where: { $0.kind == .user && !$0.steered })?.timestamp ?? .distantPast
+        // it worked) and after the turn before it: that was the result.
+        let asked = max(items.last(where: { $0.kind == .user && !$0.steered })?.timestamp ?? .distantPast, previous ?? .distantPast)
         if let at = record.workReportedAt, at >= asked {
             record.workReported = reply.id
+            record.workPendingSince = nil
             onChange?(self)
             return
         }
+        if hasBackgroundWork {
+            // A background command or subagent still runs, and the agent picks up when it
+            // finishes: this reply says how it's going, not what came of it.
+            record.workPendingSince = Date()
+            onChange?(self)
+            return
+        }
+        reportWork(reply.text, to: front, reply: reply.id)
+    }
+
+    /// The safety net, checked now and then by whoever runs the conversation: a work thread
+    /// whose turn ended with background work running reports its newest reply once it has sat
+    /// idle, nothing running, for `workIdleReport`. Anything running counts as fresh activity.
+    func reportIdleWork(front: ChatSession?, now: Date = Date()) {
+        guard isWorkPending, let since = record.workPendingSince else { return }
+        if isRunning || hasBackgroundWork || isWaitingOnYou || awaitingHostResume {
+            record.workPendingSince = now
+            return
+        }
+        guard now.timeIntervalSince(since) >= Self.workIdleReport else { return }
+        guard let front, let reply = unreportedWorkReply else {
+            record.workPendingSince = nil
+            onChange?(self)
+            return
+        }
+        RuntimeHooks.note("Work thread \u{201C}\(title)\u{201D} idle since its background work ended: reporting its last reply")
         reportWork(reply.text, to: front, reply: reply.id)
     }
 
@@ -49,6 +93,7 @@ extension ChatSession {
     /// archived front thread isn't woken: the report stays here.
     func reportWork(_ text: String, to front: ChatSession, reply: UUID? = nil) {
         if let reply { record.workReported = reply } else { record.workReportedAt = Date() }
+        record.workPendingSince = nil
         guard front.record.archivedAt == nil else {
             notice("\u{201C}\(front.title)\u{201D} is archived, so this result wasn't sent there.")
             onChange?(self)

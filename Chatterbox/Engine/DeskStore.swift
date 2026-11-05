@@ -573,9 +573,10 @@ final class DeskStore {
         .sorted { $0.record.createdAt > $1.record.createdAt }
         .map { session in
             let state = session.record.archivedAt != nil ? "done" : session.isWaitingOnYou ? "needsYou"
-                : session.isRunning || session.hasBackgroundWork ? "working" : "ready"
+                : session.isWorkingOn ? "working" : "ready"
             return .init(id: session.id, title: session.title, state: state, task: tasks.first { $0.chatID == session.id }?.id,
-                         backend: session.record.backend.rawValue, updatedAt: session.record.updatedAt)
+                         backend: session.record.backend.rawValue, updatedAt: session.record.updatedAt,
+                         status: state == "working" ? session.lastActionSummary.map { Self.short($0, limit: 160) } : nil)
         }
     }
 
@@ -700,7 +701,8 @@ final class DeskStore {
                 // Waiting on something silenced is waiting, not working; a thread with no task
                 // shows only when it needs Shelby.
                 continue
-            } else if session.isRunning || session.hasBackgroundWork {
+            } else if session.isWorkingOn {
+                // A work thread between turns, waiting on its background work, is working too.
                 let name = CompanionMapper.heading(session)
                 working.append((session.record.turnStartedAt ?? session.record.updatedAt,
                                 .init(id: session.id, title: name.title, place: placeName(session), subtitle: name.subtitle,
@@ -807,7 +809,8 @@ final class DeskStore {
         }
         // A question in a reply: the last thing said is the agent's, asking. Sidequests and
         // automation runs report to their session, not to Shelby.
-        guard !session.isRunning, session.record.sidequestOf == nil, session.record.automationID == nil,
+        // A work thread's reply between turns (background work still going) is progress.
+        guard !session.isRunning, !session.isWorkPending, session.record.sidequestOf == nil, session.record.automationID == nil,
               let last = session.items.last(where: { $0.kind == .user || ($0.kind == .assistant && $0.phase == .final) }),
               last.kind == .assistant else { return [] }
         let date = last.timestamp ?? session.record.updatedAt

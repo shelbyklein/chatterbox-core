@@ -12,7 +12,7 @@ enum WorkThreadState: String {
 
     @MainActor init(_ session: ChatSession) {
         self = session.record.archivedAt != nil ? .done : session.isWaitingOnYou ? .needsYou
-            : session.isRunning || session.hasBackgroundWork ? .working : .ready
+            : session.isWorkingOn ? .working : .ready
     }
 
     var label: String {
@@ -142,7 +142,9 @@ struct WorkThreadBanner: View {
         let reported = session.record.workReported != nil || session.record.workReportedAt != nil
         HStack(spacing: 8) {
             Image(systemName: "arrow.triangle.branch")
-            Text("Work for \u{201C}\(front?.title ?? "a session that's gone")\u{201D}. " + (reported ? "Its result went back there." : "Its result goes back there when it finishes."))
+            Text("Work for \u{201C}\(front?.title ?? "a session that's gone")\u{201D}. "
+                 + (session.isWorkPending ? "Background work is still running; its result goes back there when that's done."
+                    : reported ? "Its result went back there." : "Its result goes back there when it finishes."))
                 .lineLimit(2)
             Spacer()
             if let front {
@@ -188,7 +190,7 @@ struct WorkStrip: View {
     }
 }
 
-/// One work thread in the strip: its state and name.
+/// One work thread in the strip: its state and name, and while it works, its latest status line.
 private struct WorkChip: View {
     let thread: ChatSession
     @Environment(AppModel.self) private var model
@@ -196,11 +198,16 @@ private struct WorkChip: View {
 
     var body: some View {
         let state = WorkThreadState(thread)
+        let status = state == .working ? thread.lastActionSummary.map { DeskStore.short($0, limit: 160) } : nil
         Button { model.selectedID = thread.id } label: {
             HStack(spacing: 5) {
                 Image(systemName: state.icon).foregroundStyle(state.color)
                 Text(thread.title).lineLimit(1)
                 Text(state.label).foregroundStyle(.secondary)
+                if let status {
+                    Text(status).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.tail)
+                        .frame(maxWidth: 240, alignment: .leading)
+                }
             }
             .font(.caption)
             .padding(.horizontal, 9).padding(.vertical, 4)
@@ -210,8 +217,8 @@ private struct WorkChip: View {
         }
         .buttonStyle(.plain)
         .onHover { hovered = $0 }
-        .help("\(thread.title): \(state.label). Click to open it.")
-        .accessibilityLabel("\(thread.title), \(state.label)")
+        .help("\(thread.title): \(state.label)\(status.map { " (\($0))" } ?? ""). Click to open it.")
+        .accessibilityLabel("\(thread.title), \(state.label)\(status.map { ", \($0)" } ?? "")")
         .accessibilityIdentifier("workChip:\(thread.id)")
     }
 }

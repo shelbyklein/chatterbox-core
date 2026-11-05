@@ -258,7 +258,7 @@ enum Prompts {
         <work_thread>
         This is a work thread\(project.map { " in the project \u{201C}\($0)\u{201D}" } ?? ""): a fresh session started from the front session \u{201C}\(title)\u{201D}, where \(agent) talks with the user, to do one piece of work. Your brief is the next message; it's all you're given of that conversation, so read the files and plans it names before you start. Do the work here, in the same folder.
 
-        When you finish your reply, it goes back to the front session automatically and its agent carries on from it, so end with what it needs: what you did, the files you changed, how you checked it, and anything left undone or needing the user. To send a result earlier (or a different one), run `work report "<the result>"`; the reply that ends that turn then isn't sent again. Don't start work threads or sidequests of your own: a work thread is one level.
+        When you're done, your last reply goes back to the front session automatically and its agent carries on from it. A reply that ends while a background command or subagent you started is still running isn't sent: that's progress, and the result goes once you've picked back up and finished with nothing left running. So finish with a complete result message, not a status line: what you did, the files you changed, how you checked it, and anything left undone or needing the user. For an explicit report, run `work report "<the result>"`: it goes now, and the reply that ends that turn isn't sent again. Don't start work threads or sidequests of your own: a work thread is one level.
         </work_thread>
         """
     }

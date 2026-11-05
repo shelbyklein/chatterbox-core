@@ -141,7 +141,16 @@ struct CommandReceipt: Codable {
         DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in
             guard let self else { return }
             self.releaseIdleAgents()
+            self.reportIdleWork()
             self.scheduleIdleSweep()
+        }
+    }
+
+    /// Work threads whose turn ended with background work running, then went quiet without
+    /// their agent picking back up, report what they have (ChatSession.reportIdleWork).
+    func reportIdleWork(now: Date = Date()) {
+        for session in sessions where session.isWorkPending {
+            session.reportIdleWork(front: session.record.workOf.flatMap { self.session($0) }, now: now)
         }
     }
 

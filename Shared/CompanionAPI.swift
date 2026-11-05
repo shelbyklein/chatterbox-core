@@ -210,6 +210,9 @@ enum Companion {
         var task: UUID? = nil
         var backend: String
         var updatedAt: Date
+        /// While it's working, the latest short status line: the step it's on, or what it said
+        /// last when a turn ended with background work still going (progress, not its result).
+        var status: String? = nil
     }
 
     /// POST /v1/chats/<id>/work (socket: operation "work", action "start"): a work thread for

@@ -76,6 +76,9 @@ struct MobileWorkStrip: View {
                                 Image(systemName: thread.stateIcon).foregroundStyle(thread.stateColor)
                                 Text(thread.title).lineLimit(1)
                                 Text(thread.stateLabel).foregroundStyle(.secondary)
+                                if thread.state == "working", let status = thread.status {
+                                    Text(status).foregroundStyle(.tertiary).lineLimit(1).frame(maxWidth: 200, alignment: .leading)
+                                }
                             }
                             .font(.caption)
                             .padding(.horizontal, 10).padding(.vertical, 6)
@@ -83,7 +86,7 @@ struct MobileWorkStrip: View {
                             .overlay(Capsule().strokeBorder(thread.state == "needsYou" ? Color.attention.opacity(0.7) : .clear))
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("Work thread \(thread.title), \(thread.stateLabel)")
+                        .accessibilityLabel("Work thread \(thread.title), \(thread.stateLabel)\(thread.status.map { ", \($0)" } ?? "")")
                         .accessibilityIdentifier("work-chip-\(thread.id.uuidString)")
                     }
                 }
