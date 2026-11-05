@@ -83,6 +83,38 @@ enum Companion {
         /// Work threads waiting for the Mac (new ones not started, or next turns held).
         var waiting: Int = 0
 
+        init(level: String, since: Date? = nil, updatedAt: Date, updated: Int, summary: String, reasons: [String] = [], memory: String,
+             swapUsedGB: Double, swapGrowthGB: Double, compressedGB: Double? = nil, load1: Double, load5: Double, load15: Double, cores: Int,
+             thermal: String, holding: [String] = [], waiting: Int = 0) {
+            self.level = level; self.since = since; self.updatedAt = updatedAt; self.updated = updated; self.summary = summary
+            self.reasons = reasons; self.memory = memory; self.swapUsedGB = swapUsedGB; self.swapGrowthGB = swapGrowthGB
+            self.compressedGB = compressedGB; self.load1 = load1; self.load5 = load5; self.load15 = load15; self.cores = cores
+            self.thermal = thermal; self.holding = holding; self.waiting = waiting
+        }
+
+        /// Leniently: it rides on the chat list, which must never fail over a field here that a
+        /// newer or older Mac leaves out.
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            level = try c.decode(String.self, forKey: .level)
+            since = try? c.decodeIfPresent(Date.self, forKey: .since)
+            updatedAt = (try? c.decodeIfPresent(Date.self, forKey: .updatedAt)) ?? Date()
+            updated = (try? c.decodeIfPresent(Int.self, forKey: .updated)) ?? Int(updatedAt.timeIntervalSince1970)
+            summary = (try? c.decodeIfPresent(String.self, forKey: .summary)) ?? ""
+            reasons = (try? c.decodeIfPresent([String].self, forKey: .reasons)) ?? []
+            memory = (try? c.decodeIfPresent(String.self, forKey: .memory)) ?? "normal"
+            swapUsedGB = (try? c.decodeIfPresent(Double.self, forKey: .swapUsedGB)) ?? 0
+            swapGrowthGB = (try? c.decodeIfPresent(Double.self, forKey: .swapGrowthGB)) ?? 0
+            compressedGB = try? c.decodeIfPresent(Double.self, forKey: .compressedGB)
+            load1 = (try? c.decodeIfPresent(Double.self, forKey: .load1)) ?? 0
+            load5 = (try? c.decodeIfPresent(Double.self, forKey: .load5)) ?? 0
+            load15 = (try? c.decodeIfPresent(Double.self, forKey: .load15)) ?? 0
+            cores = (try? c.decodeIfPresent(Int.self, forKey: .cores)) ?? 0
+            thermal = (try? c.decodeIfPresent(String.self, forKey: .thermal)) ?? "nominal"
+            holding = (try? c.decodeIfPresent([String].self, forKey: .holding)) ?? []
+            waiting = (try? c.decodeIfPresent(Int.self, forKey: .waiting)) ?? 0
+        }
+
         /// "Mac OK", "Mac busy", "Mac overloaded".
         var label: String { level == "overloaded" ? "Mac overloaded" : level == "busy" ? "Mac busy" : "Mac OK" }
         var isOK: Bool { level != "busy" && level != "overloaded" }
@@ -860,5 +892,17 @@ extension Companion.ChatOptions {
     /// Runs on the same agent, model and effort.
     func sameModel(as other: Companion.ChatOptions) -> Bool {
         backend == other.backend && model == other.model && effort == other.effort && openModel == other.openModel
+    }
+}
+
+extension Companion.ChatList {
+    /// A pressure reading the phone can't read is dropped, never the whole list.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        revision = try c.decode(Int.self, forKey: .revision)
+        groups = try c.decode([Companion.ChatGroup].self, forKey: .groups)
+        pins = try c.decodeIfPresent([Companion.Pin].self, forKey: .pins)
+        activity = try c.decodeIfPresent([Companion.TurnCompletion].self, forKey: .activity)
+        pressure = try? c.decodeIfPresent(Companion.Pressure.self, forKey: .pressure)
     }
 }

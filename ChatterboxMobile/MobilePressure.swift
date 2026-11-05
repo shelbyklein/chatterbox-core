@@ -41,12 +41,6 @@ struct MobilePressureSheet: View {
                     }
                     if !pressure.isOK { Text(pressure.summary).font(.subheadline) }
                 }
-                Section("Readings") {
-                    LabeledContent("Load", value: "\(Self.number(pressure.load1)) · \(Self.number(pressure.load5)) · \(Self.number(pressure.load15)) on \(pressure.cores) cores")
-                    LabeledContent("Memory", value: pressure.memory.capitalized + (pressure.compressedGB.map { ", \(Self.number($0)) GB compressed" } ?? ""))
-                    LabeledContent("Swap", value: "\(Self.number(pressure.swapUsedGB)) GB" + (pressure.swapGrowthGB > 0 ? ", +\(Self.number(pressure.swapGrowthGB)) GB in 5 min" : ""))
-                    LabeledContent("Thermal", value: pressure.thermal.capitalized)
-                }
                 Section("Holding back") {
                     if pressure.holding.isEmpty {
                         Text("Nothing").foregroundStyle(.secondary)
@@ -54,6 +48,12 @@ struct MobilePressureSheet: View {
                     ForEach(pressure.holding, id: \.self) { line in
                         Label(line, systemImage: "pause.circle")
                     }
+                }
+                Section("Readings") {
+                    LabeledContent("Load", value: "\(Self.number(pressure.load1)) · \(Self.number(pressure.load5)) · \(Self.number(pressure.load15)) on \(pressure.cores) cores")
+                    LabeledContent("Memory", value: pressure.memory.capitalized + (pressure.compressedGB.map { ", \(Self.number($0)) GB compressed" } ?? ""))
+                    LabeledContent("Swap", value: "\(Self.number(pressure.swapUsedGB)) GB" + (pressure.swapGrowthGB > 0 ? ", +\(Self.number(pressure.swapGrowthGB)) GB in 5 min" : ""))
+                    LabeledContent("Thermal", value: pressure.thermal.capitalized)
                 }
                 Section {
                     Text("Chatterbox on the Mac holds its own work back while the Mac is under pressure: builds, simulators and work threads. A running build or reply is never stopped.")
