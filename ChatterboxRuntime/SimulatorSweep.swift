@@ -56,6 +56,17 @@ struct SimulatorSweep: Equatable {
         return decisions
     }
 
+    /// Whether this is the installed service, which may act for the whole Mac: no data folder
+    /// given, or the flavor's own (the LaunchAgents pass it). A test's service runs on a folder
+    /// under /tmp and must never touch the Mac's simulators.
+    static func isInstalledService(dataDir: String?, ownDataDirectory: String) -> Bool {
+        guard let dataDir, !dataDir.isEmpty else { return true }
+        func normalized(_ path: String) -> String {
+            URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
+        }
+        return normalized(dataDir) == normalized(ownDataDirectory)
+    }
+
     /// How long a device must sit unused before it's shut down, by the Mac's pressure level
     /// (MacPressure): half an hour normally, 5 minutes while the Mac is busy, and no wait at all
     /// while it's overloaded (a device a running build or test names, a Simulator window has
