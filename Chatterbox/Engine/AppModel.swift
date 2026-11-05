@@ -107,6 +107,8 @@ final class AppModel {
     @ObservationIgnored var revealMainChatWindow: (() -> Void)?
     /// Sidebar toolbar/keyboard requests, consumed by the single column container.
     var sidebarToggleRequest = 0
+    /// Bumped by the toolbar's About this Thread (⌥⌘0): the chat in front shows or hides its thread sidebar.
+    var threadSidebarToggleRequest = 0
     /// Section navigation reveals the sidebar in narrow windows, without toggling it shut.
     var sidebarRevealRequest = 0
     /// The Add Pin sheet, when open.

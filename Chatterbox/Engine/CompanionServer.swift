@@ -1042,7 +1042,22 @@ enum CompanionMapper {
                      commands: commands(session).map { .init(name: $0.name, detail: $0.description, argumentHint: $0.argumentHint) },
                      nextSteps: NextSteps.shared.suggestions(for: session).nilIfEmpty,
                      work: session.record.workOf == nil ? DeskStore.shared.workThreads(of: session).nilIfEmpty : nil,
-                     workOfTitle: session.record.workOf.flatMap { id in model.sessions.first { $0.id == id }?.title })
+                     workOfTitle: session.record.workOf.flatMap { id in model.sessions.first { $0.id == id }?.title },
+                     branch: branch(session), machine: session.runMachine?.name,
+                     studio: session.record.studioID.flatMap { model.studio($0) }?.name,
+                     tools: ThreadTools.shared.chips(for: session))
+    }
+
+    /// When git was last asked about each folder for the phone: the service doesn't open chats,
+    /// so nothing else keeps its git status current.
+    private static var gitAsked: [String: Date] = [:]
+    private static func branch(_ session: ChatSession) -> String? {
+        guard let folder = session.record.projectFolder else { return nil }
+        if Date().timeIntervalSince(gitAsked[folder] ?? .distantPast) > 60 {
+            gitAsked[folder] = Date()
+            Task { await GitStatusStore.shared.refresh(folder) }
+        }
+        return GitStatusStore.shared.status(for: folder)?.branch
     }
 
     /// The chat's slash commands, or its Codex skills, as the Mac's "/" menu lists them.

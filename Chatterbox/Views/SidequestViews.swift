@@ -1,34 +1,7 @@
 import SwiftUI
 
-/// Beside Notes: send a task to the other agent as a sidequest. Its answer comes back to this
-/// chat by itself, and this chat's agent carries on from it.
-struct SidequestButton: View {
-    let session: ChatSession
-    @Environment(AppModel.self) private var model
-    @Environment(\.colorScheme) private var scheme
-    @State private var open = false
-    @State private var task = ""
-    private var other: Backend { session.record.backend == .claude ? .codex : .claude }
-
-    var body: some View {
-        Button { open.toggle() } label: {
-            Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
-                .frame(width: 36, height: 32).contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .background(scheme == .dark ? Color(white: 0.10) : Color(white: 0.97), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12)))
-        .help("Sidequest: send a task to \(other.label), and its answer comes back here")
-        .accessibilityLabel("Sidequest to \(other.label)")
-        .popover(isPresented: $open, arrowEdge: .bottom) {
-            SidequestForm(agent: other.label, from: session.record.backend.label, task: $task) {
-                model.newSidequest(of: session, task: task)
-                task = ""; open = false
-            }
-        }
-    }
-}
-
+/// A task for the other agent, as a sidequest: its answer comes back to this chat by itself,
+/// and this chat's agent carries on from it. From the thread sidebar's Task & work.
 struct SidequestForm: View {
     let agent: String
     let from: String
@@ -54,36 +27,6 @@ struct SidequestForm: View {
         }
         .padding(16)
         .frame(width: 340)
-    }
-}
-
-/// Beside Sidequest: send a task to Shelby-PC ("do that on the PC"), on this session's agent.
-/// Its answer and files come back here.
-struct PCErrandButton: View {
-    let session: ChatSession
-    @Environment(AppModel.self) private var model
-    @Environment(\.colorScheme) private var scheme
-    @State private var open = false
-    @State private var task = ""
-    @State private var files: [URL] = []
-    @State private var agent: Backend = .claude
-
-    var body: some View {
-        Button { agent = session.record.backend; open.toggle() } label: {
-            Image(systemName: "desktopcomputer")
-                .frame(width: 36, height: 32).contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .background(scheme == .dark ? Color(white: 0.10) : Color(white: 0.97), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12)))
-        .help("Do on \(RemoteMachine.pc.name): send a task to the PC, and its answer and files come back here")
-        .accessibilityLabel("Do on \(RemoteMachine.pc.name)")
-        .popover(isPresented: $open, arrowEdge: .bottom) {
-            PCErrandForm(task: $task, files: $files, agent: $agent) {
-                model.newPCErrand(of: session, task: task, files: files.map(\.path), backend: agent)
-                task = ""; files = []; open = false
-            }
-        }
     }
 }
 

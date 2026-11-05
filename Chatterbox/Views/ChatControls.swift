@@ -173,26 +173,8 @@ final class QuickPrompts {
     }
 }
 
-/// Beside the notes: a list of prompt presets. Pick one to send it to this chat, exactly as
-/// if typed; edit the list in place. Disabled while a reply runs.
-struct ChatQuickActions: View {
-    let session: ChatSession
-    @Environment(\.colorScheme) private var scheme
-    @State private var open = false
-    var body: some View {
-        Button { open.toggle() } label: { Image(systemName: "bolt").frame(width: 36, height: 32).contentShape(Rectangle()) }
-            .buttonStyle(.plain)
-            .disabled(session.isRunning)
-            .background(scheme == .dark ? Color(white: 0.10) : Color(white: 0.97), in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12)))
-            .help(session.isRunning ? "Prompt presets are available once the reply finishes" : "Prompt presets")
-            .accessibilityLabel("Prompt presets")
-            .popover(isPresented: $open, arrowEdge: .bottom) {
-                QuickPromptList { prompt in open = false; session.send(prompt.prompt) }
-            }
-    }
-}
-
+/// The prompt presets: pick one to send it to this chat, exactly as if typed; edit the list in
+/// place. From the thread sidebar's Task & work (disabled while a reply runs).
 struct QuickPromptList: View {
     let send: (QuickPrompt) -> Void
     @State private var store = QuickPrompts.shared

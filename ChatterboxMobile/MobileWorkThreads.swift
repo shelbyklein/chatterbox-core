@@ -2,8 +2,8 @@ import SwiftUI
 
 // Work threads on the phone (plans/work-threads.md): a project's front thread starts fresh
 // threads for real pieces of work, each with a brief and its own task on the Desk, and they
-// report back. Above a front thread's transcript, the Work strip lists them with their state;
-// above a work thread's, a header says whom it works for, with a link back.
+// report back. A front thread's About panel lists them with their state (a pill under its title
+// counts the working ones); above a work thread's transcript, a header says whom it works for.
 
 extension Companion.WorkThread {
     var stateLabel: String {
@@ -32,9 +32,9 @@ extension Companion.WorkThread {
     }
 }
 
-/// Above a chat's transcript: in a front thread, its work threads (tap one to open it); in a
-/// work thread, the front thread it reports to.
-struct MobileWorkStrip: View {
+/// Above a work thread's transcript: the front thread it reports to, with a link back. (A front
+/// thread's own work threads are in its About panel, with a "working" pill under its title.)
+struct MobileWorkHeader: View {
     let summary: Companion.ChatSummary
     let detail: Companion.ChatDetail?
     let chats: [Companion.ChatSummary]
@@ -61,41 +61,6 @@ struct MobileWorkStrip: View {
             .background(.bar)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("work-header")
-        } else if let work = detail?.work, !work.isEmpty {
-            ScrollView(.horizontal) {
-                HStack(spacing: 6) {
-                    Label("Work", systemImage: "arrow.triangle.branch").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                    ForEach(work) { thread in
-                        Button {
-                            open(chats.first { $0.id == thread.id } ?? .init(id: thread.id, title: thread.title, project: nil, subtitle: nil,
-                                                                             backend: thread.backend, isRunning: thread.state == "working",
-                                                                             isWaitingOnYou: thread.state == "needsYou", updatedAt: thread.updatedAt,
-                                                                             workOf: summary.id))
-                        } label: {
-                            HStack(spacing: 5) {
-                                Image(systemName: thread.stateIcon).foregroundStyle(thread.stateColor)
-                                Text(thread.title).lineLimit(1)
-                                Text(thread.stateLabel).foregroundStyle(.secondary)
-                                if thread.state == "working", let status = thread.status {
-                                    Text(status).foregroundStyle(.tertiary).lineLimit(1).frame(maxWidth: 200, alignment: .leading)
-                                }
-                            }
-                            .font(.caption)
-                            .padding(.horizontal, 10).padding(.vertical, 6)
-                            .background(Capsule().fill(Color(uiColor: .tertiarySystemFill)))
-                            .overlay(Capsule().strokeBorder(thread.state == "needsYou" ? Color.attention.opacity(0.7) : .clear))
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Work thread \(thread.title), \(thread.stateLabel)\(thread.status.map { ", \($0)" } ?? "")")
-                        .accessibilityIdentifier("work-chip-\(thread.id.uuidString)")
-                    }
-                }
-                .padding(.horizontal, 12).padding(.vertical, 8)
-            }
-            .scrollIndicators(.hidden)
-            .background(.bar)
-            .accessibilityElement(children: .contain)
-            .accessibilityIdentifier("work-strip")
         }
     }
 }

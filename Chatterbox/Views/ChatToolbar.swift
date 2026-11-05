@@ -82,85 +82,46 @@ struct ChatToolbarContent: ToolbarContent {
                 ToolbarItem { RemoteSlot(bridge: bridge) }
             }
             ToolbarItem { TerminalSlot(bridge: bridge) }
+            ToolbarItem { ThreadSidebarToggle() }
         }
     }
 }
 
-/// Controls for the open session live inside its chat, beside Notes and prompt presets.
 /// The session's Brief: the assignment, the tools to use, the key files, which both agents
-/// always get. Filled once set (its text in the tooltip); click to write, change or clear it.
-struct BriefButton: View {
+/// always get. Its editor, from the thread sidebar's Notes (ThreadSidebar.swift).
+struct BriefEditor: View {
     let session: ChatSession
-    @State private var open = false
-    @State private var text = ""
-    @Environment(\.colorScheme) private var scheme
+    let done: () -> Void
+    @State private var text: String
     private var brief: String { session.record.brief ?? "" }
 
-    var body: some View {
-        Button { text = brief; open.toggle() } label: {
-            Image(systemName: brief.isEmpty ? "doc.text" : "doc.text.fill")
-                .frame(width: 36, height: 32).contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(brief.isEmpty ? Color.secondary : Color.primary)
-        .background(scheme == .dark ? Color(white: 0.10) : Color(white: 0.97), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12)))
-        .help(brief.isEmpty ? "Brief: what this session is for, the tools to use, the key files. Both agents get it." : "Brief: \(brief)")
-        .accessibilityLabel(brief.isEmpty ? "Brief, not set" : "Brief: \(brief)")
-        .popover(isPresented: $open, arrowEdge: .leading) {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Session brief").font(.headline)
-                Text("The assignment, the tools to use (an MCP server, say) and the key files. Claude and Codex both get it, and keep it across an agent switch.")
-                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                TextEditor(text: $text)
-                    .font(.body).scrollContentBackground(.hidden)
-                    .padding(6).frame(height: 140)
-                    .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
-                    .accessibilityLabel("Brief")
-                HStack {
-                    if !brief.isEmpty { Button("Clear", role: .destructive) { session.setBrief(""); open = false } }
-                    Spacer()
-                    Button("Cancel") { open = false }.keyboardShortcut(.cancelAction)
-                    Button("Save") { session.setBrief(text); open = false }
-                        .keyboardShortcut(.defaultAction)
-                        .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines) == brief)
-                }
-                Text("It reaches the agent with your next message.").font(.caption2).foregroundStyle(.tertiary)
-            }
-            .padding(16).frame(width: 380)
-        }
+    init(session: ChatSession, done: @escaping () -> Void) {
+        self.session = session
+        self.done = done
+        _text = State(initialValue: session.record.brief ?? "")
     }
-}
-
-/// The session's (or project's) notes, behind an icon with their count.
-struct NotesButton: View {
-    let scope: String
-    let project: Bool
-    @State private var open = false
-    @State private var store = PinnedNotesStore.shared
-    @Environment(\.colorScheme) private var scheme
-    private var count: Int { store.notes[scope]?.count ?? 0 }
 
     var body: some View {
-        Button { open.toggle() } label: {
-            Image(systemName: "note.text")
-                .frame(width: 36, height: 32).contentShape(Rectangle())
-                .overlay(alignment: .topTrailing) {
-                    if count > 0 {
-                        Text("\(count)").font(.system(size: 9, weight: .bold).monospacedDigit()).foregroundStyle(.white)
-                            .padding(.horizontal, 4).frame(minWidth: 15, minHeight: 15)
-                            .background(Capsule().fill(Color.accentColor)).offset(x: 4, y: -4)
-                    }
-                }
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Session brief").font(.headline)
+            Text("The assignment, the tools to use (an MCP server, say) and the key files. Claude and Codex both get it, and keep it across an agent switch.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            TextEditor(text: $text)
+                .font(.body).scrollContentBackground(.hidden)
+                .padding(6).frame(height: 140)
+                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+                .accessibilityLabel("Brief")
+            HStack {
+                if !brief.isEmpty { Button("Clear", role: .destructive) { session.setBrief(""); done() } }
+                Spacer()
+                Button("Cancel", action: done).keyboardShortcut(.cancelAction)
+                Button("Save") { session.setBrief(text); done() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines) == brief)
+            }
+            Text("It reaches the agent with your next message.").font(.caption2).foregroundStyle(.tertiary)
         }
-        .buttonStyle(.plain)
-        .background(scheme == .dark ? Color(white: 0.10) : Color(white: 0.97), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12)))
-        .help(project ? "Project notes" : "Session notes")
-        .accessibilityLabel((project ? "Project notes" : "Session notes") + (count > 0 ? ", \(count)" : ""))
-        .popover(isPresented: $open, arrowEdge: .leading) {
-            ChatNotes(scope: scope, project: project, panelWidth: 300)
-        }
+        .padding(16).frame(width: 380)
     }
 }
 
@@ -188,32 +149,26 @@ enum SideIcon {
     }
 }
 
-/// The repository and its issues, behind a branch icon (sessions in a GitHub repo).
-struct RepoButton: View {
-    let bridge: ChatToolbarBridge
-    @State private var open = false
-
-    var body: some View {
-        if let session = bridge.session, bridge.issuesPanel != nil,
-           let status = GitStatusStore.shared.status(for: session.record.projectFolder),
-           let repo = status.remote(preferring: session.record.gitRemote)?.repo {
-            Button { open.toggle() } label: { Image(systemName: "arrow.triangle.branch") }
-                .buttonStyle(.plain).modifier(SideIcon.Tile())
-                .help("\(repo)\(status.branch.map { " · " + $0 } ?? ""): branch, remote and issues")
-                .accessibilityLabel("Repository")
-                .popover(isPresented: $open, arrowEdge: .leading) { RepoSlot(bridge: bridge).padding(14) }
-        }
+/// A menu drawn as a sidebar row: no button chrome or arrow.
+struct RowMenuStyle: ViewModifier {
+    let enabled: Bool
+    func body(content: Content) -> some View {
+        if enabled { content.menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden) } else { content }
     }
 }
 
-/// The tools (MCP servers, connectors, skills) this session gets, behind a puzzle piece.
+/// The tools (MCP servers, connectors, skills) this session gets, behind its chips.
 struct ToolsButton: View {
     let session: ChatSession
+    /// The thread sidebar's chips; a puzzle-piece tile without.
+    var label: AnyView? = nil
     @State private var open = false
 
     var body: some View {
-        Button { open.toggle() } label: { Image(systemName: "puzzlepiece.extension") }
-            .buttonStyle(.plain).modifier(SideIcon.Tile())
+        Button { open.toggle() } label: {
+            if let label { label } else { Image(systemName: "puzzlepiece.extension").modifier(SideIcon.Tile()) }
+        }
+            .buttonStyle(.plain)
             .help("Tools: MCP servers, connectors and skills for this session")
             .accessibilityLabel("Tools")
             .popover(isPresented: $open, arrowEdge: .leading) {
@@ -224,28 +179,12 @@ struct ToolsButton: View {
     }
 }
 
-struct SessionImages: View {
-    let bridge: ChatToolbarBridge
-    @Environment(\.colorScheme) private var scheme
-
-    var body: some View {
-        Button { bridge.showImages() } label: {
-            Image(systemName: "photo.on.rectangle.angled")
-                .frame(width: 36, height: 32).contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .background(scheme == .dark ? Color(white: 0.10) : Color(white: 0.97), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12)))
-        .help("Library: the images and files this session made or shared")
-        .accessibilityLabel("Library")
-    }
-}
-
 /// The project folder, or the Studio the chat is in.
 struct PlaceSlot: View {
     let bridge: ChatToolbarBridge
-    /// Just an icon, for the session's button column.
-    var iconOnly = false
+    enum Style { case toolbar, row }
+    /// A row in the thread sidebar's Where, or a toolbar label.
+    var style = Style.toolbar
     @Environment(AppModel.self) private var model
 
     var body: some View {
@@ -267,13 +206,11 @@ struct PlaceSlot: View {
                 Button("Unbind from Folder") { session.unbindProject() }
             }
         } label: {
-            if iconOnly { Image(systemName: session.record.projectFolder == nil ? "folder.badge.plus" : "folder.fill") }
-            else {
-                ToolbarLabel(session.record.projectFolder == nil ? "No Project" : session.projectName,
-                             systemImage: session.record.projectFolder == nil ? "folder.badge.plus" : "folder.fill")
-            }
+            let title = session.record.projectFolder == nil ? "No Project" : session.projectName
+            let icon = session.record.projectFolder == nil ? "folder.badge.plus" : "folder.fill"
+            if style == .row { SidebarRowLabel(icon: icon, title: title, chevron: true) } else { ToolbarLabel(title, systemImage: icon) }
         }
-        .modifier(SideIcon.MenuStyle(enabled: iconOnly))
+        .modifier(RowMenuStyle(enabled: style == .row))
         .help(session.record.projectFolder.map { "This session is bound to \($0). Claude and Codex work in this folder." }
               ?? "Bind this chat to a project folder so Claude or Codex can work in it. Each folder gets one chat.")
     }
@@ -294,9 +231,10 @@ struct PlaceSlot: View {
             Button("Remove from Studio") { model.move(session, to: nil) }
                 .disabled(session.isRunning)
         } label: {
-            if iconOnly { Image(systemName: "paintpalette") } else { ToolbarLabel(studio.name, systemImage: "paintpalette") }
+            if style == .row { SidebarRowLabel(icon: "paintpalette", title: "Studio: \(studio.name)", chevron: true) }
+            else { ToolbarLabel(studio.name, systemImage: "paintpalette") }
         }
-        .modifier(SideIcon.MenuStyle(enabled: iconOnly))
+        .modifier(RowMenuStyle(enabled: style == .row))
         .help("This session is in the \(studio.name) Studio. Its sessions share \(studio.folder).")
     }
 }
@@ -355,6 +293,16 @@ struct TerminalSlot: View {
     var body: some View {
         Button { bridge.toggleTerminal() } label: { Image(systemName: "terminal") }
             .help("A terminal in this session's folder, at the bottom of the window (\u{2303}`)").accessibilityLabel("Terminal")
+    }
+}
+
+/// Shows or hides the thread sidebar (About this thread), in a window that draws its own toolbar.
+struct ThreadSidebarToggle: View {
+    @Environment(AppModel.self) private var model
+    var body: some View {
+        Button { model.threadSidebarToggleRequest += 1 } label: { Image(systemName: "sidebar.right") }
+            .help("About this thread: status, place, work, outputs, notes and tools (\u{2325}\u{2318}0)")
+            .accessibilityLabel("About this thread")
     }
 }
 

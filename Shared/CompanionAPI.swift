@@ -193,6 +193,24 @@ enum Companion {
         var work: [WorkThread]? = nil
         /// In a work thread: its front thread's title, for the "Work for" header.
         var workOfTitle: String? = nil
+        // About this thread (the Mac's thread sidebar, the phone's About panel). Older Macs omit them.
+        /// The folder's git branch, in a repository.
+        var branch: String? = nil
+        /// The machine it runs on, when that isn't the Mac ("Shelby-PC").
+        var machine: String? = nil
+        /// The Studio it's in.
+        var studio: String? = nil
+        /// What it gets: MCP servers, and connectors or skills switched off. Nil until the Mac has looked.
+        var tools: [ToolChip]? = nil
+    }
+
+    /// One tool a thread gets (or has switched off), as a chip.
+    struct ToolChip: Codable, Hashable, Identifiable {
+        var id: String { kind + ":" + name }
+        var name: String
+        /// "server", "connector" or "skill".
+        var kind: String
+        var isOn: Bool
     }
 
     // MARK: - Work threads (plans/work-threads.md)

@@ -30,6 +30,8 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         static let images = NSToolbarItem.Identifier("chatterbox.images")
         static let usage = NSToolbarItem.Identifier("chatterbox.usage")
         static let terminal = NSToolbarItem.Identifier("chatterbox.terminal")
+        /// Shows or hides the thread sidebar (ThreadSidebar.swift), at the far right.
+        static let threadSidebar = NSToolbarItem.Identifier("chatterbox.threadSidebar")
         static let finished = NSToolbarItem.Identifier("chatterbox.finished")
         static let automations = NSToolbarItem.Identifier("chatterbox.automations")
         static let feedback = NSToolbarItem.Identifier("chatterbox.feedback")
@@ -38,7 +40,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         /// The views on the left (chat, Studios, Command Center), then the Desk; usage and the
         /// terminal; Settings last. New chats start from the sidebar, the Studios page and Cmd-N.
         static let all: [NSToolbarItem.Identifier] = [title, views, desk, .flexibleSpace,
-                                                       automations, usage, terminal, finished, feedback, .space, settings, newChat]
+                                                       automations, usage, terminal, finished, feedback, .space, settings, newChat, threadSidebar]
         static let chat: [NSToolbarItem.Identifier] = [usage, images, terminal]
     }
 
@@ -220,6 +222,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
 
         // Global actions keep their place even when there is no single chat to act on.
         items[ID.terminal]?.isEnabled = session != nil
+        items[ID.threadSidebar]?.isEnabled = session != nil
     }
 
     // MARK: - NSToolbarDelegate
@@ -276,6 +279,9 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
             item = button(id, "terminal", "Terminal", "A terminal in this session's folder, at the bottom of the window (\u{2303}`)", #selector(toggleTerminal))
             // apply() owns availability; AppKit's action-based validation would
             // re-enable this button on overview pages simply because its target exists.
+            item.autovalidates = false
+        case ID.threadSidebar:
+            item = button(id, "sidebar.right", "About this Thread", "About this thread: status, place, work, outputs, notes and tools (\u{2325}\u{2318}0)", #selector(toggleThreadSidebar))
             item.autovalidates = false
         case ID.finished:
             item = hosted(id, "Finished sessions", FinishedChatsBell())
@@ -377,6 +383,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
     @objc private func toggleAutomations() { model.showingAutomations.toggle(); apply() }
     @objc private func showImages() { bridge.showImages() }
     @objc private func toggleTerminal() { bridge.toggleTerminal() }
+    @objc private func toggleThreadSidebar() { model.threadSidebarToggleRequest += 1 }
 }
 
 /// The window's keyboard shortcuts that used to live on toolbar buttons. Toolbar items aren't
@@ -391,6 +398,9 @@ struct WindowToolbarShortcuts: View {
                 .keyboardShortcut("s", modifiers: [.command, .control])
             Button("Terminal") { bridge.toggleTerminal() }
                 .keyboardShortcut("`", modifiers: .control)
+                .disabled(!bridge.hasChat)
+            Button("About this Thread") { model.threadSidebarToggleRequest += 1 }
+                .keyboardShortcut("0", modifiers: [.command, .option])
                 .disabled(!bridge.hasChat)
             Button("Issues") { bridge.issuesPanel?.toggle() }
                 .keyboardShortcut("i", modifiers: [.command, .shift])

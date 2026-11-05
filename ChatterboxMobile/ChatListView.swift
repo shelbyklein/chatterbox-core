@@ -77,22 +77,32 @@ struct ChatListView: View {
     @State private var promoting: ChatPromotionTarget?
     @State private var newTitle = ""
     @State private var managementError: String?
+    /// Wide (an iPad, an open iPhone Duo): About this thread is a column in the list's place,
+    /// toggled from the open session's title.
+    @State private var aboutColumn = MobileAboutColumn()
 
     var body: some View {
         GeometryReader { geometry in
             let split = verticalDivision(in: geometry.size)
             if sizeClass == .regular || split != nil {
                 HStack(spacing: 0) {
-                    NavigationStack { configuredSidebar.background(SafeAreaToOwnFrame().allowsHitTesting(false)) }
-                        .frame(width: split?.minX ?? min(380, max(300, geometry.size.width * 0.38)))
-                        .accessibilityIdentifier("session-sidebar-pane")
+                    Group {
+                        if aboutColumn.isOpen, let chat = selectedChat {
+                            NavigationStack { aboutColumnContent(chat).background(SafeAreaToOwnFrame().allowsHitTesting(false)) }
+                                .accessibilityIdentifier("aboutColumn")
+                        } else {
+                            NavigationStack { configuredSidebar.background(SafeAreaToOwnFrame().allowsHitTesting(false)) }
+                                .accessibilityIdentifier("session-sidebar-pane")
+                        }
+                    }
+                    .frame(width: split?.minX ?? min(380, max(300, geometry.size.width * 0.38)))
                     if let split {
                         Color(uiColor: .systemBackground).frame(width: split.width)
                             .accessibilityHidden(true)
                     } else {
                         Divider()
                     }
-                    NavigationStack { detail }
+                    NavigationStack { detail.environment(aboutColumn) }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .accessibilityIdentifier("session-detail-pane")
                 }
@@ -610,6 +620,27 @@ struct ChatListView: View {
         Button { appearance = true } label: { Label("Appearance", systemImage: "paintbrush") }
         Button { savedPDFs = true } label: { Label("Saved PDFs", systemImage: "doc.richtext") }
         Button("Unpair This \(UIDevice.current.model)", role: .destructive) { store.forget() }
+    }
+
+    /// About the open session, as a column beside it: its sections, and Sessions to go back to the list.
+    private func aboutColumnContent(_ chat: Companion.ChatSummary) -> some View {
+        let shown = history?.id == chat.id ? history?.detail : nil
+        return ScrollView {
+            MobileAboutPanel(summary: shown?.summary ?? chat, detail: shown, chats: store.chatList?.groups.flatMap(\.chats) ?? []) { action in
+                aboutColumn.send(action)
+            }
+        }
+        .background(Color(uiColor: .systemGroupedBackground))
+        .navigationTitle("About")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button { withAnimation(.snappy(duration: 0.25)) { aboutColumn.isOpen = false } } label: {
+                    Label("Sessions", systemImage: "sidebar.left")
+                }
+                .accessibilityIdentifier("about-column-close")
+            }
+        }
     }
 
     @ViewBuilder

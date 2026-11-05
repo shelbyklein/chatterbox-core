@@ -116,6 +116,12 @@ struct ChatDetailView: View {
     /// Start a Work Thread's sheet (plans/work-threads.md), and Link to a Task's list.
     @State private var startingWork = false
     @State private var linkingTask = false
+    /// About this thread, dropped down from the title (MobileAboutPanel.swift). On a wide layout
+    /// the list gives it a column instead, and this chat follows the column's requests.
+    @State private var showingAbout = false
+    @Environment(MobileAboutColumn.self) private var aboutColumn: MobileAboutColumn?
+    /// A message About asked to see (a file or draft in it).
+    @State private var revealRequest: UUID?
 
     private var summary: Companion.ChatSummary { detail?.summary ?? chat }
     #if DEBUG
@@ -137,8 +143,8 @@ struct ChatDetailView: View {
                     perform { try await store.setArchived(true, chat: chat.id) }
                     if let parent { open(parent) }
                 }
-                // Work threads: the ones this front thread started, or whom this one works for.
-                MobileWorkStrip(summary: summary, detail: detail, chats: store.chatList?.groups.flatMap(\.chats) ?? [], open: open)
+                // A work thread: whom it works for (a front thread's work threads are in About).
+                MobileWorkHeader(summary: summary, detail: detail, chats: store.chatList?.groups.flatMap(\.chats) ?? [], open: open)
             }
         }
         // Opening a chat here, from anywhere, clears it from New replies.
@@ -147,6 +153,14 @@ struct ChatDetailView: View {
         .task(id: chat.id) { _ = try? await store.desk() }
         .onDisappear { MobileSeenReplies.shared.markSeen(chat.id) }
         .safeAreaInset(edge: .bottom) { composer }
+        .overlay {
+            if showingAbout, aboutColumn == nil {
+                MobileAboutDropDown(isPresented: $showingAbout) { aboutPanel }
+            }
+        }
+        .onChange(of: aboutColumn?.request?.number) {
+            if let action = aboutColumn?.request?.action { handleAbout(action) }
+        }
         .environment(\.openURL, OpenURLAction { url in
             guard url.scheme == "chatterbox-document" else { return .systemAction(url) }
             if let id = url.host.flatMap(UUID.init(uuidString:)),
@@ -361,6 +375,14 @@ struct ChatDetailView: View {
                 .animation(.easeOut(duration: 0.18), value: atBottom)
             }
             .onChange(of: pinRequests) { pin(proxy, for: 1.5) }
+            // About's Outputs: the message a file or draft is in.
+            .onChange(of: revealRequest) { _, id in
+                guard let id else { return }
+                revealRequest = nil
+                followingNewest = false
+                scrollWork.generation += 1
+                withAnimation(.easeInOut(duration: 0.3)) { proxy.scrollTo(id, anchor: .top) }
+            }
             // The message box resizing the list: keep a reader at the end there, not one above it.
             .onChange(of: layoutRequests) { if followingNewest { pin(proxy, for: 1.5) } }
             .onChange(of: composing) { if followingNewest { pin(proxy, for: 1.5) } }
@@ -406,23 +428,25 @@ struct ChatDetailView: View {
 
     @ToolbarContentBuilder
     private var chatToolbar: some ToolbarContent {
-            if let settings = detail?.settings {
-                ToolbarItem(placement: .principal) {
-                    // Tap the title for the model, effort, and mode.
-                    Button { showingSettings = true } label: {
-                        VStack(spacing: 0) {
-                            Text(summary.project ?? summary.title).font(.headline).lineLimit(1).foregroundStyle(.primary)
-                            HStack(spacing: 3) {
-                                // The model and effort, as the Mac's chip says them; its agent's color marks whose.
-                                Text(ChatSettingsLabels.chip(detail?.options) ?? settings).lineLimit(1)
-                                Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold))
-                            }
-                            .font(.caption2).foregroundStyle(.secondary)
+            ToolbarItem(placement: .principal) {
+                // Tap the title for About this thread: its status and model, where it works,
+                // its task and work threads, what it made, its notes and tools.
+                Button { toggleAbout() } label: {
+                    VStack(spacing: 0) {
+                        Text(summary.project ?? summary.title).font(.headline).lineLimit(1).foregroundStyle(.primary)
+                        HStack(spacing: 4) {
+                            // The model and effort, as the Mac's chip says them; its agent's color marks whose.
+                            if let line = ChatSettingsLabels.chip(detail?.options) ?? detail?.settings { Text(line).lineLimit(1) }
+                            Image(systemName: aboutShown ? "chevron.up" : "chevron.down").font(.system(size: 8, weight: .bold))
+                            MobileWorkingPill(count: workingCount)
                         }
+                        .font(.caption2).foregroundStyle(.secondary)
                     }
-                    .buttonStyle(.plain)
-                    .disabled(detail?.options == nil)
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(summary.project ?? summary.title), About this session")
+                .accessibilityHint(workingCount > 0 ? "\(workingCount) work threads working" : "")
+                .accessibilityIdentifier("chat-title")
             }
             ToolbarItem(placement: .topBarTrailing) { FeedbackButton() }
             ToolbarItem(placement: .topBarTrailing) { chatMenu }
@@ -439,8 +463,6 @@ struct ChatDetailView: View {
             Button { confirmingRestart = true } label: { Label("Restart Thread", systemImage: "arrow.triangle.2.circlepath") }
                 .disabled(detail == nil || controllingSession)
             if let sessionControlStatus { Text(sessionControlStatus) }
-            Button { showingSettings = true } label: { Label("Session Settings", systemImage: "slider.horizontal.3") }
-                .disabled(detail?.options == nil)
             if summary.worktreeBranch == nil, summary.sidechatOf == nil {
                 Button {
                     let pin = summary.pinnedRank == nil
@@ -450,14 +472,6 @@ struct ChatDetailView: View {
                 }
             }
             Button { newTitle = summary.title; renaming = true } label: { Label("Rename", systemImage: "pencil") }
-            Button { briefText = summary.brief ?? ""; editingBrief = true } label: {
-                Label((summary.brief ?? "").isEmpty ? "Brief…" : "Edit Brief…", systemImage: "doc.text")
-            }
-            if !summary.isSidequest, detail?.isArchived != true {
-                Button { sidequestTask = ""; askingSidequest = true } label: {
-                    Label("Sidequest to \(summary.otherAgentLabel)…", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
-                }
-            }
             if !summary.isSidequest, summary.workOf == nil, detail?.isArchived != true {
                 Button { startingWork = true } label: { Label("Start a Work Thread\u{2026}", systemImage: "arrow.triangle.branch") }
                     .accessibilityIdentifier("menu-start-work")
@@ -491,6 +505,51 @@ struct ChatDetailView: View {
             Image(systemName: "ellipsis.circle")
         }
         .accessibilityLabel("Session Menu")
+    }
+
+    // MARK: - About this thread
+
+    private var aboutShown: Bool { aboutColumn?.isOpen ?? showingAbout }
+    /// Its work threads running now, for the pill under the title.
+    private var workingCount: Int { (detail?.work ?? []).filter { $0.state == "working" }.count }
+
+    private func toggleAbout() {
+        if let aboutColumn { withAnimation(.snappy(duration: 0.25)) { aboutColumn.isOpen.toggle() } }
+        else { withAnimation(.snappy(duration: 0.28)) { showingAbout.toggle() } }
+    }
+
+    private var aboutPanel: some View {
+        MobileAboutPanel(summary: summary, detail: detail, chats: store.chatList?.groups.flatMap(\.chats) ?? [], perform: handleAbout)
+    }
+
+    /// What About asked for. The drop-down closes first, so a sheet can open in its place.
+    private func handleAbout(_ action: MobileAboutAction) {
+        if aboutColumn == nil, !staysOpen(action) { showingAbout = false }
+        switch action {
+        case .settings: showingSettings = true
+        case .brief: briefText = summary.brief ?? ""; editingBrief = true
+        case .sidequest: sidequestTask = ""; askingSidequest = true
+        case .startWork: startingWork = true
+        case .linkTask: linkingTask = true
+        case .makeTask: deskChange { try await store.makeTask(chat.id) }
+        case .unlinkTask(let task): deskChange { try await store.unlinkDesk(task) }
+        case .change(let change): perform { try await store.change(change, in: chat.id) }
+        case .terminal:
+            // A `!` command runs in the session's folder on the Mac.
+            if draft.isEmpty { draft = "!" }
+            composing = true
+        case .macScreen: store.showingMacScreen = true
+        case .reveal(let item): revealRequest = item
+        case .open(let other): open(other)
+        }
+    }
+
+    /// Changes made in place (the model, the Desk task) leave the drop-down open.
+    private func staysOpen(_ action: MobileAboutAction) -> Bool {
+        switch action {
+        case .change, .makeTask, .unlinkTask: true
+        default: false
+        }
     }
 
     /// The Desk task this session carries, if the Mac keeps tasks.

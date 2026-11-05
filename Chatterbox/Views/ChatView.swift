@@ -61,48 +61,92 @@ struct ChatView: View {
             IssuesPanel(session: session, panel: issuesPanel)
         }
     }
+    /// The thread sidebar (ThreadSidebar.swift): in the full chat view, not tiles or the small
+    /// floating chat. Docked when the chat has room for it beside the transcript, else a slide-over.
+    private var hasThreadSidebar: Bool { !compact && tileContext == nil }
+    static let threadSidebarDockWidth: CGFloat = ChatView.minWidth + ThreadSidebar.width + 120
+    @AppStorage("threadSidebarOpen") private var threadSidebarOpen = true
+    @State private var threadSidebarOverlay = false
+    @State private var chatAreaWidth: CGFloat = 1200
+    @State private var showingAutomations = false
+    /// A peek (PeekPanel.swift) takes the same column while it's open; Back brings About back.
+    private var peeking: Bool { !PeekStore.shared.panel(of: session.id).tabs.isEmpty }
+    private var threadSidebarDocked: Bool { hasThreadSidebar && !peeking && threadSidebarOpen && chatAreaWidth >= Self.threadSidebarDockWidth }
+
     private var chatContent: some View {
+        HStack(spacing: 0) {
+            chatMain
+            if threadSidebarDocked {
+                Divider()
+                threadSidebar(overlay: false)
+            }
+        }
+        .overlay(alignment: .trailing) {
+            if hasThreadSidebar, !peeking, threadSidebarOverlay, !threadSidebarDocked {
+                ZStack(alignment: .trailing) {
+                    Color.black.opacity(0.18).onTapGesture { withAnimation(.smooth(duration: 0.2)) { threadSidebarOverlay = false } }
+                    threadSidebar(overlay: true)
+                        .background(Color(nsColor: .windowBackgroundColor))
+                        .shadow(radius: 10)
+                        .transition(.move(edge: .trailing))
+                }
+            }
+        }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { chatAreaWidth = $0 }
+        .onChange(of: model.threadSidebarToggleRequest) { toggleThreadSidebar() }
+        .onChange(of: threadSidebarDocked) { _, docked in if docked { threadSidebarOverlay = false } }
+        .sheet(isPresented: $showingAutomations) {
+            if let folder = session.record.projectFolder {
+                AutomationsSheet(projectFolder: folder, projectName: session.projectName).environment(model)
+            }
+        }
+    }
+
+    /// ⌥⌘0 or the toolbar's button: in the window in front, the sidebar shows or hides (and is
+    /// remembered); in one too narrow for it, it slides over and back.
+    private func toggleThreadSidebar() {
+        guard hasThreadSidebar, NSApp.keyWindow == nil || NSApp.keyWindow?.windowNumber == windowNumber else { return }
+        withAnimation(.smooth(duration: 0.2)) {
+            if chatAreaWidth >= Self.threadSidebarDockWidth {
+                threadSidebarOpen.toggle()
+                threadSidebarOverlay = false
+            } else {
+                threadSidebarOverlay.toggle()
+            }
+        }
+    }
+
+    private func threadSidebar(overlay: Bool) -> some View {
+        ThreadSidebar(session: session, bridge: windowToolbar ?? ownToolbar, modelSummary: modelSummary.full,
+                      actions: ThreadSidebarActions(
+                        showLibrary: { showingImages = true },
+                        toggleTerminal: { withAnimation(.smooth(duration: 0.25)) { showingTerminal.toggle() } },
+                        openImage: { url in
+                            reviewing = Attachment(name: url.lastPathComponent, path: url.path,
+                                                   mediaType: "image/" + url.pathExtension.lowercased(), kind: .image)
+                        },
+                        jumpToPin: { pinJump = $0 },
+                        openAutomations: { showingAutomations = true },
+                        close: {
+                            withAnimation(.smooth(duration: 0.2)) {
+                                if overlay { threadSidebarOverlay = false } else { threadSidebarOpen = false }
+                            }
+                        }),
+                      overlay: overlay)
+    }
+
+    private var chatMain: some View {
         VStack(spacing: 0) {
             if session.record.archivedAt != nil { archivedBanner }
             if session.isSidequest { SidequestBanner(session: session) }
-            // Work threads (plans/work-threads.md): whom it works for, or the ones it started.
-            if session.isWorkThread { WorkThreadBanner(session: session) } else if !session.isSidequest { WorkStrip(session: session) }
+            // A work thread (plans/work-threads.md) says whom it works for; a front thread lists
+            // its work threads in the thread sidebar's Task & work.
+            if session.isWorkThread { WorkThreadBanner(session: session) }
             if let context = session.record.parentContext { ParentContextBanner(context: context) }
             if session.record.backend == .claude, let status = ClaudeModels.shared.statusMessage { claudeBanner(status) }
             if session.record.backend == .codex, let status = CodexAppServer.shared.statusMessage { claudeBanner(status) }
             if find.isOpen { ChatFindBar(find: find) }
             transcript
-                // Under the banners above (a sidequest's, an archived chat's), never over them.
-                .overlay(alignment: .topTrailing) {
-                    if !compact && tileContext == nil {
-                        GeometryReader { geometry in
-                            VStack(alignment: .trailing, spacing: 8) {
-                                // A column of buttons down the right edge.
-                                VStack(alignment: .trailing, spacing: 8) {
-                                    BriefButton(session: session)
-                                    NotesButton(scope: PinnedNotesStore.scope(for: session.record), project: session.record.projectFolder != nil)
-                                        .id(PinnedNotesStore.scope(for: session.record))
-                                    ToneMenu(session: session, iconOnly: true)
-                                    PlaceSlot(bridge: windowToolbar ?? ownToolbar, iconOnly: true)
-                                    RepoButton(bridge: windowToolbar ?? ownToolbar)
-                                    ToolsButton(session: session)
-                                    SessionImages(bridge: windowToolbar ?? ownToolbar)
-                                    ChatQuickActions(session: session)
-                                    if !session.isSidequest {
-                                        NewSidechatControl(parent: session, iconOnly: true)
-                                        SidequestButton(session: session)
-                                        PCErrandButton(session: session)
-                                        if !session.isWorkThread, session.record.automationID == nil { WorkThreadButton(session: session) }
-                                    }
-                                }
-                                ChatPins(chat: session.record.id, agentName: session.record.backend == .codex ? "Codex" : "Claude",
-                                         panelWidth: min(280, max(220, (geometry.size.width - appearance.style.contentWidth) / 2 - 32))) { pinJump = $0 }
-                            }
-                            .frame(maxWidth: .infinity, alignment: .trailing)
-                            .padding(16)
-                        }
-                    }
-                }
                 .overlay(alignment: .bottomTrailing) {
                     if !compact && tileContext == nil && !session.isSidequest {
                         GeometryReader { geometry in

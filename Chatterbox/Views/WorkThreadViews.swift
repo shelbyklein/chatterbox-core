@@ -2,11 +2,12 @@ import SwiftUI
 
 // Work threads on the Mac (plans/work-threads.md): a project's front thread starts fresh threads
 // for real pieces of work, each with a brief and its own task on the Desk, and they report back.
-// In the front thread, the Work strip lists them with their state; in a work thread, a header
-// says whom it works for, with a link back. "Start a Work Thread" is in the column of buttons and
-// the session menu, beside the task items (Make This a Task, Link to a Task, Unlink).
+// In the front thread, the thread sidebar's Task & work lists them with their state
+// (ThreadSidebar.swift); in a work thread, a header says whom it works for, with a link back.
+// "Start a Work Thread" is in that section and the session menu, beside the task items (Make
+// This a Task, Link to a Task, Unlink).
 
-/// Where a work thread stands, as the Work strip and the board say it.
+/// Where a thread stands, as the thread sidebar and the board say it.
 enum WorkThreadState: String {
     case working, needsYou, ready, done
 
@@ -37,24 +38,6 @@ enum WorkThreadState: String {
         case .needsYou: .attention
         case .ready: .green
         case .done: .secondary
-        }
-    }
-}
-
-/// In the column of buttons beside a front thread: start a work thread.
-struct WorkThreadButton: View {
-    let session: ChatSession
-    @State private var open = false
-
-    var body: some View {
-        Button { open.toggle() } label: {
-            Image(systemName: "arrow.triangle.branch")
-        }
-        .buttonStyle(.plain).modifier(SideIcon.Tile())
-        .help("Start a work thread: a fresh thread in this folder for one piece of work, from a brief; its result comes back here")
-        .accessibilityLabel("Start a Work Thread")
-        .popover(isPresented: $open, arrowEdge: .bottom) {
-            WorkThreadForm(front: session) { open = false }
         }
     }
 }
@@ -159,67 +142,6 @@ struct WorkThreadBanner: View {
         .background(Color.accentColor.opacity(0.10))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("workBanner")
-    }
-}
-
-/// Across the top of a front thread: each work thread it started, with its state; a click
-/// peeks at it in the column on the right (PeekPanel.swift). Done ones stay a week.
-struct WorkStrip: View {
-    let session: ChatSession
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        let threads = model.workThreads(of: session)
-        if !threads.isEmpty {
-            HStack(spacing: 8) {
-                Label("Work", systemImage: "arrow.triangle.branch").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                ScrollView(.horizontal) {
-                    HStack(spacing: 6) {
-                        ForEach(threads) { thread in WorkChip(thread: thread) }
-                    }
-                }
-                .scrollIndicators(.hidden)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 6)
-            .background(Color.primary.opacity(0.03))
-            .overlay(alignment: .bottom) { Divider() }
-            .accessibilityElement(children: .contain)
-            .accessibilityIdentifier("workStrip")
-        }
-    }
-}
-
-/// One work thread in the strip: its state and name, and while it works, its latest status line.
-private struct WorkChip: View {
-    let thread: ChatSession
-    @Environment(AppModel.self) private var model
-    @State private var hovered = false
-
-    var body: some View {
-        let state = WorkThreadState(thread)
-        let status = state == .working ? thread.lastActionSummary.map { DeskStore.short($0, limit: 160) } : nil
-        Button { model.peek(thread.id, from: thread.record.workOf ?? thread.id) } label: {
-            HStack(spacing: 5) {
-                Image(systemName: state.icon).foregroundStyle(state.color)
-                Text(thread.title).lineLimit(1)
-                Text(state.label).foregroundStyle(.secondary)
-                if let status {
-                    Text(status).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.tail)
-                        .frame(maxWidth: 240, alignment: .leading)
-                }
-            }
-            .font(.caption)
-            .padding(.horizontal, 9).padding(.vertical, 4)
-            .background(Capsule().fill(Color.primary.opacity(hovered ? 0.1 : 0.06)))
-            .overlay(Capsule().strokeBorder(state == .needsYou ? Color.attention.opacity(0.7) : Color.primary.opacity(0.1)))
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovered = $0 }
-        .help("\(thread.title): \(state.label)\(status.map { " (\($0))" } ?? ""). Click to peek at it beside this thread.")
-        .accessibilityLabel("\(thread.title), \(state.label)\(status.map { ", \($0)" } ?? "")")
-        .accessibilityIdentifier("workChip:\(thread.id)")
     }
 }
 
