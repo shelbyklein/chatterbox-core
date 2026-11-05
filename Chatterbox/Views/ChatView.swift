@@ -186,7 +186,8 @@ struct ChatView: View {
     private var chatWithLifecycle: some View {
         Group {
             if sidebar != nil || standaloneWindow || mainWindow {
-                ChatColumns(sidebar: sidebar, chat: AnyView(chatContent),
+                // Clicking a work thread or sidechat peeks at it in a column on the right (PeekPanel.swift).
+                ChatColumns(sidebar: sidebar, chat: AnyView(chatContent.peekPanel(front: session, enabled: !compact)),
                     inspector: inspectorOpen ? AnyView(inspectorContent) : nil,
                     inspectorMinimum: inspectorSize.minimum, inspectorIdeal: inspectorSize.ideal, inspectorMaximum: inspectorSize.maximum,
                     closeInspector: closeInspector)
@@ -539,7 +540,9 @@ struct ChatView: View {
                     .environment(\.bubbleTint, session.usesPC ? ReaderStyle.pcColor : nil)
                     .environment(\.reviewImage, ImageReviewAction { reviewing = $0 })
                     .environment(\.pinMessage, PinMessageAction(chat: showsPins ? session.record.id : nil))
-                    .environment(\.openChat, OpenChatAction { model.selectedID = $0 })
+                    .environment(\.openChat, OpenChatAction { [session] id in
+                        if compact || tileContext != nil { model.selectedID = id } else { model.peek(id, from: session.id) }
+                    })
                     .frame(maxWidth: .infinity)
                     }
                 }

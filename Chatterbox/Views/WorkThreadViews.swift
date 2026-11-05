@@ -163,7 +163,7 @@ struct WorkThreadBanner: View {
 }
 
 /// Across the top of a front thread: each work thread it started, with its state; a click
-/// opens it. Done ones stay a week.
+/// peeks at it in the column on the right (PeekPanel.swift). Done ones stay a week.
 struct WorkStrip: View {
     let session: ChatSession
     @Environment(AppModel.self) private var model
@@ -199,7 +199,7 @@ private struct WorkChip: View {
     var body: some View {
         let state = WorkThreadState(thread)
         let status = state == .working ? thread.lastActionSummary.map { DeskStore.short($0, limit: 160) } : nil
-        Button { model.selectedID = thread.id } label: {
+        Button { model.peek(thread.id, from: thread.record.workOf ?? thread.id) } label: {
             HStack(spacing: 5) {
                 Image(systemName: state.icon).foregroundStyle(state.color)
                 Text(thread.title).lineLimit(1)
@@ -217,7 +217,7 @@ private struct WorkChip: View {
         }
         .buttonStyle(.plain)
         .onHover { hovered = $0 }
-        .help("\(thread.title): \(state.label)\(status.map { " (\($0))" } ?? ""). Click to open it.")
+        .help("\(thread.title): \(state.label)\(status.map { " (\($0))" } ?? ""). Click to peek at it beside this thread.")
         .accessibilityLabel("\(thread.title), \(state.label)\(status.map { ", \($0)" } ?? "")")
         .accessibilityIdentifier("workChip:\(thread.id)")
     }
