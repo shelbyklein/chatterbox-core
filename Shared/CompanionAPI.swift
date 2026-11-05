@@ -307,6 +307,9 @@ enum Companion {
         var settings: SettingsRequest? = nil
         /// The name you gave it; empty or missing: named from the first message, as before.
         var title: String? = nil
+        /// Put on the Desk: the new chat carries a task, in the place it's made, named from
+        /// its first message (DeskTaskRequest.follow). Older services ignore it.
+        var desk: Bool? = nil
     }
 
     /// A model preset, for agents: its nickname and what it switches to.
@@ -487,6 +490,9 @@ enum Companion {
     struct DeskTaskRequest: Codable {
         var chatID: UUID
         var text: String? = nil
+        /// A new thread put on the Desk as it's made: the task keeps the thread's name, named
+        /// from its first message (and renamed with the thread). Older services ignore it.
+        var follow: Bool? = nil
     }
 
     /// POST /v1/desk: a new request. `place` names a Studio or project to propose instead of

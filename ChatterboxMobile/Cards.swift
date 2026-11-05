@@ -6,6 +6,8 @@ struct ItemActions {
     var answer: (UUID, [String: [String]]?) -> Void = { _, _ in }
     var sendQueuedNow: (UUID) -> Void = { _ in }
     var markUp: (UIImage) -> Void = { _ in }
+    /// A reply's action button: sends its message into the chat, as if typed.
+    var send: (String) -> Void = { _ in }
     /// Where the chat is, for its approval cards: "USA Archery › Deploy the site".
     var context: String? = nil
 }

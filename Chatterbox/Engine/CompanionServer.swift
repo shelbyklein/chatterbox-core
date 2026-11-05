@@ -352,6 +352,11 @@ final class CompanionServer {
             }
             if let settings = body.settings { CompanionMapper.apply(settings, to: session) }
             if let title = body.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty { session.setTitle(title) }
+            if body.desk == true {
+                // Put on the Desk: a task linked to it, named from its first message.
+                do { _ = try DeskStore.shared.makeTask(.init(chatID: session.id, follow: true)) }
+                catch { RuntimeHooks.note("The new chat couldn't go on the Desk: \(error.localizedDescription)") }
+            }
             return .json(CompanionMapper.detail(session, model: model))
         case ("GET", 2) where parts[1] == "desk":
             return .json(DeskStore.shared.snapshot())

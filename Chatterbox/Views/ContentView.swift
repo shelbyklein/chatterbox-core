@@ -819,12 +819,12 @@ struct NewSidechatControl: View {
     var body: some View {
         Group {
             if iconOnly {
-                Button { model.newSidechat(of: parent) } label: {
+                Button { model.askNewSidechat(of: parent) } label: {
                     Image(systemName: "bubble.left.and.bubble.right")
                 }
                 .buttonStyle(.plain).modifier(SideIcon.Tile())
             } else {
-                Button("New Sidechat", systemImage: "bubble.left.and.bubble.right") { model.newSidechat(of: parent) }
+                Button("New Sidechat\u{2026}", systemImage: "bubble.left.and.bubble.right") { model.askNewSidechat(of: parent) }
             }
         }
         .accessibilityLabel("New Sidechat")
@@ -1857,24 +1857,41 @@ private struct NewSessionSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
+    /// Put on the Desk: the new thread carries a task there, named from the first message.
+    @State private var putOnDesk = false
     @FocusState private var focused: Bool
+
+    private var parent: ChatSession? { request.sidechatOf.flatMap { id in model.sessions.first { $0.id == id } } }
 
     private var place: String {
         let agent = request.backend.map { " with \($0.label)" } ?? ""
+        if let parent {
+            let name = parent.record.projectFolder != nil ? parent.projectName : parent.title
+            return "A Sidechat in \(name), with a context handoff from this session"
+        }
         if let studio = model.studio(request.studio) { return "In \(studio.name)" + agent }
         return "In Chats" + agent
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("New Session").font(.headline)
+            Text(parent == nil ? "New Session" : "New Sidechat").font(.headline)
             Text(place).font(.callout).foregroundStyle(.secondary)
             TextField("Name (optional)", text: $name)
                 .textFieldStyle(.roundedBorder)
                 .focused($focused)
                 .onSubmit(start)
                 .accessibilityLabel("Session name")
-            Text("Leave it empty and it's named from your first message.").font(.caption).foregroundStyle(.secondary)
+            Text(parent == nil ? "Leave it empty and it's named from your first message." : "Leave it empty and it's called Sidechat.")
+                .font(.caption).foregroundStyle(.secondary)
+            Toggle(isOn: $putOnDesk) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Put on the Desk")
+                    Text("A task for it on the Desk, named from your first message.").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .toggleStyle(.checkbox)
+            .accessibilityIdentifier("new-session-desk")
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
@@ -1887,7 +1904,7 @@ private struct NewSessionSheet: View {
     }
 
     private func start() {
-        model.startNewSession(request, name: name)
+        model.startNewSession(request, name: name, putOnDesk: putOnDesk)
         dismiss()
     }
 }

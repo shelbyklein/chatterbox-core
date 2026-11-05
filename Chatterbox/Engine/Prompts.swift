@@ -135,11 +135,13 @@ enum Prompts {
         PC errands: for work on Shelby-PC, the user's Windows PC (its apps, such as Photoshop; its GPU or disk), run `pc-errand "<the task>"` from your working folder, adding `--file PATH` for each file it needs. It opens beside this session as a Sidechat running on the PC on your own agent, caught up on the conversation, with those files copied there. When it finishes, the files it made are copied to this Mac and its answer arrives here as a new message, naming those copies. Send one when the user asks for something to be done on the PC; tell the user you did, and finish your reply instead of waiting for it.
 
         Drafts: when you write something the user will send or paste somewhere else (an email, a message, a post, a reply, text for a form), put exactly that text in a fenced ```draft block, and nothing else inside it: no notes, options or explanations. Markdown is fine inside. For an email, make the first line `Subject: …`. The chat shows the block as a card with a Copy button (and, for an email, Copy Subject and Open in Mail), so the user can take it in one click. Put your notes before or after the block; give each separate draft its own block, and when you revise one, give the whole new version in a new block.
+
+        Action buttons: when your reply ends on an obvious next step the user would otherwise type (ship to the real app, force a restart, start the next part), offer it as a button instead of writing "say ship when you want it": end the reply with a fenced ```actions block, one button per line as `Label | the message it sends`, like `Ship to the real app | ship`. Offer one to three, only for the obvious next steps, and not every turn. A button only sends its message into this chat, shown as the user's, so it reaches you like anything they type; nothing runs until you act on it. Only the newest reply's buttons work. Never offer a destructive or outward-facing step (deleting, overwriting, publishing, a push to a live server) without saying so in its label, like `Push to live (deletes removed files) | push`.
         """
     }
 
     /// Bump when `agentInstructions` gains something chats already in progress should hear.
-    static let instructionsVersion = 13
+    static let instructionsVersion = 14
 
     /// What changed since earlier versions, sent once to chats whose session started before.
     static let instructionsUpdate = """
@@ -163,6 +165,8 @@ enum Prompts {
     Work threads: when a piece of work needs more than a few steps or many files (a feature, a fix across files, a migration), keep this session short and start a work thread for it: run `work start "<short title>" --brief "<the brief>"` from your working folder (add `--agent claude|codex` or `--model M` only to use another agent or model than yours). It's a fresh session in the same folder, with its own task on the Desk, that starts from your brief alone, so make the brief self-contained: what to do, what's already decided, which files and plans to read, and what to report. You can start several. When one finishes, its result arrives here as a new message and you carry on from it; `work list` shows them and their state. Tell the user you started it, and finish your reply instead of waiting. A work thread doesn't start work threads of its own.
 
     Drafts: when you write something the user will send or paste somewhere else (an email, a message, a post, a reply, text for a form), put exactly that text in a fenced ```draft block, and nothing else inside it: no notes, options or explanations. Markdown is fine inside. For an email, make the first line `Subject: …`. The chat shows the block as a card with a Copy button (and, for an email, Copy Subject and Open in Mail), so the user can take it in one click. Put your notes before or after the block; give each separate draft its own block, and when you revise one, give the whole new version in a new block.
+
+    Action buttons: when your reply ends on an obvious next step the user would otherwise type (ship to the real app, force a restart, start the next part), offer it as a button instead of writing "say ship when you want it": end the reply with a fenced ```actions block, one button per line as `Label | the message it sends`, like `Ship to the real app | ship`. Offer one to three, only for the obvious next steps, and not every turn. A button only sends its message into this chat, shown as the user's, so it reaches you like anything they type; nothing runs until you act on it. Only the newest reply's buttons work. Never offer a destructive or outward-facing step (deleting, overwriting, publishing, a push to a live server) without saying so in its label, like `Push to live (deletes removed files) | push`.
     </app_note>
     """
 

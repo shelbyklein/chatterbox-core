@@ -15,6 +15,7 @@ struct ItemView: View {
     @Environment(\.bubbleTint) private var bubbleTint
     @Environment(\.chatFolder) private var chatFolder
     @Environment(\.openChat) private var openChat
+    @Environment(\.replyActionResolver) private var replyActionResolver
 
     var body: some View {
         Group {
@@ -115,6 +116,8 @@ struct ItemView: View {
             VStack(alignment: .leading, spacing: 6) {
                 MarkdownText(text: item.text)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    // Its ```actions buttons: live only while it's the newest reply.
+                    .environment(\.replyActions, item.text.contains("```actions") ? replyActionResolver?.context(for: item.id) : nil)
                 // Animations the reply points to (made with a command, say), playing.
                 if item.phase == .final {
                     ForEach(ChatSession.referencedMedia(in: item.text, folder: chatFolder), id: \.self) { url in
@@ -917,5 +920,34 @@ private struct ShellBlock: View {
         }
         .padding(12)
         .background(RoundedRectangle(cornerRadius: 8).fill(.quaternary.opacity(0.5)))
+    }
+}
+
+/// A chat's transcript, for the action buttons in its replies (ReplyActions): whether a reply
+/// is still the newest, and what was sent after it.
+struct ReplyActionResolver {
+    var items: [DisplayItem]
+    var send: (String) -> Void
+
+    func context(for id: UUID) -> ReplyActionContext? {
+        guard let index = items.lastIndex(where: { $0.id == id }) else { return nil }
+        let turns = items[(index + 1)...].lazy.map { item -> ReplyActions.Turn in
+            switch item.kind {
+            // Chatterbox's own messages (a sidequest's or work thread's result) aren't yours.
+            case .user: return item.automatic == true ? .other : .user(item.text)
+            case .assistant: return .reply
+            default: return .other
+            }
+        }
+        return ReplyActionContext(state: ReplyActions.state(following: turns), send: send)
+    }
+}
+
+private struct ReplyActionResolverKey: EnvironmentKey { static let defaultValue: ReplyActionResolver? = nil }
+extension EnvironmentValues {
+    /// Set by a chat's transcript.
+    var replyActionResolver: ReplyActionResolver? {
+        get { self[ReplyActionResolverKey.self] }
+        set { self[ReplyActionResolverKey.self] = newValue }
     }
 }

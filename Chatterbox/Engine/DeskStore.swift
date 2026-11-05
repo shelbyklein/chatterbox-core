@@ -79,6 +79,9 @@ final class DeskStore {
         var linkedAt: Date? = nil
         /// When it was marked complete (its thread archived).
         var completedAt: Date? = nil
+        /// Named after its thread (put on the Desk as the thread was made): the first message,
+        /// then the thread's own name, renamed with it.
+        var followsThread: Bool? = nil
 
         init(_ request: Companion.DeskRequest) {
             id = request.id; text = request.text; source = request.source; createdAt = request.createdAt
@@ -470,10 +473,12 @@ final class DeskStore {
             throw Failure(status: 404, message: "That session is gone.")
         }
         try canCarry(session, replacing: false)
-        let text = Self.clean(body.text).map { String($0.prefix(4_000)) } ?? session.title
+        let follow = body.follow == true
+        let text = Self.clean(body.text).map { String($0.prefix(4_000)) } ?? (follow ? Self.threadName(session) : nil) ?? session.title
         var task = TaskRecord(.init(id: UUID(), text: text, source: source, createdAt: Self.wholeSeconds(), proposed: place(of: session)))
         task.chatID = session.id
         task.linkedAt = task.createdAt
+        if follow { task.followsThread = true }
         tasks.insert(task, at: 0)
         changed()
         return task.id
@@ -504,6 +509,20 @@ final class DeskStore {
         guard let index = tasks.firstIndex(where: { $0.id == id }) else { return }
         tasks[index].chatID = chatID
         tasks[index].linkedAt = Self.wholeSeconds()
+    }
+
+    /// What a task named after its thread is called: the thread's name once it has one of its
+    /// own (given, or named from the first message), else its first message's first line; nil
+    /// while there's neither (a new sidechat, before its first message).
+    static func threadName(_ session: ChatSession) -> String? {
+        let title = session.title
+        let untitled = title == "New chat"
+            || (session.record.sidechatOf != nil && title.hasPrefix("Sidechat") && title.contains(" \u{00B7} "))
+        if !untitled { return title }
+        guard let first = session.items.first(where: { $0.kind == .user && $0.automatic != true && !$0.text.isEmpty }) else { return nil }
+        let line = first.text.split(separator: "\n").first.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
+        guard !line.isEmpty else { return nil }
+        return line.count > 80 ? String(line.prefix(79)) + "\u{2026}" : line
     }
 
     /// A thread was deleted: its open task goes back to To do, and a done one goes.
@@ -754,6 +773,10 @@ final class DeskStore {
                 changed = true
             } else if session.record.archivedAt == nil, tasks[index].completedAt != nil {
                 tasks[index].completedAt = nil
+                changed = true
+            }
+            if tasks[index].followsThread == true, let name = Self.threadName(session), name != tasks[index].text {
+                tasks[index].text = name
                 changed = true
             }
         }

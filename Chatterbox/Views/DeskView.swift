@@ -435,6 +435,25 @@ final class DeskModel {
         await change(body, doing: "make it a task", older: "Tasks work once the background service restarts with this version of Chatterbox.")
     }
 
+    /// Put on the Desk, as a new thread is made: a task linked to it, named from its first
+    /// message (or `name`). The new thread may reach the service a moment after this does.
+    func putOnDesk(_ chatID: UUID, name: String?) async {
+        var body: [String: JSON] = ["action": "makeTask", "chatID": .string(chatID.uuidString), "follow": true]
+        if let name, !name.isEmpty { body["text"] = .string(name) }
+        for attempt in 0..<6 {
+            do {
+                load(try await send(body).decode(Companion.Desk.self))
+                problem = nil
+                return
+            } catch where attempt < 5 && error.localizedDescription.contains("gone") {
+                try? await Task.sleep(for: .milliseconds(300))
+            } catch {
+                note(error, "put it on the Desk")
+                return
+            }
+        }
+    }
+
     /// Unlink: the task goes back to To do; its thread carries on.
     func unlink(_ task: UUID) async {
         guard canSilence, unlinking.insert(task).inserted else { return }

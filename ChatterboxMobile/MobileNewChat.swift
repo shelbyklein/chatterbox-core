@@ -16,6 +16,8 @@ struct MobileNewChatSheet: View {
     @State private var starting = false
     /// Its name; empty: named from the first message.
     @State private var name = ""
+    /// Put on the Desk: a task for it there, named from the first message.
+    @State private var putOnDesk = false
 
     var body: some View {
         NavigationStack {
@@ -35,6 +37,12 @@ struct MobileNewChatSheet: View {
                                 }
                                 .accessibilityIdentifier("new-chat-place")
                             }
+                        }
+                        Section {
+                            Toggle("Put on the Desk", isOn: $putOnDesk)
+                                .accessibilityIdentifier("new-chat-desk")
+                        } footer: {
+                            Text("A task for it on the Desk, named from your first message.")
                         }
                         if let problem { Text(problem).font(.footnote).foregroundStyle(.orange) }
                     }
@@ -78,7 +86,8 @@ struct MobileNewChatSheet: View {
                 // The settings as shown, so the chat starts exactly as picked.
                 let settings = Companion.SettingsRequest(model: options.model, effort: options.effort, mode: options.mode, fastMode: options.fastMode,
                                                          openModel: options.openModel)
-                let detail = try await store.newChat(in: studio, backend: options.backend, preset: picks.preset, settings: settings, title: name)
+                let detail = try await store.newChat(in: studio, backend: options.backend, preset: picks.preset, settings: settings, title: name,
+                                                      desk: putOnDesk)
                 dismiss()
                 start(detail)
                 await store.loadChats()

@@ -480,19 +480,39 @@ final class AppModel {
         let id = UUID()
         var studio: UUID?
         var backend: Backend?
+        /// A project's new session: a Sidechat of this one.
+        var sidechatOf: UUID? = nil
     }
     var namingNewSession: NewSessionRequest?
+    /// Threads put on the Desk as they were made: never reused as an empty New Chat.
+    @ObservationIgnored private var deskThreads: Set<UUID> = []
 
     /// What New Chat and the + buttons do: ask for a name first (it can be left empty).
     func askNewChat(in studio: Studio? = nil, backend: Backend? = nil) {
         namingNewSession = NewSessionRequest(studio: studio?.id, backend: backend)
     }
 
-    /// Starts the session asked for, named if a name was given.
-    @discardableResult func startNewSession(_ request: NewSessionRequest, name: String) -> ChatSession {
-        let session = request.studio.flatMap(studio).map { newChat(in: $0, backend: request.backend) } ?? newChat(backend: request.backend)
+    /// A project's new session (New Sidechat), asked for the same way.
+    func askNewSidechat(of parent: ChatSession) {
+        namingNewSession = NewSessionRequest(studio: nil, backend: nil, sidechatOf: parent.id)
+    }
+
+    /// Starts the session asked for, named if a name was given; `putOnDesk` links it to a new
+    /// Desk task in the place it's made, named from its first message (or the name).
+    @discardableResult func startNewSession(_ request: NewSessionRequest, name: String, putOnDesk: Bool = false) -> ChatSession {
+        let session: ChatSession
+        if let parent = request.sidechatOf.flatMap({ id in sessions.first { $0.id == id } }) {
+            session = newSidechat(of: parent)
+        } else {
+            session = request.studio.flatMap(studio).map { newChat(in: $0, backend: request.backend) } ?? newChat(backend: request.backend)
+        }
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty { session.setTitle(trimmed) }
+        if putOnDesk {
+            deskThreads.insert(session.id)
+            let id = session.id
+            Task { await DeskModel.shared.putOnDesk(id, name: trimmed.isEmpty ? nil : trimmed) }
+        }
         return session
     }
 
@@ -841,6 +861,7 @@ final class AppModel {
     /// differs from what a new chat starts with. An untouched "New chat" isn't kept.
     private func carriesUserIntent(_ record: ConversationRecord) -> Bool {
         if record.projectFolder != nil || record.studioID != nil || record.worktreeOf != nil || record.sidechatOf != nil || record.archivedAt != nil { return true }
+        if deskThreads.contains(record.id) { return true }
         if record.title != "New chat" || !(record.tags ?? []).isEmpty { return true }
         let defaults = AppPreferences.defaults
         let backend = Backend(rawValue: defaults.string(forKey: "defaultBackend") ?? "") ?? .claude

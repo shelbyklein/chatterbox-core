@@ -553,6 +553,14 @@ struct ChatDetailView: View {
             answer: { item, answers in perform { try await store.answer(answers, item: item, in: chat.id) } },
             sendQueuedNow: { item in perform { try await store.sendQueuedNow(item, in: chat.id) } },
             markUp: { image in sketch = SketchRequest(background: image) },
+            send: { text in
+                let generation = scrollWork.generation
+                perform {
+                    let result = try await store.send(text, images: [], now: false, to: chat.id)
+                    if scrollWork.generation == generation { pinRequests += 1 }
+                    return result
+                }
+            },
             context: approvalContext
         )
     }
@@ -852,8 +860,23 @@ private struct MobileTranscriptRows: View {
 
     var body: some View {
         ForEach(items) { item in
-            ItemRow(item: item, chat: chat, backend: backend, actions: actions).id(item.id)
+            ItemRow(item: item, chat: chat, backend: backend, actions: actions,
+                    replyActions: item.kind == .assistant && item.text.contains("```actions") ? replyActions(for: item.id) : nil)
+                .id(item.id)
         }
+    }
+
+    /// A reply's ```actions buttons: live only while it's the newest reply, with nothing sent after it.
+    private func replyActions(for id: UUID) -> ReplyActionContext? {
+        guard let index = items.lastIndex(where: { $0.id == id }) else { return nil }
+        let turns = items[(index + 1)...].lazy.map { item -> ReplyActions.Turn in
+            switch item.kind {
+            case .user: return .user(item.text)
+            case .assistant: return .reply
+            default: return .other
+            }
+        }
+        return ReplyActionContext(state: ReplyActions.state(following: turns), send: actions.send)
     }
 }
 
@@ -863,6 +886,7 @@ private struct ItemRow: View {
     let chat: UUID
     let backend: String
     let actions: ItemActions
+    var replyActions: ReplyActionContext? = nil
 
     var body: some View {
         switch item.kind {
@@ -894,6 +918,7 @@ private struct ItemRow: View {
             } else {
                 VStack(alignment: .leading, spacing: 6) {
                     MarkdownText(text: item.text)
+                        .environment(\.replyActions, replyActions)
                     // Animations the reply points to, playing.
                     ForEach(item.attachments.filter { !$0.isImage && RemoteMedia.isMedia($0) }) { file in
                         RemoteMedia(file: file, chat: chat)

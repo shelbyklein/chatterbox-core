@@ -341,6 +341,8 @@ private struct BlockView: View {
         case .code(let code, let language, let closed):
             if DraftCard.languages.contains(language.lowercased()) {
                 DraftCard(draft: code, closed: closed)
+            } else if ReplyActions.languages.contains(language.lowercased()), !ReplyActions.parse(code).isEmpty {
+                ActionButtons(actions: ReplyActions.parse(code), closed: closed)
             } else {
                 CodeBlock(code: code, language: language, closed: closed)
             }
@@ -427,6 +429,142 @@ extension EnvironmentValues {
     }
 }
 #endif
+
+/// One-tap next steps an agent offers under its reply, from an ```actions block: one per line,
+/// `Label | the message it sends` (just `ship` is both). A button only sends its message into
+/// the same thread, as if Shelby typed it; the app runs nothing itself.
+struct ReplyAction: Hashable {
+    var label: String
+    var message: String
+}
+
+enum ReplyActions {
+    static let languages: Set<String> = ["actions"]
+    /// More than this is a menu, not a next step.
+    static let limit = 5
+
+    static func parse(_ block: String) -> [ReplyAction] {
+        var actions: [ReplyAction] = []
+        for raw in block.components(separatedBy: "\n") {
+            var line = raw.trimmingCharacters(in: .whitespaces)
+            // "- Ship | ship" reads as a list too.
+            if line.hasPrefix("- ") || line.hasPrefix("* ") { line = String(line.dropFirst(2)).trimmingCharacters(in: .whitespaces) }
+            guard !line.isEmpty else { continue }
+            let parts = line.split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false).map { $0.trimmingCharacters(in: .whitespaces) }
+            let label = String((parts.first ?? "").prefix(60))
+            let message = parts.count > 1 && !parts[1].isEmpty ? parts[1] : label
+            guard !label.isEmpty, !message.isEmpty else { continue }
+            actions.append(ReplyAction(label: label, message: String(message.prefix(2_000))))
+            if actions.count == limit { break }
+        }
+        return actions
+    }
+
+    /// Where a reply's buttons stand: live while it's the newest reply and nothing was sent
+    /// after it; used once a message followed (the one it sent, if a button sent it); stale
+    /// once another reply came.
+    enum State: Equatable {
+        case live
+        case used(String?)
+        case stale
+    }
+
+    /// What follows a reply in the thread, as far as its buttons care.
+    enum Turn {
+        case user(String)
+        case reply
+        case other
+    }
+
+    static func state<S: Sequence>(following turns: S) -> State where S.Element == Turn {
+        for turn in turns {
+            switch turn {
+            case .user(let text): return .used(text.trimmingCharacters(in: .whitespacesAndNewlines))
+            case .reply: return .stale
+            case .other: continue
+            }
+        }
+        return .live
+    }
+}
+
+/// The reply an ```actions block sits in: where its buttons stand, and how they send.
+struct ReplyActionContext {
+    var state: ReplyActions.State
+    var send: (String) -> Void
+}
+
+private struct ReplyActionsKey: EnvironmentKey { static let defaultValue: ReplyActionContext? = nil }
+extension EnvironmentValues {
+    /// Set on a reply in a chat; without it (a document, a preview) the buttons only show.
+    var replyActions: ReplyActionContext? {
+        get { self[ReplyActionsKey.self] }
+        set { self[ReplyActionsKey.self] = newValue }
+    }
+}
+
+/// An ```actions block: a row of buttons. Only the newest reply's are live; tapping one sends
+/// its message and the row greys out, with the one used ticked.
+struct ActionButtons: View {
+    let actions: [ReplyAction]
+    var closed = true
+    @Environment(\.replyActions) private var context
+    /// Tapped here, before the sent message shows in the thread.
+    @State private var tapped: String?
+
+    private var state: ReplyActions.State {
+        if let tapped { return .used(tapped) }
+        guard closed, let context else { return .stale }
+        return context.state
+    }
+
+    var body: some View {
+        let state = state
+        let live = state == .live
+        VStack(alignment: .leading, spacing: 6) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { buttons(state: state) }
+                VStack(alignment: .leading, spacing: 8) { buttons(state: state) }
+            }
+            if case .used(let sent) = state, let sent, actions.contains(where: { Self.same($0.message, sent) }) {
+                Text("Sent").font(.caption).foregroundStyle(.tertiary)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(live ? "reply-actions-live" : "reply-actions-used")
+    }
+
+    @ViewBuilder
+    private func buttons(state: ReplyActions.State) -> some View {
+        ForEach(Array(actions.enumerated()), id: \.offset) { index, action in
+            let chosen: Bool = { if case .used(let sent) = state, let sent { return Self.same(action.message, sent) }; return false }()
+            Button {
+                guard state == .live, let context else { return }
+                tapped = action.message
+                context.send(action.message)
+            } label: {
+                HStack(spacing: 5) {
+                    if chosen { Image(systemName: "checkmark") }
+                    Text(action.label).lineLimit(1)
+                }
+                .font(.callout.weight(index == 0 ? .semibold : .regular))
+                .padding(.horizontal, 4)
+            }
+            .buttonStyle(.bordered)
+            .tint(state == .live && index == 0 ? .accentColor : nil)
+            .disabled(state != .live)
+            .opacity(state == .live || chosen ? 1 : 0.55)
+            #if canImport(AppKit)
+            .help(state == .live ? "Sends \u{201C}\(action.message)\u{201D} in this thread" : "Used, or no longer the newest reply")
+            #endif
+            .accessibilityIdentifier("reply-action-\(index)")
+        }
+    }
+
+    static func same(_ a: String, _ b: String) -> Bool {
+        a.trimmingCharacters(in: .whitespacesAndNewlines) == b.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
 
 /// Something to send or paste elsewhere (an email, a message), from a ```draft block:
 /// shown as it will read, with Copy (formatted, for Mail and Outlook, and plain) and, for an
