@@ -928,6 +928,8 @@ private struct ShellBlock: View {
 struct ReplyActionResolver {
     var items: [DisplayItem]
     var send: (String) -> Void
+    /// The thread's agent color, for the buttons.
+    var tint: Color? = nil
 
     func context(for id: UUID) -> ReplyActionContext? {
         guard let index = items.lastIndex(where: { $0.id == id }) else { return nil }
@@ -939,7 +941,7 @@ struct ReplyActionResolver {
             default: return .other
             }
         }
-        return ReplyActionContext(state: ReplyActions.state(following: turns), send: send)
+        return ReplyActionContext(state: ReplyActions.state(following: turns), send: send, tint: tint)
     }
 }
 

@@ -982,7 +982,7 @@ private struct MobileTranscriptRows: View {
             default: return .other
             }
         }
-        return ReplyActionContext(state: ReplyActions.state(following: turns), send: actions.send)
+        return ReplyActionContext(state: ReplyActions.state(following: turns), send: actions.send, tint: MobileConversationStyle.accent(for: backend))
     }
 }
 

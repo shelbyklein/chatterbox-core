@@ -492,6 +492,8 @@ enum ReplyActions {
 struct ReplyActionContext {
     var state: ReplyActions.State
     var send: (String) -> Void
+    /// The thread's agent color (Claude's or Codex's), so the buttons read as that provider's.
+    var tint: Color? = nil
 }
 
 private struct ReplyActionsKey: EnvironmentKey { static let defaultValue: ReplyActionContext? = nil }
@@ -523,13 +525,14 @@ struct ActionButtons: View {
         let live = state == .live
         VStack(alignment: .leading, spacing: 6) {
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: 8) { buttons(state: state) }
-                VStack(alignment: .leading, spacing: 8) { buttons(state: state) }
+                HStack(spacing: 10) { buttons(state: state) }
+                VStack(alignment: .leading, spacing: 10) { buttons(state: state) }
             }
             if case .used(let sent) = state, let sent, actions.contains(where: { Self.same($0.message, sent) }) {
                 Text("Sent").font(.caption).foregroundStyle(.tertiary)
             }
         }
+        .padding(.vertical, 10)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(live ? "reply-actions-live" : "reply-actions-used")
     }
@@ -543,17 +546,24 @@ struct ActionButtons: View {
                 tapped = action.message
                 context.send(action.message)
             } label: {
-                HStack(spacing: 5) {
+                let tint = context?.tint ?? .accentColor
+                let primary = state == .live && index == 0
+                HStack(spacing: 6) {
                     if chosen { Image(systemName: "checkmark") }
                     Text(action.label).lineLimit(1)
                 }
-                .font(.callout.weight(index == 0 ? .semibold : .regular))
-                .padding(.horizontal, 4)
+                .font(.callout.weight(index == 0 ? .semibold : .medium))
+                .foregroundStyle(primary ? Color.white : state == .live ? tint : Color.secondary)
+                .padding(.horizontal, 16).padding(.vertical, 9)
+                // A clear shape: the first (main) action filled with the provider's color, the
+                // others outlined in it; used or stale ones go quiet.
+                .background(Capsule().fill(primary ? tint : tint.opacity(state == .live ? 0.14 : 0.06)))
+                .overlay(Capsule().strokeBorder(state == .live ? tint.opacity(primary ? 0 : 0.75) : Color.secondary.opacity(0.35), lineWidth: 1.2))
+                .contentShape(Capsule())
             }
-            .buttonStyle(.bordered)
-            .tint(state == .live && index == 0 ? .accentColor : nil)
+            .buttonStyle(.plain)
             .disabled(state != .live)
-            .opacity(state == .live || chosen ? 1 : 0.55)
+            .opacity(state == .live || chosen ? 1 : 0.6)
             #if canImport(AppKit)
             .help(state == .live ? "Sends \u{201C}\(action.message)\u{201D} in this thread" : "Used, or no longer the newest reply")
             #endif

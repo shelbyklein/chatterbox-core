@@ -583,7 +583,7 @@ struct ChatView: View {
                     .environment(\.readerStyle, appearance.style)
                     .environment(\.bubbleTint, session.usesPC ? ReaderStyle.pcColor : nil)
                     .environment(\.reviewImage, ImageReviewAction { reviewing = $0 })
-                    .environment(\.replyActionResolver, ReplyActionResolver(items: session.items) { [weak session] in session?.send($0) })
+                    .environment(\.replyActionResolver, ReplyActionResolver(items: session.items, send: { [weak session] in session?.send($0) }, tint: appearance.style.agentColor(for: session)))
                     .environment(\.pinMessage, PinMessageAction(chat: showsPins ? session.record.id : nil))
                     .environment(\.openChat, OpenChatAction { [session] id in
                         if compact || tileContext != nil { model.selectedID = id } else { model.peek(id, from: session.id) }
