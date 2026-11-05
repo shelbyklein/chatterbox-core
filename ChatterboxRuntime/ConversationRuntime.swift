@@ -123,17 +123,81 @@ struct CommandReceipt: Codable {
             }
         }
     }
+    /// Whether the first reattachment to the background host has finished (`health` reports
+    /// "starting" until then). The service listens before it, so a slow host can't keep it silent.
+    private(set) var hostsResumed = false
+    private var codexResumed = false
+    private var resumeRetry = 0
+    private var resumeRetryScheduled = false
+
+    /// Settles chats with no reply in a host, from a run that can't be continued. Needs no host,
+    /// so it's done before the service listens and nothing new can be mistaken for leftovers.
+    func settleUnlinked() {
+        guard !unlinkedSettled else { return }
+        unlinkedSettled = true
+        for session in sessions where !session.awaitingHostResume { session.settleInterruptedWork() }
+    }
+    private var unlinkedSettled = false
+
+    /// Reattaches chats to the replies running (or finished) in the background hosts. A chat
+    /// whose process a host couldn't confirm (it didn't answer in time) isn't taken as lost:
+    /// it keeps waiting, and is reattached when a host answers.
     func resume() async {
-        let processes = (try? await HostClient.shared.list()) ?? []
-        for session in sessions {
-            if session.awaitingHostResume { session.resumeFromHost(processes) }
-            else { session.settleInterruptedWork() }
-        }
-        for codex in CodexAppServer.all { codex.resume(processes) }
-        try? flush()
+        settleUnlinked()
+        let survey = await HostClient.shared.survey()
+        reattach(survey)
+        hostsResumed = true
         if !idleSweepStarted {
             idleSweepStarted = true
             scheduleIdleSweep()
+        }
+    }
+
+    private func reattach(_ survey: HostSurvey) {
+        let found = Set(survey.processes.map(\.id))
+        var waiting = 0
+        for session in sessions where session.awaitingHostResume {
+            let links = [session.record.claudeHost?.processID, session.record.codexHost?.processID].compactMap { $0 }
+            guard survey.complete || links.allSatisfy(found.contains) else { waiting += 1; continue }
+            session.resumeFromHost(survey.processes)
+            changed(session, streamed: false)
+        }
+        // Codex's shared app-server after every chat on it has registered (resumeFromHost).
+        if !codexResumed {
+            let codexFound = CodexAppServer.all.allSatisfy { $0.savedProcessID.map(found.contains) ?? true }
+            if survey.complete || codexFound {
+                codexResumed = true
+                for codex in CodexAppServer.all { codex.resume(survey.processes) }
+            } else { waiting += 1 }
+        }
+        try? flush()
+        guard waiting > 0 else {
+            if resumeRetry > 0 { RuntimeHooks.note("Background host answered; every chat is reattached") }
+            resumeRetry = 0
+            return
+        }
+        // Again shortly, then less often; never giving up on a reply that may still be running.
+        let delay = [5.0, 10, 20, 30][min(resumeRetry, 3)]
+        resumeRetry += 1
+        RuntimeHooks.note("Background host didn't confirm \(waiting) chat(s)' replies; they stay reconnecting, trying again in \(Int(delay))s")
+        guard !resumeRetryScheduled else { return }
+        resumeRetryScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                self.resumeRetryScheduled = false
+                self.reattach(await HostClient.shared.survey())
+            }
+        }
+    }
+
+    /// Waits up to `seconds` for a chat to finish reattaching to its reply (just after the
+    /// service starts), so a command for it isn't applied to a half-restored chat.
+    func waitForHostResume(_ s: ChatSession, seconds: TimeInterval = 20) async throws {
+        let deadline = Date().addingTimeInterval(seconds)
+        while s.awaitingHostResume {
+            guard Date() < deadline else { throw RuntimeFailure("This thread is reconnecting to its reply. Try again shortly.") }
+            try? await Task.sleep(for: .milliseconds(100))
         }
     }
 

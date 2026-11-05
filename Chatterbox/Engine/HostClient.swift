@@ -11,6 +11,14 @@ struct HostProcess: Equatable {
     var status: Int32?
 }
 
+/// What asking every host for its processes found (`HostClient.survey`).
+struct HostSurvey {
+    var processes: [HostProcess]
+    /// Every host that's there answered. When false, a process missing from `processes` may
+    /// still be running in a host that didn't answer in time: don't treat it as gone.
+    var complete: Bool
+}
+
 /// The app's connection to ChatterboxHost, which runs the agent processes so they outlive
 /// the app (see ChatterboxHost/Host.swift). The first use launches the host if it isn't
 /// running. Requests are written in order on one socket, so a `write` sent right after a
@@ -242,6 +250,11 @@ final class HostClient {
 
     /// Forgets a closed connection and what was on it.
     private func drop(_ socket: Int32) {
+        // Nothing more will come from it: a request still waiting on it ends now.
+        for (req, waiter) in listWaiters where waiter.fd == socket {
+            listWaiters.removeValue(forKey: req)
+            waiter.done.resume(throwing: ClaudeCodeError(message: "Chatterbox's background host stopped."))
+        }
         generations.removeValue(forKey: socket)
         if socket == fd { fd = -1 }
         draining.removeAll { $0 == socket }
@@ -283,6 +296,15 @@ final class HostClient {
                 }
                 if let req = header["req"]?.int, let waiter = listWaiters.removeValue(forKey: req) {
                     waiter.done.resume(returning: processes)
+                }
+                // A draining host with nothing running is let go just below, which would leave
+                // a request already sent to it unanswered (the service once hung at startup on
+                // exactly that). This answer is as fresh as the one it was waiting for.
+                if draining.contains(socket) {
+                    for (req, waiter) in listWaiters where waiter.fd == socket {
+                        listWaiters.removeValue(forKey: req)
+                        waiter.done.resume(returning: processes)
+                    }
                 }
                 releaseIdleDraining(socket, processes: processes)
             case "spawned":
@@ -368,21 +390,89 @@ final class HostClient {
     }
 
     /// The host's processes. With `launch` false and no host running, there are none.
-    /// Every host's: the current one's and any still draining.
-    func list(launch: Bool = false) async throws -> [HostProcess] {
+    /// Every host's: the current one's and any still draining. A host that doesn't answer
+    /// within `timeout` is left out (see `survey` to know whether that happened).
+    func list(launch: Bool = false, timeout: TimeInterval = HostClient.listTimeout) async throws -> [HostProcess] {
         do { try connect(launch: launch) } catch {
             if launch { throw error }
-            if draining.isEmpty { connectDraining() }
         }
+        return await survey(timeout: timeout).processes
+    }
+
+    /// How long a host gets to answer `list` before it's taken as not answering.
+    nonisolated static let listTimeout: TimeInterval = ProcessInfo.processInfo.environment["CHATTERBOX_HOST_LIST_TIMEOUT"].flatMap(Double.init) ?? 5
+
+    /// Asks every host for its processes, never waiting longer than `timeout` on one: a host
+    /// that had just handed off, or is stuck, mustn't hold up whoever asked (the service waits
+    /// on this before it reattaches chats). The current host (the one on the usual socket,
+    /// holding host-current.lock) gets a second try on a fresh connection. Never launches one.
+    func survey(timeout: TimeInterval = HostClient.listTimeout) async -> HostSurvey {
+        if fd < 0 { try? connect(launch: false) }
+        if draining.isEmpty { connectDraining() }
         var all: [HostProcess] = []
-        for socket in draining + (fd >= 0 ? [fd] : []) {
-            let req = nextRequest
-            nextRequest += 1
-            if let processes = try? await withCheckedThrowingContinuation({ (continuation: CheckedContinuation<[HostProcess], Error>) in
-                listWaiters[req] = (socket, continuation)
-                sendRaw(["op": "list", "req": .number(Double(req))], to: socket)
-            }) { all += processes }
+        var complete = true
+        for socket in draining {
+            switch await ask(socket, timeout: timeout) {
+            case .answered(let processes): all += processes
+            case .gone: break   // It finished and went: nothing of it to reattach.
+            case .timedOut:
+                complete = false
+                RuntimeHooks.note("A draining background host didn't answer within \(Int(timeout))s; its chats reattach once it does")
+            }
         }
-        return all
+        var askedCurrent = false
+        for attempt in 1...2 {
+            if fd < 0 { try? connect(launch: false) }
+            guard fd >= 0 else { break }
+            askedCurrent = true
+            let socket = fd
+            switch await ask(socket, timeout: timeout) {
+            case .answered(let processes):
+                return HostSurvey(processes: all + processes, complete: complete)
+            case .gone:
+                RuntimeHooks.note("The background host closed the connection while listing (attempt \(attempt) of 2)\(attempt == 1 ? "; asking the current host again" : "")")
+            case .timedOut:
+                RuntimeHooks.note("The background host didn't answer within \(Int(timeout))s (attempt \(attempt) of 2)\(attempt == 1 ? "; asking the current host again on a new connection" : "")")
+                // A connection nothing is attached to is let go, so the next try goes to
+                // whichever host holds the usual socket now. One carrying replies is kept.
+                if !subscribers.keys.contains(where: { owners[$0] == nil }) { abandon(socket) }
+                else { return HostSurvey(processes: all, complete: false) }
+            }
+        }
+        // No host on the usual socket: nothing is running there. One that never answered may be.
+        return HostSurvey(processes: all, complete: complete && !askedCurrent)
+    }
+
+    private enum ListAnswer { case answered([HostProcess]), gone, timedOut }
+
+    private struct ListTimedOut: Error {}
+
+    private func ask(_ socket: Int32, timeout: TimeInterval) async -> ListAnswer {
+        guard generations[socket] != nil else { return .gone }
+        let req = nextRequest
+        nextRequest += 1
+        do {
+            return .answered(try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[HostProcess], Error>) in
+                listWaiters[req] = (socket, continuation)
+                DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { [weak self] in
+                    MainActor.assumeIsolated {
+                        self?.listWaiters.removeValue(forKey: req)?.done.resume(throwing: ListTimedOut())
+                    }
+                }
+                // A failed write ends the connection, which answers the waiter.
+                sendRaw(["op": "list", "req": .number(Double(req))], to: socket)
+            })
+        } catch is ListTimedOut {
+            return .timedOut
+        } catch {
+            return .gone
+        }
+    }
+
+    /// Lets go of a connection to a host that stopped answering, right away.
+    private func abandon(_ socket: Int32) {
+        guard let generation = generations[socket] else { return }
+        shutdown(socket, SHUT_RDWR)
+        connectionLost(socket, generation: generation)
     }
 }
