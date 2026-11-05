@@ -14,7 +14,7 @@ struct MobilePressurePill: View {
     var body: some View {
         HStack(spacing: 5) {
             Circle().fill(stale ? Color.secondary : pressure.color).frame(width: 8, height: 8)
-            Text(pressure.label)
+            Text(pressure.isOK ? pressure.reading : "\(pressure.label) · \(pressure.reading)").monospacedDigit()
         }
         .font(.footnote.weight(.semibold))
         .foregroundStyle(stale ? Color.secondary : pressure.color)

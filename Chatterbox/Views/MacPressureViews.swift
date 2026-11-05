@@ -49,9 +49,10 @@ struct MacPressureBadge: View {
             Button { open.toggle() } label: {
                 HStack(spacing: 5) {
                     Circle().fill(pressure.color).frame(width: 8, height: 8)
-                    if alwaysLabelled || !pressure.isOK {
-                        Text(pressure.label).font(.caption.weight(.medium)).foregroundStyle(pressure.isOK ? Color.secondary : pressure.color)
-                    }
+                    // Always a reading, so the Mac's load is visible at a glance; the level's name too when it isn't OK.
+                    Text(alwaysLabelled || !pressure.isOK ? "\(pressure.label) · \(pressure.reading)" : pressure.reading)
+                        .font(.caption.weight(.medium)).monospacedDigit()
+                        .foregroundStyle(pressure.isOK ? Color.secondary : pressure.color)
                 }
                 .padding(.horizontal, 6).padding(.vertical, 3)
                 .contentShape(Rectangle())

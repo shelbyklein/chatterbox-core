@@ -118,6 +118,12 @@ enum Companion {
         /// "Mac OK", "Mac busy", "Mac overloaded".
         var label: String { level == "overloaded" ? "Mac overloaded" : level == "busy" ? "Mac busy" : "Mac OK" }
         var isOK: Bool { level != "busy" && level != "overloaded" }
+        /// The always-on reading beside the dot: "Load 10/16", plus memory when it isn't normal.
+        var reading: String {
+            guard cores > 0 else { return label }
+            let load = "Load \(Int(load1.rounded()))/\(cores)"
+            return memory == "normal" || memory.isEmpty ? load : "\(load) · memory \(memory)"
+        }
     }
 
     struct TurnCompletion: Codable, Identifiable, Hashable {
