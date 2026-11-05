@@ -424,9 +424,13 @@ final class CompanionServer {
                 place = found
             }
             do { return .json(try DeskStore.shared.threads(for: id, place: place, all: request.query["all"] == "1")) } catch { return failure(error) }
-        case ("POST", 4) where parts[1] == "desk" && (parts[3] == "start" || parts[3] == "ignore" || parts[3] == "done"):
+        case ("POST", 4) where parts[1] == "desk" && (parts[3] == "start" || parts[3] == "ignore" || parts[3] == "done" || parts[3] == "writeback"):
             guard let id = UUID(uuidString: parts[2]) else { return .error(404, "That request is gone.") }
             do {
+                if parts[3] == "writeback" {
+                    // A card's offer to change its source (ClickUp, an email reply): an agent does it.
+                    return .json(CompanionMapper.detail(try DeskStore.shared.writeBack(id), model: model))
+                }
                 if parts[3] == "ignore" {
                     try DeskStore.shared.ignore(id)
                     return .json(DeskStore.shared.snapshot())

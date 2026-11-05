@@ -510,6 +510,14 @@ final class MobileStore {
         return try await changeDesk { try await self.call("/v1/desk/silence", method: "POST", body: body) }
     }
 
+    /// Write-back (plans/source-linked-tasks.md): the Mac asks an agent to make the change a
+    /// card offers in the task's source (ClickUp, or draft the email reply). Answers the session.
+    func writeBackDesk(_ task: UUID) async throws -> Companion.ChatDetail {
+        deskChanges += 1
+        defer { deskChanges += 1 }
+        return try await call("/v1/desk/\(task.uuidString)/writeback", method: "POST", body: Data("{}".utf8))
+    }
+
     /// Mark complete: the Mac archives the session and lists it in Done.
     @discardableResult
     func completeDesk(_ chat: UUID) async throws -> Companion.Desk {

@@ -377,12 +377,14 @@ struct MobileDeskView: View {
                                 change: { choosing = request },
                                 ignore: { ignore(request) },
                                 markDone: { markDone(request) },
-                                link: hasTasks && place(for: request) != nil ? { linking = request } : nil)
+                                link: hasTasks && place(for: request) != nil ? { linking = request } : nil,
+                                writeBack: { writeBack(request.id) })
             }
         case .working:
             ForEach(working) { item in
                 DeskWorkingCard(item: item, open: { open(item.id) }, stale: store.isStale || loadProblem != nil,
-                                unlink: item.task.map { task in { unlink(task) } })
+                                unlink: item.task.map { task in { unlink(task) } },
+                                writeBack: item.task.map { task in { writeBack(task) } })
             }
         case .needsYou:
             ForEach(needsYou) { item in
@@ -392,7 +394,9 @@ struct MobileDeskView: View {
                                 silence: { silence(item) },
                                 hasTasks: hasTasks,
                                 makeTask: { makeTask(item.chatID) },
-                                unlink: item.task.map { task in { unlink(task) } })
+                                unlink: item.task.map { task in { unlink(task) } },
+                                writeBack: item.task.map { task in { writeBack(task) } },
+                                completeChat: { completeChat(item.chatID) })
             }
             if !silenced.isEmpty {
                 DeskSilencedList(items: silenced, busy: unsilencing) { unsilence($0) }
@@ -400,11 +404,13 @@ struct MobileDeskView: View {
         case .ready:
             ForEach(ready) { item in
                 DeskReadyCard(item: item, swipes: !wide, open: { open(item.id) }, complete: { complete(item) }, silence: { silence(item) },
-                              unlink: item.task.map { task in { unlink(task) } })
+                              unlink: item.task.map { task in { unlink(task) } },
+                              writeBack: item.task.map { task in { writeBack(task) } })
             }
         case .done:
             ForEach(done) { item in
-                DeskDoneCard(item: item, busy: reopening.contains(item.id), reopen: { reopen(item) })
+                DeskDoneCard(item: item, busy: reopening.contains(item.id), reopen: { reopen(item) },
+                             writeBack: item.task.map { task in { writeBack(task) } })
             }
         }
     }
@@ -578,6 +584,29 @@ struct MobileDeskView: View {
         }
     }
 
+    /// Write-back: the Mac asks an agent to make the change in the task's source; that session opens.
+    private func writeBack(_ task: UUID) {
+        guard busy.insert(task).inserted else { return }
+        Task {
+            defer { busy.remove(task) }
+            do {
+                let detail = try await store.writeBackDesk(task)
+                open(detail.summary.id)
+            } catch let error as MobileError where error.status == 404 {
+                actionProblem = "That needs the newest Chatterbox on the Mac. Update it there to use it."
+            } catch { actionProblem = Self.describe(error) }
+        }
+    }
+
+    /// Move to match: its source is finished, so its thread is marked complete.
+    private func completeChat(_ chat: UUID) {
+        guard completing.insert(chat).inserted else { return }
+        Task {
+            defer { completing.remove(chat) }
+            do { _ = try await store.completeDesk(chat) } catch { actionProblem = Self.describe(error) }
+        }
+    }
+
     /// Reopen: unarchived, it leaves Done.
     private func reopen(_ item: Companion.DeskDone) {
         guard reopening.insert(item.id).inserted else { return }
@@ -730,6 +759,8 @@ private struct DeskWaitingCard: View {
     var hasTasks = false
     var makeTask: () -> Void = {}
     var unlink: (() -> Void)? = nil
+    var writeBack: (() -> Void)? = nil
+    var completeChat: () -> Void = {}
 
     private var decides: Bool { item.kind == "approval" || item.kind == "plan" }
     private var context: String { deskContext(title: item.title, place: item.place, subtitle: item.subtitle) }
@@ -770,6 +801,8 @@ private struct DeskWaitingCard: View {
                     .buttonStyle(.bordered)
                     .accessibilityIdentifier("desk-open-\(id)")
             }
+            MobileDeskSourceLine(id: (item.task ?? item.chatID).uuidString, origin: item.origin, check: item.check,
+                                 matchLabel: "Mark Complete", match: completeChat, writeBack: writeBack, taps: { taps($0) })
             if let task = item.taskText, item.task != nil {
                 DeskTaskLine(text: task)
             } else if hasTasks {
@@ -853,6 +886,7 @@ private struct DeskWorkingCard: View {
     /// The Mac can't be reached: as last seen, not spinning.
     var stale = false
     var unlink: (() -> Void)? = nil
+    var writeBack: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -886,6 +920,7 @@ private struct DeskWorkingCard: View {
             .accessibilityLabel("\(item.title)\(item.subtitle.map { ", " + $0 } ?? ""), \(stale ? "last seen working" : "working")\(item.place.flatMap { $0 != item.title ? ", in \($0)" : nil } ?? "")\(item.activity.map { ": " + $0 } ?? "")")
             .accessibilityHint("Opens the session")
             .accessibilityIdentifier("desk-working-\(item.id.uuidString)")
+            MobileDeskSourceLine(id: (item.task ?? item.id).uuidString, origin: item.origin, check: item.check, writeBack: writeBack)
             Button("Open", action: open)
                 .buttonStyle(.bordered)
                 .accessibilityIdentifier("desk-working-open-\(item.id.uuidString)")
@@ -908,6 +943,7 @@ private struct DeskReadyCard: View {
     let complete: () -> Void
     let silence: () -> Void
     var unlink: (() -> Void)? = nil
+    var writeBack: (() -> Void)? = nil
 
     var body: some View {
         DeskSwipe(action: .complete, id: item.id.uuidString, enabled: swipes, perform: complete) { taps in card(taps) }
@@ -956,6 +992,8 @@ private struct DeskReadyCard: View {
                 }
                 .accessibilityIdentifier("desk-ready-assets-\(item.id.uuidString)")
             }
+            MobileDeskSourceLine(id: (item.task ?? item.id).uuidString, origin: item.origin, check: item.check,
+                                 writeBack: writeBack, taps: { taps($0) })
             HStack(spacing: 8) {
                 Button("Mark Complete", action: taps(complete))
                     .buttonStyle(.borderedProminent)
@@ -983,8 +1021,10 @@ private struct DeskDoneCard: View {
     let item: Companion.DeskDone
     let busy: Bool
     let reopen: () -> Void
+    var writeBack: (() -> Void)? = nil
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
         HStack(alignment: .top, spacing: 10) {
             VStack(alignment: .leading, spacing: 4) {
                 Label("Completed \(MobileDeskView.ago(item.completedAt))", systemImage: "checkmark.circle.fill")
@@ -1004,6 +1044,8 @@ private struct DeskDoneCard: View {
                 .controlSize(.small)
                 .disabled(busy)
                 .accessibilityIdentifier("desk-reopen-\(item.id.uuidString)")
+        }
+        MobileDeskSourceLine(id: (item.task ?? item.id).uuidString, origin: item.origin, check: item.check, writeBack: writeBack)
         }
         .deskCard()
     }
@@ -1165,6 +1207,8 @@ private struct DeskRequestCard: View {
     var markDone: (() -> Void)? = nil
     /// Link a thread already in its place; nil from a Mac older than tasks, or with no place.
     var link: (() -> Void)? = nil
+    /// The card's offer to change its ClickUp task or draft the email reply.
+    var writeBack: (() -> Void)? = nil
 
     private var source: String {
         switch request.source {
@@ -1205,6 +1249,8 @@ private struct DeskRequestCard: View {
                 Text(note).font(.footnote).foregroundStyle(Color.metadata)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            MobileDeskSourceLine(id: request.id.uuidString, origin: request.origin, check: request.check,
+                                 writeBack: writeBack, taps: { taps($0) })
             if busy {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
@@ -1650,5 +1696,64 @@ private struct MobileDeskLinkSheet: View {
                 failed(MobileDeskView.describe(error))
             }
         }
+    }
+}
+
+/// Where a task came from (plans/source-linked-tasks.md): a ClickUp or email badge (a tap opens
+/// the link), and in amber what disagrees with the board, with its offers: the change in the
+/// source (an agent on the Mac makes it; nothing changes there without this tap) and moving
+/// the task to match.
+private struct MobileDeskSourceLine: View {
+    let id: String
+    let origin: Companion.DeskOrigin?
+    let check: Companion.DeskOriginCheck?
+    var matchLabel: String? = nil
+    var match: (() -> Void)? = nil
+    var writeBack: (() -> Void)? = nil
+    var taps: (@escaping () -> Void) -> () -> Void = { $0 }
+
+    var body: some View {
+        if let origin {
+            VStack(alignment: .leading, spacing: 8) {
+                Button(action: taps { origin.url.flatMap(URL.init(string:)).map { UIApplication.shared.open($0) } }) {
+                    Label(Self.badge(origin), systemImage: origin.kind == "email" ? "envelope" : "checklist")
+                        .font(.caption.weight(.medium)).foregroundStyle(Color.metadata)
+                        .lineLimit(1).truncationMode(.middle)
+                }
+                .buttonStyle(.plain)
+                .disabled(origin.url == nil)
+                .accessibilityIdentifier("desk-source-\(id)")
+                if let check {
+                    Label(check.warning, systemImage: "exclamationmark.triangle.fill")
+                        .font(.subheadline.weight(.medium)).foregroundStyle(Color.attention)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("desk-source-warning-\(id)")
+                    HStack(spacing: 8) {
+                        if let offer = check.writeBack, let writeBack {
+                            Button(offer, action: taps(writeBack))
+                                .buttonStyle(.bordered).controlSize(.small)
+                                .accessibilityHint("Asks an agent on the Mac to do this. Nothing changes until it does; an email is only drafted.")
+                                .accessibilityIdentifier("desk-write-back-\(id)")
+                        }
+                        if check.match == "done", let match, let matchLabel {
+                            Button(matchLabel, action: taps(match))
+                                .buttonStyle(.bordered).controlSize(.small)
+                                .accessibilityIdentifier("desk-source-match-\(id)")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// "ClickUp · In progress · Camp schedule", "Email · New reply from Lauren".
+    static func badge(_ origin: Companion.DeskOrigin) -> String {
+        var parts = [origin.kind == "email" ? "Email" : "ClickUp"]
+        if let status = origin.status, !status.isEmpty {
+            let shown = status.prefix(1).uppercased() + status.dropFirst()
+            parts.append(origin.kind == "email" && status.lowercased() == "new reply" ? shown + (origin.replyFrom.map { " from " + $0 } ?? "") : shown)
+        }
+        if let title = origin.title, !title.isEmpty { parts.append(title) }
+        return parts.joined(separator: " \u{00B7} ")
     }
 }

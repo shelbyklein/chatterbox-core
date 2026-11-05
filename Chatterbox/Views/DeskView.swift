@@ -597,6 +597,26 @@ final class DeskModel {
         } catch { note(error, "ignore it") }
     }
 
+    /// Write-back (plans/source-linked-tasks.md): an agent makes the change the card offers in
+    /// its source (ClickUp, or drafts the email reply); the session it went to opens.
+    func writeBack(_ task: UUID, in model: AppModel) async {
+        guard busy.insert(task).inserted else { return }
+        defer { busy.remove(task) }
+        do {
+            let detail = try await send(["action": "writeBack", "id": .string(task.uuidString)]).decode(Companion.ChatDetail.self)
+            problem = nil
+            open(detail.summary.id, in: model)
+        } catch { note(error, "ask for that change") }
+    }
+
+    /// Move to match: the source is finished, so the thread is marked complete (archived, into Done).
+    func completeChat(_ chatID: UUID) async {
+        guard canSilence, completing.insert(chatID).inserted else { return }
+        defer { completing.remove(chatID) }
+        await change(["action": "complete", "chatID": .string(chatID.uuidString)],
+                     doing: "mark it complete", older: "Mark complete works once the background service restarts with this version of Chatterbox.")
+    }
+
     /// Done outside Chatterbox: straight to Done, no thread.
     func markDone(_ request: Companion.DeskRequest) async {
         guard !busy.contains(request.id) else { return }
@@ -973,6 +993,9 @@ private struct DeskNeedRow: View {
                     .deskFrame("open:\(need.id)")
             }
             DeskTaskLine(chatID: waiting.chatID, task: waiting.task, text: waiting.taskText, desk: desk)
+            DeskSourceLine(id: waiting.task ?? waiting.chatID, origin: waiting.origin, check: waiting.check, matchLabel: "Mark complete",
+                           match: { Task { await desk.completeChat(waiting.chatID) } },
+                           writeBack: waiting.task.map { task in { Task { await desk.writeBack(task, in: model) } } })
         }
         .deskCard(fill: Color.attention.opacity(hovered ? 0.08 : 0.045), stroke: Color.attention.opacity(0.8), width: 1.5)
         .overlay(alignment: .topTrailing) {
@@ -1095,6 +1118,9 @@ private struct DeskRequestRow: View {
                 Label { Text(note) } icon: { Image(systemName: "text.quote") }
                     .font(.subheadline).foregroundStyle(Color.metadata).lineLimit(3)
             }
+            // Mark done is already on the card: the warning is enough.
+            DeskSourceLine(id: request.id, origin: request.origin, check: request.check,
+                           writeBack: { Task { await desk.writeBack(request.id, in: model) } })
             Button { choosing = true } label: { DeskPlaceChip(place: place) }
                 .buttonStyle(.plain)
                 .help(place == nil ? "Nothing clearly fits: choose where this goes" : "Where it starts. Click to choose another place.")
@@ -1680,6 +1706,9 @@ private struct DeskWorkingCard: View {
                 Text(activity).font(.subheadline).foregroundStyle(Color.metadata).lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
+            // Working can't be completed mid-reply: only the write-back.
+            DeskSourceLine(id: item.task ?? item.id, origin: item.origin, check: item.check,
+                           writeBack: item.task.map { task in { Task { await desk.writeBack(task, in: model) } } })
             Button("Open") { desk.openWorking(item.id, in: model) }
                 .padding(.top, 4)
                 .deskFrame("workingOpen:\(item.id)")
@@ -1728,6 +1757,9 @@ private struct DeskReadyRow: View {
             Text(item.text).font(.subheadline).foregroundStyle(Color.metadata).lineLimit(3)
                 .frame(maxWidth: .infinity, alignment: .leading)
             if let assets = item.assets, !assets.isEmpty { DeskAssetLinks(assets: assets) }
+            // Mark complete is already on the card.
+            DeskSourceLine(id: item.task ?? item.id, origin: item.origin, check: item.check,
+                           writeBack: item.task.map { task in { Task { await desk.writeBack(task, in: model) } } })
             HStack(spacing: 8) {
                 Button("Mark complete") { Task { await desk.complete(item) } }
                     .buttonStyle(.accent)
@@ -1759,6 +1791,7 @@ private struct DeskReadyRow: View {
 
 /// A session marked complete this week (archived): Reopen brings it back.
 private struct DeskDoneRow: View {
+    @Environment(AppModel.self) private var model
     let item: Companion.DeskDone
     let desk: DeskModel
 
@@ -1774,6 +1807,8 @@ private struct DeskDoneRow: View {
                 if let subtitle = item.subtitle { Text(subtitle).font(.caption).foregroundStyle(Color.metadata).lineLimit(1) }
                 DeskTaskText(text: item.taskText, title: item.title, subtitle: item.subtitle, quiet: true)
                 if let place = item.place, place != item.title { DeskPlaceLabel(name: place).padding(.top, 2) }
+                DeskSourceLine(id: item.task ?? item.id, origin: item.origin, check: item.check,
+                               writeBack: item.task.map { task in { Task { await desk.writeBack(task, in: model) } } })
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             Button("Reopen") { Task { await desk.reopen(item) } }
@@ -1813,5 +1848,72 @@ private struct DeskAssetLinks: View {
     private func open(_ asset: Companion.DeskAsset) {
         if let path = asset.path { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }
         else if let link = asset.url.flatMap(URL.init(string:)) { NSWorkspace.shared.open(link) }
+    }
+}
+
+/// Where a task came from (plans/source-linked-tasks.md): a ClickUp or email badge (a click opens
+/// it), and in amber what disagrees with the board, with the offers: the change in the source
+/// (an agent makes it; nothing changes there without this tap) and moving the task to match.
+private struct DeskSourceLine: View {
+    let id: UUID
+    let origin: Companion.DeskOrigin?
+    let check: Companion.DeskOriginCheck?
+    var matchLabel: String? = nil
+    var match: (() -> Void)? = nil
+    var writeBack: (() -> Void)? = nil
+
+    var body: some View {
+        if let origin {
+            VStack(alignment: .leading, spacing: 6) {
+                Button { origin.url.flatMap(URL.init(string:)).map { _ = NSWorkspace.shared.open($0) } } label: {
+                    Label(DeskSourceText.badge(origin), systemImage: origin.kind == "email" ? "envelope" : "checklist")
+                        .font(.caption.weight(.medium)).lineLimit(1).truncationMode(.middle)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.metadata)
+                .disabled(origin.url == nil)
+                .help(DeskSourceText.help(origin))
+                .deskFrame("source:\(id)")
+                if let check {
+                    Label(check.warning, systemImage: "exclamationmark.triangle.fill")
+                        .font(.subheadline.weight(.medium)).foregroundStyle(Color.attention)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .deskFrame("sourceWarning:\(id)")
+                    HStack(spacing: 8) {
+                        if let offer = check.writeBack, let writeBack {
+                            Button(offer, action: writeBack)
+                                .controlSize(.small)
+                                .help("Asks an agent to do this with its connector. Nothing changes in \(origin.kind == "email" ? "your email" : "ClickUp") until it does; an email is only drafted.")
+                                .deskFrame("writeBack:\(id)")
+                        }
+                        if check.match == "done", let match, let matchLabel {
+                            Button(matchLabel, action: match)
+                                .controlSize(.small)
+                                .help("Move it to Done here, to match its source")
+                                .deskFrame("match:\(id)")
+                        }
+                    }
+                }
+            }
+            .padding(.top, 2)
+        }
+    }
+}
+
+enum DeskSourceText {
+    /// "ClickUp · In progress · Camp schedule", "Email · New reply from Lauren".
+    static func badge(_ origin: Companion.DeskOrigin) -> String {
+        var parts = [origin.kind == "email" ? "Email" : "ClickUp"]
+        if let status = origin.status, !status.isEmpty {
+            let shown = status.prefix(1).uppercased() + status.dropFirst()
+            parts.append(origin.kind == "email" && status.lowercased() == "new reply" ? shown + (origin.replyFrom.map { " from " + $0 } ?? "") : shown)
+        }
+        if let title = origin.title, !title.isEmpty { parts.append(title) }
+        return parts.joined(separator: " \u{00B7} ")
+    }
+
+    static func help(_ origin: Companion.DeskOrigin) -> String {
+        let checked = origin.checkedAt.map { " Checked \($0.formatted(.relative(presentation: .named)))." } ?? " Not checked yet."
+        return (origin.url.map { "Open \($0)." } ?? "\(origin.kind == "email" ? "Message" : "Task") id \(origin.id).") + checked
     }
 }

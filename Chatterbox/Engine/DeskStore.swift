@@ -416,6 +416,46 @@ final class DeskStore {
         return count
     }
 
+    /// Write-back (Shelby's tap on a card's offer, plans/source-linked-tasks.md): asks an agent
+    /// to make the change in the task's source, ClickUp or a reply to the email, with its
+    /// connector. It goes to the task's open thread, else a new session in its Studio (or a loose
+    /// one), named for it. Nothing changes outside Chatterbox until that agent does it; an email
+    /// is only drafted. Answers the session it went to.
+    func writeBack(_ id: UUID) throws -> ChatSession {
+        guard let task = tasks.first(where: { $0.id == id }), let origin = task.origin else { throw Failure(status: 404, message: "That task has no source.") }
+        let desk = snapshot()
+        let checks: [Companion.DeskOriginCheck?] = desk.incoming.filter { $0.id == id }.map(\.check)
+            + desk.needsYou.filter { $0.task == id }.map(\.check) + desk.working.filter { $0.task == id }.map(\.check)
+            + (desk.ready ?? []).filter { $0.task == id }.map(\.check) + (desk.done ?? []).filter { $0.task == id }.map(\.check)
+        guard let offer = checks.compactMap({ $0?.writeBack }).first else { throw Failure(status: 409, message: "Its source agrees with the board now.") }
+        let text = Self.writeBackMessage(offer, origin: origin, task: task.text)
+        if let chat = task.chatID, let session = model?.sessions.first(where: { $0.id == chat }), session.record.archivedAt == nil {
+            sendFirstMessage(session, text)
+            return session
+        }
+        let server = CompanionServer.shared
+        let studio = task.proposed?.kind == "studio" ? task.proposed?.id : nil
+        let session = try server.newSession(project: nil, studio: studio, backend: nil)
+        session.setTitle(Self.title(offer))
+        sendFirstMessage(session, text)
+        return session
+    }
+
+    /// What a write-back asks the agent, with the source named so it can find it.
+    static func writeBackMessage(_ offer: String, origin: Companion.DeskOrigin, task: String) -> String {
+        let named = origin.title.map { "\u{201C}\($0)\u{201D}" } ?? ""
+        let ref = "\(origin.kind):\(origin.id)"
+        if origin.kind == "email" {
+            return """
+            \(offer) (from the Desk). The email \(named) has message id \(origin.id); the task here is \u{201C}\(task)\u{201D}. Read the newest reply with your mail connector and draft my reply in a draft block for me to review. Don't send it. Once it's answered, report it with `desk source \(ref) --status "answered"`.
+            """
+        }
+        let link = origin.url.map { " (\($0))" } ?? ""
+        return """
+        \(offer) (from the Desk). The ClickUp task \(named)\(link) has id \(origin.id); the task here is \u{201C}\(task)\u{201D}. Make that change with your ClickUp connector and tell me when it's done, then report the new status with `desk source \(ref) --status "<its status>"`.
+        """
+    }
+
     /// Mark done: a task to do that was done outside Chatterbox (no thread) goes straight to Done.
     func markDone(_ id: UUID) throws {
         guard let index = tasks.firstIndex(where: { $0.id == id && isToDo($0) }) else { throw Failure(status: 404, message: "That request is gone.") }
@@ -719,6 +759,10 @@ final class DeskStore {
             guard let report = try? body.decode(Companion.DeskOriginReport.self) else { throw Failure(status: 400, message: "Say which source and its status.") }
             try reportOrigin(report)
             return try .value(snapshot())
+        case "writeBack":
+            let session = try writeBack(try Self.requestID(body))
+            guard let model else { throw Failure(status: 503, message: "Chatterbox is starting.") }
+            return try .value(CompanionMapper.detail(session, model: model))
         case "ignore":
             try ignore(try Self.requestID(body))
             return try .value(snapshot())
