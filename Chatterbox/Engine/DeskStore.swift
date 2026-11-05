@@ -220,8 +220,15 @@ final class DeskStore {
 
     /// What a new session in `place` would start with, given the picks so far (New Chat's
     /// options for a Studio, a project's Sidechat, or a loose session). Nothing is created.
-    func options(for place: Companion.DeskPlace, picks: Companion.SettingsRequest = .init()) throws -> Companion.ChatOptions {
+    /// With `chat`, what that session would run on with the picks instead (Continue).
+    func options(for place: Companion.DeskPlace, picks: Companion.SettingsRequest = .init(), chat: UUID? = nil) throws -> Companion.ChatOptions {
         guard let model else { throw Failure(status: 503, message: "Chatterbox is starting.") }
+        if let chat {
+            guard let session = model.sessions.first(where: { $0.id == chat && $0.record.archivedAt == nil }) else {
+                throw Failure(status: 404, message: "That session is gone.")
+            }
+            return CompanionMapper.options(CompanionMapper.draftChat(picks, like: session))
+        }
         switch place.kind {
         case "studio":
             guard let studio = place.id.flatMap(model.studio), studio.archivedAt == nil else { throw Failure(status: 404, message: "That Studio is gone.") }
@@ -358,7 +365,8 @@ final class DeskStore {
     /// which becomes its first message (with the note, labelled), and the task is linked to it.
     /// With `body.continueChat`, the request is that session's next message instead (queued while
     /// it works), nothing new starts, and the task is linked to it; a session carrying another
-    /// open task is refused unless `body.replace` (that task goes back to To do).
+    /// open task is refused unless `body.replace` (that task goes back to To do). The agent and
+    /// model given switch that session first, as Session Settings would.
     func start(_ id: UUID, _ body: Companion.DeskStartRequest = .init()) throws -> ChatSession {
         guard let index = tasks.firstIndex(where: { $0.id == id && isToDo($0) }) else { throw Failure(status: 404, message: "That request is gone.") }
         let request = tasks[index].request
@@ -369,7 +377,20 @@ final class DeskStore {
             guard !session.isRestartingThread else {
                 throw Failure(status: 409, message: "That session is reconnecting. Try again when it's ready.")
             }
+            // The model chosen for it, as Session Settings would switch it, before it's sent.
+            let settings = Companion.SettingsRequest(backend: Self.clean(body.agent)?.lowercased(), model: Self.clean(body.model),
+                                                     effort: Self.clean(body.effort), openModel: Self.clean(body.openModel))
+            if let agent = settings.backend {
+                guard let chosen = Backend(rawValue: agent) else { throw Failure(status: 400, message: "The agent is claude or codex.") }
+                // Its agent changes only between replies.
+                if chosen != session.record.backend, session.isRunning {
+                    throw Failure(status: 409, message: "That session is working. Its agent can change once it's done.")
+                }
+            }
             try canCarry(session, replacing: body.replace == true)
+            if settings.backend != nil || settings.model != nil || settings.effort != nil || settings.openModel != nil {
+                CompanionMapper.apply(settings, to: session)
+            }
             link(id, to: session.id)
             save()
             sendFirstMessage(session, Self.message(request))
@@ -595,7 +616,9 @@ final class DeskStore {
         case "options":
             guard let place = try? body["place"]?.decode(Companion.DeskPlace.self) else { throw Failure(status: 400, message: "Say which place.") }
             let picks = (try? body["picks"]?.decode(Companion.SettingsRequest.self)) ?? .init()
-            return try .value(options(for: place, picks: picks))
+            // `chat`: as that session would run with the picks (Continue).
+            let chat = body["chat"]?.string.flatMap(UUID.init(uuidString:))
+            return try .value(options(for: place, picks: picks, chat: chat))
         case "add":
             guard var request = try? body.decode(Companion.DeskAddRequest.self) else { throw Failure(status: 400, message: "Say what needs doing.") }
             if agent { request.source = ["claude", "codex"].contains(request.source ?? "") ? request.source : "claude" }

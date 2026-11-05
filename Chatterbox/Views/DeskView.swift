@@ -516,8 +516,9 @@ final class DeskModel {
     func choose(_ place: Companion.DeskPlace, for request: Companion.DeskRequest) { chosen[request.id] = place }
 
     /// Start, as its step chose: the service starts a session in the place shown (its
-    /// first message is the request's text), on `settings`' agent and model when given, or sends
-    /// the request to `continuing`, a session already there. It runs in the background.
+    /// first message is the request's text), or sends the request to `continuing`, a session
+    /// already there; on `settings`' agent and model when given (a session continued switches
+    /// to them first). It runs in the background.
     func start(_ request: Companion.DeskRequest, continuing: Companion.DeskThread? = nil, settings: Companion.SettingsRequest? = nil) async {
         guard let place = place(for: request), !busy.contains(request.id) else { return }
         busy.insert(request.id)
@@ -529,7 +530,8 @@ final class DeskModel {
             body["continueChat"] = .string(continuing.id.uuidString)
             // Its step said so: the task it carries goes back to To do.
             if continuing.task != nil { body["replace"] = true }
-        } else if let settings {
+        }
+        if let settings {
             for (key, value) in [("agent", settings.backend), ("model", settings.model), ("effort", settings.effort), ("openModel", settings.openModel)] {
                 if let value, !value.isEmpty { body[key] = .string(value) }
             }
@@ -554,11 +556,13 @@ final class DeskModel {
         return (try? await send(body).decode([Companion.DeskThread].self)) ?? []
     }
 
-    /// What a new session in `place` would start with, given the picks so far; nil from an
-    /// older service (it starts as a new session there would).
-    func options(in place: Companion.DeskPlace, picks: Companion.SettingsRequest) async -> Companion.ChatOptions? {
+    /// What a new session in `place` would start with, given the picks so far, or with `chat`,
+    /// what that session would run on with them (it isn't changed); nil from an older service
+    /// (it starts as a new session there would).
+    func options(in place: Companion.DeskPlace, picks: Companion.SettingsRequest, chat: UUID? = nil) async -> Companion.ChatOptions? {
         guard canReachService, !unsupported else { return nil }
         var body: [String: JSON] = ["action": "options"]
+        if let chat { body["chat"] = .string(chat.uuidString) }
         if let value = try? JSON.value(place) { body["place"] = value }
         if let value = try? JSON.value(picks) { body["picks"] = value }
         return try? await send(body).decode(Companion.ChatOptions.self)
@@ -1122,9 +1126,10 @@ private struct DeskPlaceChip: View {
     }
 }
 
-/// Start's step, for one request: sessions already in its place doing the same work
-/// (a clear match is chosen), and a new session's agent and model as New Chat would start one
-/// there. Tests drive it directly.
+/// Start's step, for one request: the model it runs on, and sessions already in its place
+/// doing the same work (a clear match is chosen). The model shows the chosen session's own (or
+/// a new session's, as New Chat would start one there) until one is picked here; continuing on
+/// another switches that session to it. Tests drive it directly.
 @MainActor
 @Observable
 final class DeskStartStep {
@@ -1132,10 +1137,13 @@ final class DeskStartStep {
     @ObservationIgnored let desk: DeskModel
     /// Sessions in the place like this work; nil while they load.
     private(set) var threads: [Companion.DeskThread]?
-    /// The session to continue; nil: a new one.
-    var continuing: UUID?
-    /// A new session's options, as picked so far; nil from an older service.
+    /// The session to continue; nil: a new one. `choose` changes it.
+    private(set) var continuing: UUID?
+    /// The model shown: the choice's own, or with the picks made here; nil from an older service.
     private(set) var options: Companion.ChatOptions?
+    /// The chosen session's own model (or a new session's), to tell a switch.
+    private(set) var base: Companion.ChatOptions?
+    /// Picked here by hand; then choosing another session keeps them.
     private(set) var picks = Companion.SettingsRequest()
     private(set) var loaded = false
 
@@ -1155,23 +1163,69 @@ final class DeskStartStep {
     /// The provider in use: an open model's, or the agent's.
     var provider: String { options.map { $0.openModel != nil ? "open" : $0.backend } ?? "claude" }
 
-    /// The place's sessions like this work, and a new session's options; picks start over.
+    /// Picked here, and not what the chosen session (or a new one) runs on already.
+    var switching: Bool {
+        guard !picks.isEmpty, let options, let base else { return false }
+        return !options.sameModel(as: base)
+    }
+    /// Continuing on another agent waits until the session's reply is done.
+    var blocked: Bool {
+        guard let continued, continued.isRunning, switching else { return false }
+        return options?.backend != base?.backend
+    }
+    /// What Continue does: the session's next message, on its model or switched to the one picked.
+    var continueNote: String? {
+        guard let continued else { return nil }
+        let said = "It goes to that session as its next message"
+        guard switching else { return "\(said), on its own model (\(Self.chip(base) ?? continued.settings ?? "as it is"))." }
+        if blocked { return "\(said). It's working now, so its agent can change only once it's done." }
+        return "\(said), switching it to \(Self.chip(options) ?? "the model picked")."
+    }
+
+    /// The model as its chip reads: "Opus 5.5 · Medium" (with none chosen, the model's default).
+    static func chip(_ options: Companion.ChatOptions?) -> String? {
+        guard let options else { return nil }
+        if let open = options.openModel { return "\(open) \u{00B7} PC" }
+        guard let model = options.currentModel else { return nil }
+        guard !model.efforts.isEmpty else { return model.name }
+        let level = options.effort.isEmpty ? model.defaultEffort.map(EffortNames.label) ?? "Default effort" : EffortNames.label(options.effort)
+        return "\(model.name) \u{00B7} \(level)"
+    }
+
+    /// The place's sessions like this work, and the model; picks start over.
     func load() async {
         guard let place else { return }
         picks = .init()
-        async let fresh = desk.options(in: place, picks: picks)
         let found = await desk.threads(for: request, in: place)
         threads = found
         continuing = found.first { $0.match == "clear" }?.id
-        options = await fresh
+        await follow()
         loaded = true
     }
 
-    /// One change to a new session's agent or model, as New Chat takes it.
+    /// Continue in a session already there, or (nil) start a new one; the model follows the
+    /// choice unless one was picked here.
+    func choose(_ chat: UUID?) async {
+        guard chat != continuing else { return }
+        continuing = chat
+        await follow()
+    }
+
+    private func follow() async {
+        guard let place else { return }
+        let target = continuing
+        let own = await desk.options(in: place, picks: .init(), chat: target)
+        // Chosen again meanwhile: that one's answer counts.
+        guard target == continuing else { return }
+        base = own
+        if picks.isEmpty { options = own }
+    }
+
+    /// One change to the agent, model or effort, as New Chat takes it.
     func pick(_ change: Companion.SettingsRequest) async {
         guard let place else { return }
         picks.add(change, backend: options?.backend)
-        if let fresh = await desk.options(in: place, picks: picks) { options = fresh }
+        if let fresh = await desk.options(in: place, picks: picks, chat: continuing) { options = fresh }
     }
 
     /// A model of `provider`'s ("claude", "codex" or "open"), as picking it would change things.
@@ -1192,17 +1246,19 @@ final class DeskStartStep {
     }
 
     func start() async {
-        if let continued { return await desk.start(request, continuing: continued) }
-        // Only what was changed: otherwise it starts as a new session there would.
-        guard !picks.isEmpty, let options else { return await desk.start(request) }
-        let open = options.openModel
-        await desk.start(request, settings: .init(backend: options.backend, model: open == nil ? options.model : nil,
-                                                  effort: open == nil ? options.effort : nil, openModel: open))
+        // Only what was picked: otherwise it starts as a new session there would, or the
+        // session continues on its own model. Continuing, the session switches to it.
+        var settings: Companion.SettingsRequest?
+        if !picks.isEmpty, let options {
+            let open = options.openModel
+            settings = .init(backend: options.backend, model: open == nil ? options.model : nil, effort: open == nil ? options.effort : nil, openModel: open)
+        }
+        await desk.start(request, continuing: continued, settings: settings)
     }
 }
 
-/// Start: the place (Change picks another), "Continue in" sessions already there doing
-/// the same work, or a new session with its agent and model. Start sends the choice.
+/// Start: the place (Change picks another), the agent, model and effort, then "Continue in"
+/// sessions already there doing the same work, or a new session. Start sends the choice.
 struct DeskStartPopover: View {
     @State var step: DeskStartStep
     let done: () -> Void
@@ -1238,12 +1294,16 @@ struct DeskStartPopover: View {
                         .deskFrame("startChange")
                 }
             }
+            modelChoice
             threadChoices
             if step.threads?.isEmpty != false, step.place?.kind == "project" {
                 Label(step.newDetail, systemImage: "arrow.triangle.branch").font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if step.continuing == nil { modelChoice }
+            if let note = step.continueNote {
+                Text(note).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    .deskFrame("startContinueNote")
+            }
             HStack {
                 if !step.loaded { ProgressView().controlSize(.small) }
                 Spacer()
@@ -1255,7 +1315,7 @@ struct DeskStartPopover: View {
                 }
                 .keyboardShortcut(.defaultAction)
                 .buttonStyle(.accent)
-                .disabled(!step.loaded)
+                .disabled(!step.loaded || step.blocked)
                 .deskFrame("startConfirm")
             }
         }
@@ -1271,10 +1331,10 @@ struct DeskStartPopover: View {
                     DeskStartChoice(title: "Continue in \(thread.title)",
                                     detail: [thread.task.map { "Its task \u{201C}\($0)\u{201D} goes back to To do" },
                                              thread.isRunning ? "Working now; it goes next" : nil, thread.settings].compactMap { $0 }.joined(separator: " \u{00B7} "),
-                                    selected: step.continuing == thread.id) { step.continuing = thread.id }
+                                    selected: step.continuing == thread.id) { Task { await step.choose(thread.id) } }
                         .deskFrame("thread:\(thread.id)")
                 }
-                DeskStartChoice(title: step.newTitle, detail: step.newDetail, selected: step.continuing == nil) { step.continuing = nil }
+                DeskStartChoice(title: step.newTitle, detail: step.newDetail, selected: step.continuing == nil) { Task { await step.choose(nil) } }
                     .deskFrame("thread:new")
             }
         }
@@ -1311,6 +1371,15 @@ struct DeskStartPopover: View {
                     Text(detail).font(.caption).foregroundStyle(.secondary)
                 } else if current == nil, shown != step.provider {
                     Text("Picking one switches to \(shown == "open" ? "an open model" : shown == "codex" ? "Codex" : "Claude").").font(.caption).foregroundStyle(.secondary)
+                }
+                if shown == step.provider, options.openModel == nil, let model = current, !model.efforts.isEmpty {
+                    Picker("Effort", selection: Binding(get: { options.effort.isEmpty ? model.defaultEffort ?? "" : options.effort }, set: { effort in
+                        Task { await step.pick(.init(effort: effort)) }
+                    })) {
+                        ForEach(model.efforts, id: \.self) { Text(EffortNames.label($0)).tag($0) }
+                    }
+                    .pickerStyle(.menu)
+                    .deskFrame("startEffort")
                 }
             }
         }

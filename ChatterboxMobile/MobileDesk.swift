@@ -1214,9 +1214,11 @@ private struct DeskRequestCard: View {
     }
 }
 
-/// Start's step: where it goes (with Change), a session already there doing the same
-/// work to continue instead (a clear match is chosen), and for a new session its agent and
-/// model, as New Chat would start one there. Start sends the choice; nothing opens.
+/// Start's step: where it goes (with Change), the model it runs on, and a session already
+/// there doing the same work to continue instead (a clear match is chosen). The model shows
+/// the chosen session's own (or a new session's there, as New Chat would start it) until one
+/// is picked here; continuing on another switches that session to it. Start sends the
+/// choice; nothing opens.
 private struct MobileDeskStartSheet: View {
     let request: Companion.DeskRequest
     @State var place: Companion.DeskPlace
@@ -1229,7 +1231,11 @@ private struct MobileDeskStartSheet: View {
     @State private var threads: [Companion.DeskThread]?
     /// The session to continue; nil: a new one.
     @State private var continuing: UUID?
+    /// The model shown: the choice's own, or with the picks made here.
     @State private var options: Companion.ChatOptions?
+    /// The chosen session's own model (or a new session's), to tell a switch.
+    @State private var base: Companion.ChatOptions?
+    /// Picked here by hand; then choosing another session keeps them.
     @State private var picks = Companion.SettingsRequest()
     @State private var browsing: String?
     @State private var problem: String?
@@ -1257,8 +1263,8 @@ private struct MobileDeskStartSheet: View {
                     }
                     .accessibilityIdentifier("desk-start-place")
                 }
+                modelSection
                 threadSection
-                if continuing == nil { modelSection }
             }
             .tint(.blue)
             .navigationTitle("Start")
@@ -1268,11 +1274,12 @@ private struct MobileDeskStartSheet: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button(continuing == nil ? "Start" : "Continue", action: begin)
                         .fontWeight(.semibold)
-                        .disabled(threads == nil)
+                        .disabled(threads == nil || blocked)
                         .accessibilityIdentifier("desk-start-confirm")
                 }
             }
             .task(id: placeKey) { await load() }
+            .onChange(of: continuing) { _, _ in Task { await follow() } }
             .sheet(isPresented: $changingPlace) {
                 MobileDeskPlacePicker(current: place) { picked in
                     guard !MobileDeskPlaces.same(place, picked) else { return }
@@ -1306,7 +1313,7 @@ private struct MobileDeskStartSheet: View {
             } header: {
                 Text("Already in \(place.name)")
             } footer: {
-                if let continued { Text("It goes to that session as its next message, on its own model (\(continued.settings ?? "as it is")).") }
+                if let continued { Text(continueNote(continued)).accessibilityIdentifier("desk-start-continue-note") }
             }
         } else if place.kind == "project" {
             Section { Text(newDetail).font(.footnote).foregroundStyle(.secondary) }
@@ -1320,12 +1327,45 @@ private struct MobileDeskStartSheet: View {
         place.kind == "project" ? "A fresh thread in \(place.name); its result goes back to the project's session." : "In \(place.name)"
     }
 
+    /// Picked here, and not what the chosen session (or a new one) runs on already.
+    private var switching: Bool {
+        guard !picks.isEmpty, let options, let base else { return false }
+        return !options.sameModel(as: base)
+    }
+
+    /// What Continue does: the session's next message, on its model or switched to the one picked.
+    private func continueNote(_ thread: Companion.DeskThread) -> String {
+        let said = "It goes to that session as its next message"
+        guard switching, let options else { return "\(said), on its own model (\(ChatSettingsLabels.chip(base) ?? thread.settings ?? "as it is"))." }
+        if thread.isRunning, options.backend != base?.backend {
+            return "\(said). It's working now, so its agent can change only once it's done."
+        }
+        return "\(said), switching it to \(ChatSettingsLabels.chip(options) ?? "the model picked")."
+    }
+
+    /// Continuing on another agent waits until the session's reply is done.
+    private var blocked: Bool {
+        guard let continued, continued.isRunning, switching, let options else { return false }
+        return options.backend != base?.backend
+    }
+
     private var modelSection: some View {
         Section {
             if let options {
                 CompactModelPicker(options: options, browsing: $browsing) { change in
-                    picks.add(change, backend: options.backend)
-                    Task { await loadOptions() }
+                    Task { await pick(change) }
+                }
+                // Effort in one row too, so the sessions below stay in view.
+                if options.openModel == nil, let model = options.currentModel, !model.efforts.isEmpty {
+                    Picker(selection: Binding(get: { options.effort.isEmpty ? model.defaultEffort ?? "" : options.effort }, set: { effort in
+                        Task { await pick(.init(effort: effort)) }
+                    })) {
+                        ForEach(model.efforts, id: \.self) { Text(ChatSettingsLabels.effort($0)).tag($0) }
+                    } label: {
+                        Label("Effort", systemImage: "gauge.with.dots.needle.50percent")
+                    }
+                    .pickerStyle(.menu)
+                    .accessibilityIdentifier("desk-start-effort")
                 }
             } else if let problem {
                 Text(problem).foregroundStyle(.secondary)
@@ -1356,10 +1396,11 @@ private struct MobileDeskStartSheet: View {
         .accessibilityIdentifier(id)
     }
 
-    /// The place's sessions like this work and a new session's options; picks start over.
+    /// The place's sessions like this work, and the model; picks start over.
     private func load() async {
-        picks = .init(); browsing = nil
-        async let models: Void = loadOptions()
+        picks = .init(); browsing = nil; options = nil; base = nil; threads = nil; continuing = nil
+        // A new session's model while the sessions load; choosing a session follows it.
+        async let models: Void = follow()
         // An older Mac offers none: a new session, as before.
         let found = (try? await store.deskThreads(request.id, place: place)) ?? []
         threads = found
@@ -1367,12 +1408,28 @@ private struct MobileDeskStartSheet: View {
         await models
     }
 
-    private func loadOptions() async {
-        let id = place.id
+    /// The chosen session's own model (or a new session's there): shown, unless one was picked here.
+    private func follow() async {
+        let target = continuing
         do {
-            options = try await store.newChatOptions(picks, studio: place.kind == "studio" ? id : nil, project: place.kind == "project" ? id : nil)
+            let own = try await fetch(.init(), chat: target)
+            // Chosen again meanwhile: that one's answer counts.
+            guard target == continuing else { return }
+            base = own
+            if picks.isEmpty { options = own }
             problem = nil
-        } catch { problem = error.localizedDescription }
+        } catch { if target == continuing { problem = error.localizedDescription } }
+    }
+
+    /// One change, as New Chat takes it, to what the choice would run on.
+    private func pick(_ change: Companion.SettingsRequest) async {
+        picks.add(change, backend: options?.backend)
+        do { options = try await fetch(picks, chat: continuing); problem = nil } catch { problem = error.localizedDescription }
+    }
+
+    private func fetch(_ picks: Companion.SettingsRequest, chat: UUID?) async throws -> Companion.ChatOptions {
+        let id = place.id
+        return try await store.newChatOptions(picks, studio: place.kind == "studio" ? id : nil, project: place.kind == "project" ? id : nil, chat: chat)
     }
 
     private func begin() {
@@ -1383,8 +1440,10 @@ private struct MobileDeskStartSheet: View {
             body.continueChat = continued.id
             // Its row said so: the task it carries goes back to To do.
             if continued.task != nil { body.replace = true }
-        } else if !picks.isEmpty, let options {
-            // Only what was changed: otherwise it starts as a new session there would.
+        }
+        // Only what was picked: otherwise it starts as a new session there would, or the
+        // session continues on its own model. Continuing, the session switches to it.
+        if !picks.isEmpty, let options {
             body.agent = options.backend
             if let open = options.openModel { body.openModel = open } else {
                 body.model = options.model

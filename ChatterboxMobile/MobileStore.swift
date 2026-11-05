@@ -291,12 +291,14 @@ final class MobileStore {
     }
 
     /// What a new chat would start with, given the choices so far (nothing is created).
-    /// `project`: as a new Sidechat of that project's session would start.
-    func newChatOptions(_ picks: Companion.SettingsRequest, studio: UUID?, project: UUID? = nil) async throws -> Companion.ChatOptions {
+    /// `project`: as a new Sidechat of that project's session would start. `chat`: what that
+    /// session would run on with the choices instead (the Desk's Continue); it isn't changed.
+    func newChatOptions(_ picks: Companion.SettingsRequest, studio: UUID?, project: UUID? = nil, chat: UUID? = nil) async throws -> Companion.ChatOptions {
         var query = URLComponents()
         query.queryItems = [("backend", picks.backend), ("model", picks.model), ("effort", picks.effort), ("mode", picks.mode),
                             ("preset", picks.preset?.uuidString), ("fastMode", picks.fastMode.map { $0 ? "true" : "false" }),
-                            ("openModel", picks.openModel), ("studio", studio?.uuidString), ("project", project?.uuidString)]
+                            ("openModel", picks.openModel), ("studio", studio?.uuidString), ("project", project?.uuidString),
+                            ("chat", chat?.uuidString)]
             .compactMap { name, value in value.map { URLQueryItem(name: name, value: $0) } }
         return try await call("/v1/new-chat-options" + (query.percentEncodedQuery.map { "?" + $0 } ?? ""))
     }

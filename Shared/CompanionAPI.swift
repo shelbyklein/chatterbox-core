@@ -498,7 +498,8 @@ enum Companion {
     /// POST /v1/desk/<id>/start: start it where proposed, or in `place` instead, on `agent`
     /// and `model` (and `effort`, or an open model on the PC) when given. With `continueChat`,
     /// nothing new starts: the request goes to that session as its next message (queued if
-    /// it's working), and the reply is that session. Older services ignore the new fields.
+    /// it's working), and the reply is that session; the agent and model given switch it first
+    /// (its agent only between replies, else 409). Older services ignore the new fields.
     struct DeskStartRequest: Codable {
         var place: DeskPlace? = nil
         var agent: String? = nil
@@ -779,4 +780,16 @@ extension Companion.SettingsRequest {
 
     /// Nothing chosen yet.
     var isEmpty: Bool { backend == nil && model == nil && effort == nil && mode == nil && preset == nil && fastMode == nil && openModel == nil }
+}
+
+extension Companion.ChatOptions {
+    /// The model in use: an open model, or the agent's, among its models.
+    var currentModel: Companion.ModelOption? {
+        openModel == nil ? (backend == "codex" ? codexModels : claudeModels).first { $0.id == model } : nil
+    }
+
+    /// Runs on the same agent, model and effort.
+    func sameModel(as other: Companion.ChatOptions) -> Bool {
+        backend == other.backend && model == other.model && effort == other.effort && openModel == other.openModel
+    }
 }

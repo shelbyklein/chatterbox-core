@@ -446,6 +446,11 @@ final class CompanionServer {
             let project = request.query["project"].flatMap(UUID.init(uuidString:)).flatMap { id in
                 model.sessions.first { $0.id == id && $0.record.archivedAt == nil && $0.record.projectFolder != nil }
             }
+            // chat=<id>: as that session would be with the picks (the Desk's Continue); nothing changes.
+            if let chat = request.query["chat"] {
+                guard let session = session(chat) else { return .error(404, "That session is gone.") }
+                return .json(CompanionMapper.options(CompanionMapper.draftChat(picks, like: session)))
+            }
             return .json(CompanionMapper.options(CompanionMapper.draftChat(picks, studio: request.query["studio"].flatMap(UUID.init(uuidString:)).flatMap(model.studio),
                                                                            project: project)))
         case ("GET", 2) where parts[1] == "presets":
@@ -1098,6 +1103,20 @@ enum CompanionMapper {
         var rest = picks
         rest.preset = nil
         apply(rest, to: draft)
+        return draft
+    }
+
+    /// What `session` would run on with `picks` applied, on a copy: the session is untouched
+    /// (the Desk's Continue, choosing its model before it's sent).
+    static func draftChat(_ picks: Companion.SettingsRequest, like session: ChatSession) -> ChatSession {
+        var record = session.record
+        record.id = UUID()
+        // Settings only: no transcript to hand over when the agent changes.
+        record.items = []
+        record.claudeSessionID = nil
+        record.codex?.threadId = nil
+        let draft = ChatSession(record: record)
+        apply(picks, to: draft)
         return draft
     }
 
