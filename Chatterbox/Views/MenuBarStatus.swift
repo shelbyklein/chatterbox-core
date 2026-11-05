@@ -41,6 +41,8 @@ struct MenuBarPanel: View {
                 Button { newChat() } label: { Image(systemName: "square.and.pencil") }
                     .buttonStyle(.borderless).help("New Chat")
             }
+            // How hard the Mac is working, and what Chatterbox holds back (click for the readings).
+            MacPressureBadge(alwaysLabelled: true).padding(.horizontal, -6)
             if waiting.isEmpty && replies.isEmpty && working.isEmpty && recent.isEmpty {
                 Label("All caught up", systemImage: "checkmark.circle").font(.callout).foregroundStyle(.secondary)
             }

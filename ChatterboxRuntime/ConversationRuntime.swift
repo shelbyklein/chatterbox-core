@@ -227,12 +227,14 @@ struct CommandReceipt: Codable {
             }
             let since = agentIdleSince[session.id] ?? now
             agentIdleSince[session.id] = since
-            guard now.timeIntervalSince(since) >= agentIdleTimeout else { continue }
+            // A work thread that has reported (or a returned sidequest) goes at once (ChatSession+Pressure).
+            let early = session.releasesAgentWhenDone
+            guard early || now.timeIntervalSince(since) >= agentIdleTimeout else { continue }
             session.restartClaudeForNewTools()
             session.record.claudeHost = nil
             agentIdleSince[session.id] = nil
             dirty.insert(session.id)
-            RuntimeHooks.note("Released idle Claude tool process")
+            RuntimeHooks.note(early ? "Released \u{201C}\(session.title)\u{201D}'s Claude process: its work is reported" : "Released idle Claude tool process")
         }
         for codex in CodexAppServer.all { releaseIdleCodex(codex, now: now) }
         if !dirty.isEmpty { flushNow() }
@@ -252,7 +254,8 @@ struct CommandReceipt: Codable {
             }
             let since = codexThreadIdleSince[thread] ?? now
             codexThreadIdleSince[thread] = since
-            guard now.timeIntervalSince(since) >= agentIdleTimeout, !codexThreadCleanup.contains(thread) else { continue }
+            let early = owners.allSatisfy { $0.1.releasesAgentWhenDone }
+            guard early || now.timeIntervalSince(since) >= agentIdleTimeout, !codexThreadCleanup.contains(thread) else { continue }
             codexThreadCleanup.insert(thread)
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -265,7 +268,7 @@ struct CommandReceipt: Codable {
         if codex.isRunning, codex.canReleaseIdleProcess, codexChats.allSatisfy({ $0.canReleaseIdleAgent }) {
             let since = codexIdleSince[codex.machine ?? ""] ?? now
             codexIdleSince[codex.machine ?? ""] = since
-            if now.timeIntervalSince(since) >= agentIdleTimeout {
+            if now.timeIntervalSince(since) >= agentIdleTimeout || (!codexChats.isEmpty && codexChats.allSatisfy { $0.releasesAgentWhenDone }) {
                 codex.terminate()
                 for session in codexChats {
                     session.record.codexHost = nil

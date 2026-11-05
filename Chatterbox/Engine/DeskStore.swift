@@ -436,7 +436,8 @@ final class DeskStore {
         // Linked (and saved so) before it's sent, so a request is never started twice.
         link(id, to: session.id)
         save()
-        sendFirstMessage(session, Self.message(request))
+        // A work thread waits to start while the Mac is under pressure (ChatSession+Pressure).
+        session.sendFirstOrHold(Self.message(request)) { sendFirstMessage(session, $0) }
         if let front = session.record.workOf.flatMap({ id in model?.sessions.first { $0.id == id } }) { front.noteWorkStarted(session) }
         changed()
         return session
@@ -566,7 +567,8 @@ final class DeskStore {
         tasks.insert(task, at: 0)
         // Saved before it's sent, so the task is there when the thread starts working.
         save()
-        sendFirstMessage(session, brief)
+        // Made now, with its task; started once the Mac isn't under pressure (ChatSession+Pressure).
+        session.sendFirstOrHold(brief) { sendFirstMessage(session, $0) }
         front.noteWorkStarted(session)
         changed()
         return session

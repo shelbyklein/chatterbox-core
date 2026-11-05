@@ -203,6 +203,9 @@ struct ConversationRecord: Codable {
     /// runs: the work thread is still working, and reports after a turn ends with nothing
     /// running, or once it's been idle for `ChatSession.workIdleReport` past this.
     var workPendingSince: Date?
+    /// A work thread held back while the Mac is under pressure (ChatSession+Pressure): what
+    /// Chatterbox would have sent it, sent once the Mac is calm enough.
+    var pressureHold: PressureHold?
     var sidechatFolder: String?
     /// Parent project scope for existing project-only secrets; no new access is granted.
     var sidechatProjectFolder: String?
@@ -303,6 +306,26 @@ struct ConversationRecord: Codable {
         copy.claudeTasks = nil; copy.sidequestTask = nil
         return copy
     }
+}
+
+/// What a work thread waits on while the Mac is under pressure (ChatSession+Pressure): its first
+/// turn waits for OK; a later turn, held while the Mac was overloaded, for Busy or better.
+struct PressureHold: Codable, Equatable {
+    struct Message: Codable, Equatable {
+        var text: String
+        /// Marked as Chatterbox's own once sent (a sidequest's answer, say), with its label.
+        var automatic: Bool? = nil
+        var detail: String? = nil
+        var sidequest: UUID? = nil
+    }
+    var since: Date
+    /// "ok" or "busy": the level it waits for, at most.
+    var until: String
+    /// The level that held it, for showing ("busy" or "overloaded").
+    var level: String
+    var messages: [Message]
+    /// A new work thread's first turn (rather than a later one).
+    var first: Bool? = nil
 }
 
 struct ParentContext: Codable, Equatable {

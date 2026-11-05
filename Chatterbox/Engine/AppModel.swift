@@ -1281,6 +1281,9 @@ final class AppModel {
         // The Desk (DeskView.swift) follows "desk.changed", reconnects and changed sessions.
         DeskModel.shared.runtimeEvent(event)
         if event.kind=="desk.changed" {return}
+        // How hard the Mac is working (MacPressureViews.swift).
+        MacPressureModel.shared.runtimeEvent(event)
+        if event.kind=="pressure.changed" {return}
         if event.kind=="pin.open",let raw=event.payload,let pin=try? raw.decode(Pin.self){PinStore.shared.open(pin);return}
         if event.kind=="connector.request",let id=event.payload?["id"]?.string,let client=event.payload?["client"]?.string{askToAllowConnector(id,client:client);return}
         // Pinned or unpinned on the phone: the service sends the new list.

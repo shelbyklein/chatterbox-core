@@ -39,6 +39,8 @@ struct MobileWorkHeader: View {
     let detail: Companion.ChatDetail?
     let chats: [Companion.ChatSummary]
     let open: (Companion.ChatSummary) -> Void
+    @Environment(MobileStore.self) private var store
+    @State private var starting = false
 
     var body: some View {
         if let front = summary.workOf {
@@ -46,9 +48,14 @@ struct MobileWorkHeader: View {
             let title = listed?.title ?? detail?.workOfTitle ?? "its front thread"
             HStack(spacing: 8) {
                 Image(systemName: "arrow.triangle.branch")
-                Text("Work for \u{201C}\(title)\u{201D}. Its result goes back there.")
-                    .font(.caption).lineLimit(2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Work for \u{201C}\(title)\u{201D}. Its result goes back there.")
+                        .font(.caption).lineLimit(2)
+                    if let waiting = detail?.pressureWaiting {
+                        Text(waiting).font(.caption.weight(.semibold)).foregroundStyle(.orange)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 Button("Open") {
                     open(listed ?? .init(id: front, title: title, project: nil, subtitle: nil, backend: summary.backend,
                                          isRunning: false, isWaitingOnYou: false, updatedAt: Date()))
@@ -56,6 +63,16 @@ struct MobileWorkHeader: View {
                 .font(.caption.weight(.semibold))
                 .accessibilityLabel("Open \(title)")
                 .accessibilityIdentifier("work-front-open")
+                // Held while the Mac is under pressure (ChatSession+Pressure): start it anyway.
+                if let waiting = detail?.pressureWaiting {
+                    Button(starting ? "Starting\u{2026}" : "Start now") {
+                        starting = true
+                        Task { @MainActor in _ = try? await store.startHeldWork(summary.id); starting = false }
+                    }
+                    .font(.caption.weight(.semibold)).disabled(starting)
+                    .accessibilityLabel("\(waiting). Start now")
+                    .accessibilityIdentifier("work-start-now")
+                }
             }
             .padding(.horizontal, 14).padding(.vertical, 8)
             .background(.bar)

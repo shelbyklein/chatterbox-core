@@ -36,6 +36,8 @@ extension ChatSession {
 
     var lastActionSummary: String? {
         if let listSummary { return listSummary.action }
+        // Held while the Mac is under pressure (ChatSession+Pressure).
+        if let waiting = pressureWaitingText, !isRunning { return waiting }
         if let waiting = items.last(where: { ($0.kind == .approval || $0.kind == .questions) && $0.approvalState == .pending }) {
             return waiting.kind == .questions ? "Has a question for you" : "Waiting for your approval"
         }

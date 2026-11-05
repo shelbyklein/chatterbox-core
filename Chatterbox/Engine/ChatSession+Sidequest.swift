@@ -143,16 +143,14 @@ extension ChatSession {
         record.sidequestReturned = reply.id
         let automation = record.automationID != nil
         let task = record.sidequestTask ?? title
-        parent.send(automation ? Prompts.automationResult(title: title, reply: reply.text)
-                    : isPCErrand ? Prompts.pcErrandResult(machine: RemoteMachine.pc.name, task: task.components(separatedBy: "\n\nFiles sent").first ?? task,
-                                                          reply: macPaths(reply.text))
-                    : Prompts.sidequestResult(from: record.backend, task: task, reply: reply.text))
-        if let index = parent.record.items.lastIndex(where: { $0.kind == .user }) {
-            parent.record.items[index].automatic = true
-            parent.record.items[index].detail = automation ? "\(title) reported back"
-                : isPCErrand ? "Back from \(RemoteMachine.pc.name)" : "\(record.backend.label) is back from its sidequest"
-            parent.record.items[index].sidequest = id
-        }
+        let text = automation ? Prompts.automationResult(title: title, reply: reply.text)
+            : isPCErrand ? Prompts.pcErrandResult(machine: RemoteMachine.pc.name, task: task.components(separatedBy: "\n\nFiles sent").first ?? task,
+                                                  reply: macPaths(reply.text))
+            : Prompts.sidequestResult(from: record.backend, task: task, reply: reply.text)
+        let detail = automation ? "\(title) reported back"
+            : isPCErrand ? "Back from \(RemoteMachine.pc.name)" : "\(record.backend.label) is back from its sidequest"
+        // Into a work thread while the Mac is overloaded, its next turn waits (ChatSession+Pressure).
+        parent.sendAutomatic(.init(text: text, automatic: true, detail: detail, sidequest: id))
         parent.onChange?(parent)
         notice("Sent back to \u{201C}\(parent.title)\u{201D}. This sidequest is archived; it's still here if you want it.")
         // Done: it leaves the sidebar and its window. The report is in the chat it came from.

@@ -554,6 +554,13 @@ final class MobileStore {
     }
 
     /// A work thread from `chat` (its front thread), started with the brief; returns it.
+    /// A work thread waiting while the Mac is under pressure: start it anyway.
+    func startHeldWork(_ chat: UUID) async throws -> Companion.ChatDetail {
+        let work: Companion.ChatDetail = try await call("/v1/chats/\(chat.uuidString)/work/start-now", method: "POST", body: Data("{}".utf8))
+        await loadChats()
+        return work
+    }
+
     func startWork(from chat: UUID, _ request: Companion.WorkStartRequest) async throws -> Companion.ChatDetail {
         let work: Companion.ChatDetail = try await call("/v1/chats/\(chat.uuidString)/work", method: "POST", body: try JSONEncoder().encode(request))
         await loadChats()

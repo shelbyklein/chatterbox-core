@@ -37,10 +37,12 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         static let feedback = NSToolbarItem.Identifier("chatterbox.feedback")
         /// Home's Desk (DeskView.swift): what needs you, work to place, what's working.
         static let desk = NSToolbarItem.Identifier("chatterbox.desk")
+        /// How hard the Mac is working (MacPressureViews.swift): a dot, "Mac busy" under pressure.
+        static let pressure = NSToolbarItem.Identifier("chatterbox.pressure")
         /// The views on the left (chat, Studios, Command Center), then the Desk; usage and the
         /// terminal; Settings last. New chats start from the sidebar, the Studios page and Cmd-N.
         static let all: [NSToolbarItem.Identifier] = [title, views, desk, .flexibleSpace,
-                                                       automations, usage, terminal, finished, feedback, .space, settings, newChat, threadSidebar]
+                                                       pressure, automations, usage, terminal, finished, feedback, .space, settings, newChat, threadSidebar]
         static let chat: [NSToolbarItem.Identifier] = [usage, images, terminal]
     }
 
@@ -285,6 +287,9 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
             item.autovalidates = false
         case ID.finished:
             item = hosted(id, "Finished sessions", FinishedChatsBell())
+        case ID.pressure:
+            item = hosted(id, "Mac load", MacPressureBadge())
+            item.isBordered = false
         case ID.automations:
             item = button(id, "clock.arrow.circlepath", "Automations", "All project automations", #selector(toggleAutomations))
         case ID.desk:

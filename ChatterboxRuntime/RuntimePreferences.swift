@@ -10,6 +10,9 @@ enum RuntimePreferences {
         "plugin.nextSteps.enabled","plugin.nextSteps.minAnswerChars","plugin.nextSteps.suggestCommands",
         "mobilePushEnabled","mobilePushLastStatus","modelPresetsJSON","lastModel.chats","lastModel.studios","lastModel.projects","macPinnedThreads"
         ,"mobilePushConfigured","mobilePushPreviews","mobilePushSound","idleSimulatorShutdown"
+        // The Mac's pressure (MacPressure.Thresholds, PressureMonitor).
+        ,"pressureHoldsWork","pressure.busyLoad","pressure.busyLoadSeconds","pressure.overloadedLoad","pressure.overloadedLoadSeconds"
+        ,"pressure.swapGrowthGB","pressure.swapGrowthMinutes","pressure.stepDownMinutes","mobilePush_pressure"
     ]
     static var file:URL{RuntimePaths.data.appendingPathComponent("runtime-preferences.plist")}
     static func load() throws {

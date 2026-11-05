@@ -272,6 +272,9 @@ final class ChatSession: Identifiable {
 
     func send(_ raw: String, attachments: [Attachment] = []) {
         guard !isRestartingThread else { return }
+        // A work thread held while the Mac is under pressure: writing here starts it (what's
+        // held goes first; ChatSession+Pressure).
+        if remoteCommand == nil, record.pressureHold != nil { releasePressureHold("Started now: you wrote here.") }
         if let remoteCommand {
             echoSent(raw, attachments: attachments)
             remoteCommand("send", ["text":.string(raw),"attachments":(try? .value(attachments)) ?? []]);return

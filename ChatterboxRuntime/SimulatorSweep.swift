@@ -56,6 +56,18 @@ struct SimulatorSweep: Equatable {
         return decisions
     }
 
+    /// How long a device must sit unused before it's shut down, by the Mac's pressure level
+    /// (MacPressure): half an hour normally, 5 minutes while the Mac is busy, and no wait at all
+    /// while it's overloaded (a device a running build or test names, a Simulator window has
+    /// open, or a test run has on record is still kept).
+    static func idleAfter(pressure level: String) -> TimeInterval {
+        switch level {
+        case "overloaded": return 0
+        case "busy": return 5 * 60
+        default: return 30 * 60
+        }
+    }
+
     static func minutes(_ interval: TimeInterval) -> String {
         let minutes = Int(interval / 60)
         return minutes == 1 ? "1 min" : "\(minutes) min"

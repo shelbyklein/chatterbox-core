@@ -47,6 +47,45 @@ enum Companion {
         var pins: [Pin]? = nil
         /// Actual turn-end events, newest first. Missing on older Macs.
         var activity: [TurnCompletion]? = nil
+        /// How hard the Mac is working (the Activity header's dot). Missing on older Macs.
+        var pressure: Pressure? = nil
+    }
+
+    /// GET /v1/pressure (socket: operation "pressure"; event "pressure.changed"): how hard the
+    /// Mac is working, as the background service sees it every 10 s, and what Chatterbox holds
+    /// back because of it (ChatterboxDaemon/PressureMonitor.swift). The service that acts for
+    /// the Mac also writes it to ~/Library/Caches/Chatterbox/pressure.json for build-lock.sh.
+    struct Pressure: Codable, Equatable, Hashable {
+        /// "ok", "busy" or "overloaded".
+        var level: String
+        /// Since when it's been at this level.
+        var since: Date?
+        var updatedAt: Date
+        /// `updatedAt` in seconds since 1970, for shell scripts.
+        var updated: Int
+        /// One line: why it's at this level (or, at OK, the readings).
+        var summary: String
+        var reasons: [String] = []
+        /// "normal", "warning" or "critical".
+        var memory: String
+        var swapUsedGB: Double
+        /// How much swap grew in the last 5 minutes.
+        var swapGrowthGB: Double
+        var compressedGB: Double? = nil
+        var load1: Double
+        var load5: Double
+        var load15: Double
+        var cores: Int
+        /// "nominal", "fair", "serious" or "critical".
+        var thermal: String
+        /// What Chatterbox is holding back right now, one line each.
+        var holding: [String] = []
+        /// Work threads waiting for the Mac (new ones not started, or next turns held).
+        var waiting: Int = 0
+
+        /// "Mac OK", "Mac busy", "Mac overloaded".
+        var label: String { level == "overloaded" ? "Mac overloaded" : level == "busy" ? "Mac busy" : "Mac OK" }
+        var isOK: Bool { level != "busy" && level != "overloaded" }
     }
 
     struct TurnCompletion: Codable, Identifiable, Hashable {
@@ -202,6 +241,9 @@ enum Companion {
         var studio: String? = nil
         /// What it gets: MCP servers, and connectors or skills switched off. Nil until the Mac has looked.
         var tools: [ToolChip]? = nil
+        /// In a work thread held while the Mac is under pressure: "Waiting: Mac busy" (POST
+        /// …/work/start-now starts it anyway).
+        var pressureWaiting: String? = nil
     }
 
     /// One tool a thread gets (or has switched off), as a chip.

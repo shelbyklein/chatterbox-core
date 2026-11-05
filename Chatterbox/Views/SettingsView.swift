@@ -783,6 +783,13 @@ struct BackgroundServiceSection: View {
     var restart = BackgroundServiceRestart.shared
     /// The service shuts down booted iOS simulators nothing has used for 30 minutes (SimulatorSweeper).
     @AppStorage("idleSimulatorShutdown") private var idleSimulatorShutdown = true
+    /// The Mac's pressure (PressureMonitor): when it's busy or overloaded, and whether work
+    /// threads wait. Defaults as MacPressure.Thresholds.
+    @AppStorage("pressureHoldsWork") private var pressureHoldsWork = true
+    @AppStorage("pressure.busyLoad") private var busyLoad = 1.5
+    @AppStorage("pressure.overloadedLoad") private var overloadedLoad = 3.0
+    @AppStorage("pressure.swapGrowthGB") private var swapGrowthGB = 1.0
+    @AppStorage("pressure.stepDownMinutes") private var stepDownMinutes = 3.0
 
     var body: some View {
         Section {
@@ -802,6 +809,24 @@ struct BackgroundServiceSection: View {
                 .help("Every 10 minutes, shut down booted simulators that no build, test or Simulator window has used for 30 minutes. Devices are never deleted.")
                 .accessibilityIdentifier("idle-simulator-shutdown")
             Text("Booted simulators no build, test or Simulator window has used for 30 minutes are shut down (never deleted) to free their memory. Logged in chatterboxd.log.")
+                .font(.caption).foregroundStyle(.secondary)
+            LabeledContent("Mac load") { MacPressureBadge(alwaysLabelled: true) }
+            Toggle("Hold back work threads when the Mac is under pressure", isOn: $pressureHoldsWork)
+                .help("While the Mac is busy, new work threads wait to start until it's OK; while it's overloaded, work threads don't start their next turn either. A reply already going is never stopped.")
+                .accessibilityIdentifier("pressure-holds-work")
+            Stepper(value: $busyLoad, in: 0.5...10, step: 0.25) {
+                LabeledContent("Busy above", value: "load \(MacPressureDetails.number(busyLoad))\u{00D7} the cores, for 2 min")
+            }
+            Stepper(value: $overloadedLoad, in: 1...20, step: 0.5) {
+                LabeledContent("Overloaded above", value: "load \(MacPressureDetails.number(overloadedLoad))\u{00D7} the cores, for 1 min")
+            }
+            Stepper(value: $swapGrowthGB, in: 0.25...16, step: 0.25) {
+                LabeledContent("Overloaded when swap grows", value: "\(MacPressureDetails.number(swapGrowthGB)) GB in 5 min")
+            }
+            Stepper(value: $stepDownMinutes, in: 1...30, step: 1) {
+                LabeledContent("Calmer level after", value: "\(Int(stepDownMinutes)) min calm")
+            }
+            Text("Every 10 seconds the service reads memory pressure, swap, load and temperature. Busy (memory warning, sustained load, or running hot): builds go one at a time, simulators idle 5 minutes are shut down, new work threads wait to start. Overloaded (memory critical, swap growing fast, very high load, or critical heat): new builds wait, unused simulators are shut down, and work threads don't start their next turn. Never a running build or reply is stopped. Level changes are logged in chatterboxd.log.")
                 .font(.caption).foregroundStyle(.secondary)
             if !restart.message.isEmpty {
                 HStack(alignment: .top, spacing: 12) {

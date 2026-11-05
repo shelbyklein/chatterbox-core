@@ -477,6 +477,16 @@ final class CompanionServer {
             return .json(CompanionMapper.displays())
         case ("GET", 2) where parts[1] == "usage":
             return usageResponse(refresh: request.query["refresh"] == "1")
+        case ("GET", 2) where parts[1] == "pressure":
+            // How hard the Mac is working, and what's held back (PressureMonitor); 404 where nothing monitors.
+            guard let pressure = PressureHooks.snapshot() else { return .error(404, "Nothing is watching the Mac's load here.") }
+            return .json(pressure)
+        case ("POST", 5) where parts[1] == "chats" && parts[3] == "work" && parts[4] == "start-now":
+            // A work thread waiting while the Mac is under pressure: start it anyway.
+            guard let session = session(parts[2]) else { return .error(404, "That session is gone.") }
+            guard session.record.pressureHold != nil else { return .error(409, "That work thread isn't waiting.") }
+            session.startHeldNow()
+            return .json(CompanionMapper.detail(session, model: model))
         case ("POST", 4) where parts[1] == "chats" && parts[3] == "pin":
             guard let session = session(parts[2]) else { return .error(404, "That session is gone.") }
             guard let body = try? Companion.decoder.decode(Companion.PinRequest.self, from: request.body) else { return .error(400, "Bad pin.") }
@@ -873,7 +883,7 @@ enum CompanionMapper {
             return a.endedAt > b.endedAt
         }
         return Companion.ChatList(revision: model.companionListRevision, groups: groups,
-                                  pins: nil, activity: Array(activity.prefix(500)))
+                                  pins: nil, activity: Array(activity.prefix(500)), pressure: PressureHooks.snapshot())
     }
 
     // MARK: Automations
@@ -1045,7 +1055,8 @@ enum CompanionMapper {
                      workOfTitle: session.record.workOf.flatMap { id in model.sessions.first { $0.id == id }?.title },
                      branch: branch(session), machine: session.runMachine?.name,
                      studio: session.record.studioID.flatMap { model.studio($0) }?.name,
-                     tools: ThreadTools.shared.chips(for: session))
+                     tools: ThreadTools.shared.chips(for: session),
+                     pressureWaiting: session.pressureWaitingText)
     }
 
     /// When git was last asked about each folder for the phone: the service doesn't open chats,

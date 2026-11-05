@@ -117,6 +117,7 @@ struct MobileNewReplies: View {
     @State private var pending: ManagementAction?
     @State private var problem: String?
     @State private var busy = Set<UUID>()
+    @State private var showingPressure = false
 
     private struct ManagementAction: Identifiable {
         let chat: Companion.ChatSummary
@@ -138,26 +139,37 @@ struct MobileNewReplies: View {
         let working = working
         let entries = working.map { entry($0, reply: nil) }
             + replies.compactMap { reply in summary(reply.chatID).map { entry($0, reply: reply) } }
+        // How hard the Mac is working, when it's under pressure (MobilePressure.swift).
+        let pressure = store.chatList?.pressure.flatMap { $0.isOK ? nil : $0 }
         Group {
-            if !entries.isEmpty {
+            if !entries.isEmpty || pressure != nil {
                 VStack(alignment: .leading, spacing: 6) {
-                    Button { withAnimation(.easeOut(duration: 0.2)) { expanded.toggle() } } label: {
-                        HStack(spacing: 6) {
-                            Text("ACTIVITY")
-                            Image(systemName: "chevron.right").font(.caption2.weight(.bold))
-                                .rotationEffect(.degrees(expanded ? 90 : 0))
-                            Spacer()
-                            // Cached while the Mac can't be reached: as last seen, not live.
-                            if !working.isEmpty { Text(store.isStale ? "\(working.count) last seen working" : "\(working.count) working") }
-                            if !replies.isEmpty { Text("\(replies.count) new").foregroundStyle(.blue) }
+                    HStack(spacing: 10) {
+                        Button { withAnimation(.easeOut(duration: 0.2)) { expanded.toggle() } } label: {
+                            HStack(spacing: 6) {
+                                Text("ACTIVITY")
+                                Image(systemName: "chevron.right").font(.caption2.weight(.bold))
+                                    .rotationEffect(.degrees(expanded ? 90 : 0))
+                                Spacer()
+                                // Cached while the Mac can't be reached: as last seen, not live.
+                                if !working.isEmpty { Text(store.isStale ? "\(working.count) last seen working" : "\(working.count) working") }
+                                if !replies.isEmpty { Text("\(replies.count) new").foregroundStyle(.blue) }
+                            }
+                            .font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
+                            .textCase(nil).padding(.horizontal, headingInset).contentShape(Rectangle())
                         }
-                        .font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
-                        .textCase(nil).padding(.horizontal, headingInset).contentShape(Rectangle())
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Activity, \(replies.count) new replies, \(working.count) \(store.isStale ? "last seen working" : "working")")
+                        .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+                        if let pressure {
+                            Button { showingPressure = true } label: { MobilePressurePill(pressure: pressure, stale: store.isStale) }
+                                .buttonStyle(.plain)
+                                .padding(.trailing, headingInset)
+                                .accessibilityLabel("\(pressure.label)\(store.isStale ? ", last seen" : ""). Show readings")
+                                .accessibilityIdentifier("mac-pressure")
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Activity, \(replies.count) new replies, \(working.count) \(store.isStale ? "last seen working" : "working")")
-                    .accessibilityValue(expanded ? "Expanded" : "Collapsed")
-                    if expanded {
+                    if expanded && !entries.isEmpty {
                         TimelineView(.periodic(from: .now, by: 60)) { context in
                             MobileActivityRows(entries: entries, busy: busy, now: context.date, stale: store.isStale, open: open, rename: rename, dismiss: dismiss,
                                                archive: { manage($0, deleting: false) }, delete: { manage($0, deleting: true) })
@@ -169,6 +181,9 @@ struct MobileNewReplies: View {
             }
         }
         .onChange(of: chats, initial: true) { _, chats in MobileActivityDismissals.shared.reconcile(chats) }
+        .sheet(isPresented: $showingPressure) {
+            if let pressure = store.chatList?.pressure { MobilePressureSheet(pressure: pressure) }
+        }
         .alert(pending?.deleting == true ? "Delete this session?" : "Archive this working session?",
                isPresented: Binding(get: { pending != nil }, set: { if !$0 { pending = nil } }), presenting: pending) { action in
             Button(action.deleting ? "Delete Session" : "Archive and Stop Reply", role: .destructive) { perform(action) }

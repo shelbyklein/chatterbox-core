@@ -130,6 +130,13 @@ struct WorkThreadBanner: View {
                     : reported ? "Its result went back there." : "Its result goes back there when it finishes."))
                 .lineLimit(2)
             Spacer()
+            // Held while the Mac is under pressure (ChatSession+Pressure): start it anyway.
+            if let waiting = session.pressureWaitingText {
+                Text(waiting).foregroundStyle(.orange)
+                Button("Start Now") { RuntimeClient.shared.command("work", body: ["action": "startNow", "chatID": .string(session.id.uuidString)]) }
+                    .help("Start this work thread now, though the Mac is under pressure")
+                    .accessibilityIdentifier("workStartNow")
+            }
             if let front {
                 Button("Open \(front.title)") { model.selectedID = front.id }
                     .help("Back to the front thread")

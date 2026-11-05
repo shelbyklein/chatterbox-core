@@ -45,7 +45,7 @@ extension ChatSession {
 
     /// Working, as the Work strip and the board say it: replying, running something in the
     /// background, or between turns waiting on that (`isWorkPending`).
-    var isWorkingOn: Bool { isRunning || hasBackgroundWork || isWorkPending }
+    var isWorkingOn: Bool { isRunning || hasBackgroundWork || isWorkPending || record.pressureHold != nil }
 
     /// After a work thread's turn: its finished reply goes to the front thread, unless it asks
     /// for an approval or answers first, the turn already reported (`work report`), background
@@ -126,7 +126,7 @@ extension ChatSession {
     /// idle, nothing running, for `workIdleReport`. Anything running counts as fresh activity.
     func reportIdleWork(front: ChatSession?, now: Date = Date()) {
         guard isWorkPending, let since = record.workPendingSince else { return }
-        if isRunning || hasBackgroundWork || isWaitingOnYou || awaitingHostResume {
+        if isRunning || hasBackgroundWork || isWaitingOnYou || awaitingHostResume || record.pressureHold != nil {
             record.workPendingSince = now
             return
         }

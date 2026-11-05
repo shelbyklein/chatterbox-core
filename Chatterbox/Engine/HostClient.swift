@@ -344,6 +344,14 @@ final class HostClient {
     /// Starts a process in the host. If one with this id is already running, it's kept.
     func spawn(id: String, executable: String, arguments: [String], cwd: String?, environment: [String: String], kind: String?) throws {
         try connect()
+        var environment = environment
+        if kind != nil {
+            // An agent's builds keep to a share of the cores (half, a quarter while the Mac is
+            // under pressure: MacPressure), whatever project they're in. An empty environment
+            // means the host's own, so start from this one.
+            if environment.isEmpty { environment = ProcessInfo.processInfo.environment }
+            environment.merge(MacPressure.agentBuildEnvironment(level: MacPressure.current, cores: ProcessInfo.processInfo.activeProcessorCount)) { kept, _ in kept }
+        }
         var request: [String: JSON] = [
             "op": "spawn", "id": .string(id), "executable": .string(executable),
             "args": .array(arguments.map(JSON.string)), "env": .object(environment.mapValues(JSON.string)),
