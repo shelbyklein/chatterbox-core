@@ -14,6 +14,8 @@ struct ContentView: View {
     @AppStorage("macProjectsSidebarCards") private var projectsCards = true
     @AppStorage("macChatsSidebarCards") private var chatsCards = false
     @AppStorage("macStudioSidebarCards") private var studioCards = false
+    /// Pinned threads: "list" (compact rows), "cards1" or "cards2" (cards in one or two columns).
+    @AppStorage("macPinnedLayout") private var pinnedLayout = "cards1"
     private var sidebarCards: Bool { model.showingStudiosSidebar ? studioCards : model.showingChatsSidebar ? chatsCards : projectsCards }
     @AppStorage("showArchived") private var showArchived = false
     @AppStorage("sidebarSectionWeights") private var sectionWeights = "1,1,1"
@@ -1230,7 +1232,8 @@ extension ContentView {
             GeometryReader { geometry in
                 VStack(spacing: 0) {
                     if !visiblePinnedThreads.isEmpty {
-                        pinnedSection(maxHeight: min(240, geometry.size.height * 0.4))
+                        // Pinned threads get more room as cards than as rows.
+                        pinnedSection(maxHeight: pinnedLayout == "list" ? min(240, geometry.size.height * 0.4) : min(460, geometry.size.height * 0.55))
                     }
                     GeometryReader { remaining in
                         sectionStack(height: remaining.size.height)
@@ -1545,9 +1548,19 @@ extension ContentView {
         #endif
     }
 
+    @ViewBuilder
     private var pinnedSessionList: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            ForEach(visiblePinnedThreads) { root in pinnedFamilyRows(root) }
+        Group {
+            if pinnedLayout == "list" {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(visiblePinnedThreads) { root in pinnedFamilyRows(root) }
+                }
+            } else {
+                // Cards, as the projects show them (a thread's family inside its card).
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 0), spacing: 8), count: pinnedLayout == "cards2" ? 2 : 1), spacing: 8) {
+                    ForEach(visiblePinnedThreads) { thread in row(thread, number: nil, card: true).contextMenu { threadMenu(thread) } }
+                }
+            }
         }
         .padding(.horizontal, 10).padding(.vertical, 4)
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { pinnedContentHeight = $0 }
@@ -1579,10 +1592,21 @@ extension ContentView {
 
     /// A separate section above the selected page's threads.
     private var pinnedHeader: some View {
-        Label("Pinned", systemImage: "pin.fill")
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.secondary)
-            .accessibilityAddTraits(.isHeader)
+        HStack {
+            Label("Pinned", systemImage: "pin.fill")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.primary)
+                .accessibilityAddTraits(.isHeader)
+            Spacer()
+            Picker("Pinned layout", selection: $pinnedLayout) {
+                Image(systemName: "list.bullet").help("List").tag("list")
+                Image(systemName: "rectangle.grid.1x2").help("Cards, one column").tag("cards1")
+                Image(systemName: "square.grid.2x2").help("Cards, two columns").tag("cards2")
+            }
+            .pickerStyle(.segmented).labelsHidden().fixedSize()
+            .controlSize(.small)
+            .accessibilityIdentifier("pinned-layout")
+        }
     }
 
     // MARK: Dividers
