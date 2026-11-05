@@ -104,9 +104,11 @@ final class MobileStore {
         token = Keychain.read("token")
         #if DEBUG
         // Unsigned simulator fixtures cannot reliably retain Keychain items. An explicit
-        // synthetic token tests cached startup without changing signed device pairing.
+        // synthetic token tests cached startup without changing signed device pairing. Only for
+        // a local fixture server (each test run has its own port), never the real companion.
         let env = ProcessInfo.processInfo.environment
-        if token == nil, env["CHATTERBOX_TEST_HOST"] == "127.0.0.1", env["CHATTERBOX_TEST_PORT"] == "47411" {
+        if token == nil, env["CHATTERBOX_TEST_HOST"] == "127.0.0.1",
+           let port = env["CHATTERBOX_TEST_PORT"].flatMap(UInt16.init), port != Companion.port {
             token = env["CHATTERBOX_TEST_PAIR_TOKEN"]
         }
         #endif
