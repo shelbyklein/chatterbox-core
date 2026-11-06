@@ -78,7 +78,7 @@ extension ChatSession {
         record.automationID = automation.id
         record.title = "Automation \u{00B7} " + automation.title
         record.parentContext = nil
-        record.pendingHandoff = Prompts.automationStart(title: automation.title, project: project.projectName)
+        record.pendingHandoff = Prompts.automationStart(title: automation.title, project: automation.isGeneral ? nil : project.projectName)
         return record
     }
 

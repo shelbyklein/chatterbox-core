@@ -13,7 +13,10 @@ struct ProjectAutomation: Codable, Identifiable, Equatable {
     }
 
     var id = UUID()
-    var projectFolder: String
+    /// nil means a general routine, independent of every development project.
+    var projectFolder: String?
+    var reportSessionID: UUID?
+    var reportSessionTitle: String?
     var title: String
     var template: Template
     var instructions: String
@@ -32,6 +35,18 @@ struct ProjectAutomation: Codable, Identifiable, Equatable {
     /// nil means the model's default effort.
     var effort: String?
     var createdAt = Date()
+}
+
+extension ProjectAutomation {
+    var isGeneral: Bool { projectFolder == nil }
+    var reportingTitle: String { reportSessionTitle ?? title }
+
+    func validateTarget() throws {
+        let valid = projectFolder.map { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && reportSessionID == nil && reportSessionTitle == nil }
+            ?? (reportSessionID != nil)
+        guard valid else { throw NSError(domain: "AutomationTarget", code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "Choose General with a reporting session, or a project, for the automation."]) }
+    }
 }
 
 /// What the service has done with an automation; written only by the service.
@@ -90,6 +105,7 @@ enum ProjectAutomations {
     }
 
     static func save(_ automations: [ProjectAutomation]) throws {
+        for automation in automations { try automation.validateTarget() }
         try encoder.encode(automations).write(to: configFile, options: .atomic)
     }
 
@@ -128,7 +144,9 @@ enum ProjectAutomations {
 
     /// What a routine's days share: everything but the day, whether it's on, and their own ids.
     private struct RoutineKey: Hashable {
-        var projectFolder: String
+        var projectFolder: String?
+        var reportSessionID: UUID?
+        var reportSessionTitle: String?
         var title: String
         var instructions: String
         var hour: Int
@@ -139,7 +157,8 @@ enum ProjectAutomations {
         var preset: UUID?
 
         init(_ automation: ProjectAutomation) {
-            projectFolder = automation.projectFolder; title = automation.title; instructions = automation.instructions
+            projectFolder = automation.projectFolder; reportSessionID = automation.reportSessionID; reportSessionTitle = automation.reportSessionTitle
+            title = automation.title; instructions = automation.instructions
             hour = automation.hour; minute = automation.minute
             backend = automation.backend; model = automation.model; effort = automation.effort; preset = automation.preset
         }
@@ -196,12 +215,35 @@ enum ProjectAutomations {
         return automations.filter { ids.contains($0.id) }.map(\.id)
     }
 
+    /// Move every weekday together, retaining its IDs, schedule, agent and run state.
+    @discardableResult static func setTarget(_ id: UUID, projectFolder: String?, reportTitle: String? = nil,
+                                            in automations: inout [ProjectAutomation]) -> [UUID] {
+        guard let routine = routines(in: automations).first(where: { $0.contains { $0.id == id } }) else { return [] }
+        let ids = Set(routine.map(\.id))
+        let reportID = projectFolder == nil ? (routine.first?.reportSessionID ?? UUID()) : nil
+        for index in automations.indices where ids.contains(automations[index].id) {
+            automations[index].projectFolder = projectFolder
+            automations[index].reportSessionID = reportID
+            automations[index].reportSessionTitle = projectFolder == nil ? (reportTitle ?? routine.first?.reportSessionTitle ?? routine.first?.title) : nil
+        }
+        return routine.map(\.id)
+    }
+
     /// "Mondays at 9:00 AM".
     static func scheduleText(_ automation: ProjectAutomation) -> String {
         let day = Calendar.current.weekdaySymbols[max(0, min(6, automation.weekday - 1))]
         var parts = DateComponents(); parts.hour = automation.hour; parts.minute = automation.minute
         let time = Calendar.current.date(from: parts).map { $0.formatted(date: .omitted, time: .shortened) } ?? ""
         return "\(day)s at \(time)"
+    }
+
+    static func routineScheduleText(_ automation: ProjectAutomation) -> String {
+        let days = routines(in: load()).first { $0.contains { $0.id == automation.id } }?.map(\.weekday) ?? [automation.weekday]
+        guard days.count > 1 else { return scheduleText(automation) }
+        let calendar = Calendar.current
+        let time = calendar.date(from: DateComponents(hour: automation.hour, minute: automation.minute))?.formatted(date: .omitted, time: .shortened) ?? ""
+        let label = days.count == 7 ? "Every day" : days.map { calendar.shortWeekdaySymbols[$0 - 1] }.joined(separator: ", ")
+        return "\(label) at \(time)"
     }
 
     // MARK: - What a run says
