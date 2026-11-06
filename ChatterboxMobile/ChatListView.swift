@@ -533,7 +533,6 @@ struct ChatListView: View {
                 loadingStatus
                 if let problem = store.problem { MobileProblemCard(problem, updated: store.chatsUpdatedAt) { await store.loadChats() } }
                 if let list = store.chatList {
-                    if search.isEmpty { MobileNewReplies(activity: list.activity ?? [], chats: allChats, summary: summary(for:), open: open, rename: beginRename) }
                     if search.isEmpty, let pins = list.pins, !pins.isEmpty { MobilePinPills(pins: pins) }
                     emptyPage
                     ForEach(groups) { group in
@@ -685,7 +684,6 @@ struct ChatListView: View {
                 if let problem = store.problem { MobileProblemCard(problem, updated: store.chatsUpdatedAt) { await store.loadChats() } }
                 if let list = store.chatList {
                     if search.isEmpty {
-                        MobileNewReplies(activity: list.activity ?? [], chats: allChats, summary: summary(for:), open: open, rename: beginRename)
                         if visibleStudios.isEmpty { studioIndex }
                         else {
                             Button { withAnimation(.easeOut(duration: 0.2)) { selectedStudioID = nil } } label: {
@@ -761,10 +759,6 @@ struct ChatListView: View {
                     .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16)).listRowBackground(Color.clear).listRowSeparator(.hidden)
             }
             if let list = store.chatList {
-                if search.isEmpty {
-                    MobileNewReplies(activity: list.activity ?? [], chats: allChats, summary: summary(for:), open: open, rename: beginRename, headingInset: 18)
-                        .listRowInsets(EdgeInsets()).listRowBackground(Color.clear)
-                }
                 if search.isEmpty, let pins = list.pins, !pins.isEmpty {
                     Section("Pins") { MobilePinPills(pins: pins) }
                 }
