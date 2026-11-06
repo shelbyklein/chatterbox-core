@@ -957,6 +957,14 @@ enum CompanionMapper {
         if let folder = automation.projectFolder, let project = projectSession(folder, model: model) {
             return ChatSession.automationBackend(automation, project: project).rawValue
         }
+        if automation.isGeneral {
+            if let id = automation.reportSessionID, let report = model.sessions.first(where: { $0.id == id }) {
+                return ChatSession.automationBackend(automation, project: report).rawValue
+            }
+            return (automation.backend.flatMap(Backend.init(rawValue:))
+                ?? (automation.model == nil ? automation.preset.flatMap { id in ModelPresets.shared.presets.first { $0.id == id }?.backend } : nil)
+                ?? Backend(rawValue: AppPreferences.defaults.string(forKey: "defaultBackend") ?? "") ?? .claude).rawValue
+        }
         return automation.backend.flatMap(Backend.init(rawValue:))?.rawValue ?? Backend.claude.rawValue
     }
 
