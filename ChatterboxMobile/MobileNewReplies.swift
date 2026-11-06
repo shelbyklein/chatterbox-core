@@ -33,6 +33,18 @@ final class MobileSeenReplies {
         MobileWidgetSync.refresh()
     }
 
+    /// Threads opened on this phone remain easy to return to after reading a reply.
+    /// Use opening time, rather than background replies from threads you have not visited.
+    func recent(in chats: [Companion.ChatSummary], excluding activityIDs: Set<UUID>, limit: Int = 10) -> [Companion.ChatSummary] {
+        chats.filter { $0.workOf == nil && !activityIDs.contains($0.id) && seen[$0.id.uuidString] != nil }
+            .sorted {
+                let a = seen[$0.id.uuidString] ?? .distantPast
+                let b = seen[$1.id.uuidString] ?? .distantPast
+                return a == b ? $0.id.uuidString < $1.id.uuidString : a > b
+            }
+            .prefix(limit).map { $0 }
+    }
+
     /// The newest unseen reply of each chat, newest first.
     func newest(in activity: [Companion.TurnCompletion], limit: Int) -> [Companion.TurnCompletion] {
         var chats = Set<UUID>()
@@ -161,7 +173,7 @@ struct MobileNewReplies: View {
         let pressure = store.chatList?.pressure.flatMap { $0.isOK ? nil : $0 }
         Group {
             if dedicated {
-                dedicatedContent(entries: entries, workingCount: working.count + workNeedingYou.count, replyCount: replies.count, pressure: pressure)
+                dedicatedContent(entries: entries, recent: MobileSeenReplies.shared.recent(in: chats.filter(matches), excluding: Set(entries.map { $0.chat.id })), workingCount: working.count + workNeedingYou.count, replyCount: replies.count, pressure: pressure)
             } else if !entries.isEmpty || pressure != nil {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 10) {
@@ -231,8 +243,8 @@ struct MobileNewReplies: View {
     /// The dedicated destination reuses the ordinary thread views. Only embedded Activity
     /// keeps the compact UIKit table; it no longer controls this page's row sizing.
     @ViewBuilder
-    private func dedicatedContent(entries: [MobileActivityEntry], workingCount: Int, replyCount: Int, pressure: Companion.Pressure?) -> some View {
-        if entries.isEmpty {
+    private func dedicatedContent(entries: [MobileActivityEntry], recent: [Companion.ChatSummary], workingCount: Int, replyCount: Int, pressure: Companion.Pressure?) -> some View {
+        if entries.isEmpty && recent.isEmpty {
             VStack(alignment: .leading, spacing: 16) {
                 dedicatedHeader(workingCount: workingCount, replyCount: replyCount, pressure: pressure).padding(.horizontal, 16)
                 ContentUnavailableView(query.isEmpty ? "All caught up" : "No matching activity", systemImage: "checkmark.circle",
@@ -246,6 +258,13 @@ struct MobileNewReplies: View {
                     LazyVGrid(columns: typeSize.isAccessibilitySize ? [GridItem(.flexible())] : [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
                         ForEach(entries) { entry in expandedEntry(entry, card: true) }
                     }.accessibilityIdentifier("activity-cards")
+                    if !recent.isEmpty {
+                        Text("Recent").font(.headline).padding(.top, 8)
+                            .accessibilityAddTraits(.isHeader)
+                        LazyVGrid(columns: typeSize.isAccessibilitySize ? [GridItem(.flexible())] : [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                            ForEach(recent) { chat in recentThread(chat, card: true) }
+                        }.accessibilityIdentifier("activity-recent-cards")
+                    }
                 }.padding(16)
             }
         } else {
@@ -265,10 +284,37 @@ struct MobileNewReplies: View {
                 } header: {
                     dedicatedHeader(workingCount: workingCount, replyCount: replyCount, pressure: pressure).textCase(nil)
                 }
+                if !recent.isEmpty {
+                    Section {
+                        ForEach(recent) { chat in
+                            recentThread(chat, card: false).padding(.vertical, 8)
+                                .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                                    Button { manage(chat, deleting: false) } label: { Label("Archive", systemImage: "archivebox") }.tint(.orange)
+                                    Button(role: .destructive) { manage(chat, deleting: true) } label: { Label("Delete", systemImage: "trash") }
+                                }
+                        }
+                    } header: { Text("Recent").textCase(nil) }
+                }
             }
             .listStyle(.insetGrouped)
             .accessibilityIdentifier("activity-list")
         }
+    }
+
+    private func recentThread(_ chat: Companion.ChatSummary, card: Bool) -> some View {
+        var display = chat
+        if store.isStale { display.isRunning = false }
+        return Group {
+            if card { ChatCard(chat: display) { open(chat) } }
+            else { ChatRow(chat: display) { open(chat) } }
+        }
+        .accessibilityIdentifier("activity-recent-" + chat.id.uuidString)
+        .contextMenu {
+            Button { rename(chat) } label: { Label("Rename", systemImage: "pencil") }
+            Button { manage(chat, deleting: false) } label: { Label("Archive", systemImage: "archivebox") }
+            Button(role: .destructive) { manage(chat, deleting: true) } label: { Label("Delete", systemImage: "trash") }
+        }
+        .disabled(busy.contains(chat.id))
     }
 
     private func dedicatedHeader(workingCount: Int, replyCount: Int, pressure: Companion.Pressure?) -> some View {
