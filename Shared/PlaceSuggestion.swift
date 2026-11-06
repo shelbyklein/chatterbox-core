@@ -21,21 +21,29 @@ enum PlaceSuggestion {
     static func best(for text: String, among places: [Place]) -> Place? {
         let said = words(text)
         guard !said.isEmpty else { return nil }
-        let scored = places.map { place -> (Place, Int) in
-            let name = words(place.name)
-            var score = !name.isEmpty && name.isSubset(of: said) ? 10 : 0
-            score += terms(of: place).intersection(said).count * 3
-            return (place, score)
-        }.sorted { $0.1 > $1.1 }
-        guard let first = scored.first, first.1 >= 3 else { return nil }
-        if scored.count > 1, scored[1].1 >= first.1 { return nil }
-        return first.0
+        // More words in a name must not make it win over a second explicitly
+        // named place. Generic-only names are not useful identity evidence.
+        let eligible = places.filter { !terms(of: $0).isEmpty }
+        let named = eligible.filter {
+            let name = words($0.name)
+            return !name.isEmpty && name.isSubset(of: said)
+        }
+        if !named.isEmpty { return named.count == 1 ? named[0] : nil }
+        let matches = eligible.filter { !terms(of: $0).isDisjoint(with: said) }
+        return matches.count == 1 ? matches[0] : nil
     }
 
     /// A place's own terms: the distinctive words of its name, and the sites its instructions
     /// or brief name (the part before .org/.com, and the words of it).
     static func terms(of place: Place) -> Set<String> {
         var terms = words(place.name).subtracting(genericNameWords)
+        let nameParts = place.name.split { !$0.isLetter && !$0.isNumber }.map(String.init)
+        if let first = nameParts.first, first.count >= 2, first == first.uppercased(),
+           first.contains(where: \.isLetter), nameParts.count > 1 {
+            let rest = nameParts.dropFirst().filter { !genericNameWords.contains($0.lowercased()) }
+            let abbreviation = first.lowercased() + rest.compactMap(\.first).map(String.init).joined().lowercased()
+            if !rest.isEmpty, (3...8).contains(abbreviation.count) { terms.insert(abbreviation) }
+        }
         let text = place.instructions.lowercased()
         let pattern = try? NSRegularExpression(pattern: #"(?:https?://)?(?:www\.)?([a-z0-9-]+)\.(?:org|com|net|io|co|app|dev|us)\b"#)
         for match in pattern?.matches(in: text, range: NSRange(text.startIndex..., in: text)) ?? [] {
