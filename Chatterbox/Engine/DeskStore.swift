@@ -306,6 +306,19 @@ final class DeskStore {
             guard let reason = Self.clean(body.reason) else { throw Failure(status: 400, message: "Give the reason for the confidence: what makes it safe, or what needs Shelby.") }
             confidence = .init(canRunAlone: answer == "yes", reason: String(reason.prefix(300)), by: source, at: now)
         }
+        // Compare the stored inventory, not the visible board (Review and Done are capped).
+        // Re-importing work must not rescore it, restart it, or move its existing thread.
+        if let origin, let existing = tasks.first(where: { $0.origin.map { DeskOriginRules.sameSource($0, origin) } ?? false }) {
+            return existing.request
+        }
+        if let existing = tasks.first(where: { task in
+            if task.origin != nil && origin != nil { return false }
+            // Legacy imports without a source need exact content and context. Different
+            // verified identities never collapse just because their titles happen to match.
+            return Self.identityText(task.text) == Self.identityText(text)
+                && Self.identityText(task.note ?? "") == Self.identityText(note ?? "")
+                && task.proposed?.kind == proposed?.kind && task.proposed?.id == proposed?.id
+        }) { return existing.request }
         let request = Companion.DeskRequest(id: UUID(), text: text, source: source, createdAt: now, proposed: proposed, note: note, origin: origin, confidence: confidence)
         tasks.insert(TaskRecord(request), at: 0)
         // The oldest to do go first; linked and done ones stay.
@@ -851,7 +864,10 @@ final class DeskStore {
             try checkSources(includeNew: body["includeNew"]?.bool ?? true)
             return try .value(snapshot())
         case "get":
-            return try .value(snapshot())
+            var result = try JSON.value(snapshot()).object ?? [:]
+            // Agent inventory includes every stored task, even hidden/older review and done.
+            result["tasks"] = try .value(tasks)
+            return .object(result)
         case "places":
             return try .value(places())
         case "threads":
@@ -866,8 +882,11 @@ final class DeskStore {
         case "add":
             guard var request = try? body.decode(Companion.DeskAddRequest.self) else { throw Failure(status: 400, message: "Say what needs doing.") }
             if agent { request.source = ["claude", "codex"].contains(request.source ?? "") ? request.source : "claude" }
-            try add(request)
-            return try .value(snapshot())
+            let before = Set(tasks.map(\.id))
+            let added = try add(request)
+            var result = try JSON.value(snapshot()).object ?? [:]
+            result["addition"] = ["id": .string(added.id.uuidString), "created": .bool(!before.contains(added.id))]
+            return .object(result)
         case "origin":
             guard let report = try? body.decode(Companion.DeskOriginReport.self) else { throw Failure(status: 400, message: "Say which source and its status.") }
             try reportOrigin(report)
@@ -1282,6 +1301,10 @@ final class DeskStore {
         return flat.count > limit ? String(flat.prefix(limit - 1)).trimmingCharacters(in: .whitespaces) + "\u{2026}" : flat
     }
 
+    private static func identityText(_ text: String) -> String {
+        text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ").lowercased()
+    }
+
     private static func clean(_ text: String?) -> String? {
         guard let text = text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
         return text
@@ -1330,6 +1353,12 @@ final class DeskStore {
 /// whether what the source last said agrees with the task's column. Warn only.
 enum DeskOriginRules {
     enum Column { case todo, working, needsYou, review, done }
+
+    static func sameSource(_ a: Companion.DeskOrigin, _ b: Companion.DeskOrigin) -> Bool {
+        guard a.kind == b.kind else { return false }
+        // ClickUp IDs are case-insensitive; email IDs are opaque and case-sensitive.
+        return a.kind == "clickup" ? a.id.caseInsensitiveCompare(b.id) == .orderedSame : a.id == b.id
+    }
 
     /// Source buttons open web pages, never arbitrary application commands or local files.
     static func sourceURL(_ value: String) throws -> String {
