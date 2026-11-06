@@ -455,6 +455,15 @@ final class CompanionServer {
             guard let id = UUID(uuidString: parts[2]) else { return .error(404, "That automation is gone.") }
             guard let body = try? Companion.decoder.decode(Companion.AutomationEdit.self, from: request.body) else { return .error(400, "Bad change.") }
             do { return .json(try editAutomation(id, body)) } catch { return failure(error) }
+        case ("POST", 4) where parts[1] == "automations" && parts[3] == "session":
+            guard let id = UUID(uuidString: parts[2]) else { return .error(404, "That automation is gone.") }
+            #if CHATTERBOX_HEADLESS
+            guard let automation = ProjectAutomations.load().first(where: { $0.id == id }) else { return .error(404, "That automation is gone.") }
+            guard let runner = AutomationRunner.shared else { return .error(503, "Automations aren't running yet.") }
+            do { return .json(["threadID": try runner.reportSession(for: automation).id.uuidString]) } catch { return failure(error) }
+            #else
+            return .error(503, "Automations need the background service.")
+            #endif
         case ("POST", 4) where parts[1] == "automations" && parts[3] == "run":
             guard let id = UUID(uuidString: parts[2]) else { return .error(404, "That automation is gone.") }
             do { return .json(CompanionMapper.detail(try runAutomation(id), model: model)) } catch { return failure(error) }
@@ -935,8 +944,8 @@ enum CompanionMapper {
         let on = days.filter(\.enabled)
         let paused = Array(Set(days.filter { !$0.enabled }.map(\.weekday))).sorted()
         return .init(id: first.id, ids: days.map(\.id), title: first.title, instructions: first.instructions,
-                     project: projectSession(first.projectFolder, model: model)?.projectName ?? URL(fileURLWithPath: first.projectFolder).lastPathComponent,
-                     projectFolder: first.projectFolder, agent: agent, model: modelName, effort: first.effort.map(RuntimePaths.effortLabel),
+                     project: first.projectFolder.map { projectSession($0, model: model)?.projectName ?? URL(fileURLWithPath: $0).lastPathComponent } ?? "General",
+                     projectFolder: first.projectFolder ?? "", reportSessionID: first.reportSessionID, reportSessionTitle: first.isGeneral ? first.reportingTitle : nil, agent: agent, model: modelName, effort: first.effort.map(RuntimePaths.effortLabel),
                      days: Array(Set(days.map(\.weekday))).sorted(), hour: first.hour, minute: first.minute,
                      enabled: !on.isEmpty, pausedDays: on.isEmpty || paused.isEmpty ? nil : paused,
                      lastRunAt: last?.at, lastThreadID: run?.id, lastResult: run?.lastActionSummary, isRunning: run?.isRunning,
@@ -945,8 +954,16 @@ enum CompanionMapper {
 
     /// Who does an automation's runs: its own agent, its preset's, or else its project's.
     static func agent(of automation: ProjectAutomation, model: AppModel) -> String {
-        if let project = projectSession(automation.projectFolder, model: model) {
+        if let folder = automation.projectFolder, let project = projectSession(folder, model: model) {
             return ChatSession.automationBackend(automation, project: project).rawValue
+        }
+        if automation.isGeneral {
+            if let id = automation.reportSessionID, let report = model.sessions.first(where: { $0.id == id }) {
+                return ChatSession.automationBackend(automation, project: report).rawValue
+            }
+            return (automation.backend.flatMap(Backend.init(rawValue:))
+                ?? (automation.model == nil ? automation.preset.flatMap { id in ModelPresets.shared.presets.first { $0.id == id }?.backend } : nil)
+                ?? Backend(rawValue: AppPreferences.defaults.string(forKey: "defaultBackend") ?? "") ?? .claude).rawValue
         }
         return automation.backend.flatMap(Backend.init(rawValue:))?.rawValue ?? Backend.claude.rawValue
     }

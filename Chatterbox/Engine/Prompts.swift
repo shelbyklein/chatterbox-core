@@ -255,10 +255,10 @@ enum Prompts {
 
     /// An automation run, done as a sidequest of its project's chat: what it's for, without
     /// the project chat's transcript (it runs on its own schedule, apart from that conversation).
-    static func automationStart(title: String, project: String) -> String {
+    static func automationStart(title: String, project: String?) -> String {
         """
         <sidequest>
-        This is a scheduled run of the automation \u{201C}\(title)\u{201D} for the project \u{201C}\(project)\u{201D}, done as a sidequest of the project's main chat. Its instructions are in the next message. When you finish, your final reply goes to that chat automatically, so end with a short report: what you checked, what you found, what you changed, and anything that needs the user.
+        This is a scheduled run of the automation \u{201C}\(title)\u{201D}, \(project.map { "for the project “\($0)”, done as a sidequest of its main chat" } ?? "a general routine reporting to its own session, independent of any development project"). Its instructions are in the next message. When you finish, your final reply goes to that chat automatically, so end with a short report: what you checked, what you found, what you changed, and anything that needs the user.
         </sidequest>
         """
     }

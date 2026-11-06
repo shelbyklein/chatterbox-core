@@ -3,7 +3,7 @@ import SwiftUI
 /// A project's automations: what each does, when it runs, and its thread. Opened from a
 /// project's right-click menu (Automations…).
 struct AutomationsSheet: View {
-    let projectFolder: String
+    let projectFolder: String?
     let projectName: String
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -13,7 +13,7 @@ struct AutomationsSheet: View {
     @State private var problem: String?
     @State private var running: UUID?
 
-    init(projectFolder: String, projectName: String, initiallyEditing: UUID? = nil) {
+    init(projectFolder: String?, projectName: String, initiallyEditing: UUID? = nil) {
         self.projectFolder = projectFolder
         self.projectName = projectName
         _editing = State(initialValue: initiallyEditing)
@@ -30,7 +30,7 @@ struct AutomationsSheet: View {
                 }
                 Spacer()
                 Menu {
-                    ForEach(ProjectAutomation.Template.allCases) { template in
+                    ForEach(projectFolder == nil ? [.custom] : ProjectAutomation.Template.allCases) { template in
                         Button(template.label) { add(template) }
                     }
                 } label: { Label("Add Automation", systemImage: "plus") }
@@ -43,9 +43,9 @@ struct AutomationsSheet: View {
                 ContentUnavailableView {
                     Label("No automations yet", systemImage: "clock.arrow.circlepath")
                 } description: {
-                    Text("An automation runs on a schedule as a sidequest of this project's main session, with the agent and model you pick. Each run reports back to the session, asks before changing anything, and then archives itself.")
+                    Text(projectFolder == nil ? "A general automation runs on a schedule and reports to its own session, with no project required." : "An automation runs on a schedule as a sidequest of this project's main session, with the agent and model you pick. Each run reports back to the session, asks before changing anything, and then archives itself.")
                 } actions: {
-                    Button("Keep WordPress Updated") { add(.wordpress) }
+                    Button(projectFolder == nil ? "Add Automation" : "Keep WordPress Updated") { add(projectFolder == nil ? .custom : .wordpress) }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -89,6 +89,14 @@ struct AutomationsSheet: View {
             Button(isEditing ? "Done" : "Edit") { editing = isEditing ? nil : automation.id }
         }
         if isEditing {
+            Picker("Scope", selection: Binding(get: { current(automation).projectFolder ?? "" }, set: { move(automation, to: $0.isEmpty ? nil : $0) })) {
+                Text("General").tag("")
+                ForEach(projectFolders, id: \.self) { folder in Text(projectLabel(folder)).tag(folder) }
+            }
+            if automation.isGeneral {
+                LabeledContent("Reports to", value: automation.reportingTitle)
+                Button("Open Reporting Session") { openReport(automation) }
+            }
             TextField("Name", text: binding(automation, \.title))
             Picker("Every", selection: binding(automation, \.weekday)) {
                 ForEach(1...7, id: \.self) { day in Text(Calendar.current.weekdaySymbols[day - 1]).tag(day) }
@@ -105,7 +113,7 @@ struct AutomationsSheet: View {
                 TextEditor(text: binding(automation, \.instructions))
                     .font(.callout)
                     .frame(minHeight: 160)
-                Text("Every run also follows these rules: report first and ask before changing anything, never touch staging or production without your approval, and back up first. Its report goes to this project's session, and the run archives itself.")
+                Text("Every run also follows these rules: report first and ask before changing anything, never touch staging or production without your approval, and back up first. Its report goes to \(automation.isGeneral ? automation.reportingTitle : "this project’s session"), and the run archives itself.")
                     .font(.caption).foregroundStyle(Color.metadata)
             }
             HStack {
@@ -174,17 +182,43 @@ struct AutomationsSheet: View {
 
     /// The agent the project's chat uses: a new automation starts on it.
     private var projectBackend: Backend {
-        model.activeSessions.first { $0.record.projectFolder == projectFolder && $0.record.worktreeOf == nil && $0.record.sidechatOf == nil }?.record.backend ?? .claude
+        guard projectFolder != nil else { return Backend(rawValue: AppPreferences.defaults.string(forKey: "defaultBackend") ?? "") ?? .claude }
+        return model.activeSessions.first { $0.record.projectFolder == projectFolder && $0.record.worktreeOf == nil && $0.record.sidechatOf == nil }?.record.backend ?? .claude
     }
 
     private func add(_ template: ProjectAutomation.Template) {
         var automation = ProjectAutomation(projectFolder: projectFolder, title: template.defaultTitle, template: template,
                                            instructions: template.defaultInstructions)
         // Opens editing, with the agent and model to pick right away.
+        if projectFolder == nil { automation.reportSessionID = UUID(); automation.reportSessionTitle = automation.title }
         automation.backend = projectBackend.rawValue
         automations.append(automation)
         editing = automation.id
         commit()
+    }
+
+    private var projectFolders: [String] {
+        Array(Set(model.activeSessions.filter { $0.record.worktreeOf == nil && $0.record.sidechatOf == nil }.compactMap { $0.record.projectFolder } + [projectFolder].compactMap { $0 })).sorted()
+    }
+    private func projectLabel(_ folder: String) -> String {
+        model.activeSessions.first { $0.record.projectFolder == folder }?.projectName ?? URL(fileURLWithPath: folder).lastPathComponent
+    }
+    private func move(_ automation: ProjectAutomation, to folder: String?) {
+        var all = ProjectAutomations.load()
+        ProjectAutomations.setTarget(automation.id, projectFolder: folder, in: &all)
+        do { try ProjectAutomations.save(all); reload(); problem = "Moved to \(folder.map(projectLabel) ?? "General")." }
+        catch { problem = error.localizedDescription }
+    }
+    private func openReport(_ automation: ProjectAutomation) {
+        Task {
+            do {
+                let result = try await RuntimeClient.shared.request("automationReportSession", body: ["id": .string(automation.id.uuidString)])
+                if let id = result["threadID"]?.string.flatMap(UUID.init(uuidString:)) {
+                    for _ in 0..<20 where !model.sessions.contains(where: { $0.id == id }) { try? await Task.sleep(for: .milliseconds(150)) }
+                    model.selectedID = id; dismiss()
+                }
+            } catch { problem = error.localizedDescription }
+        }
     }
 
     private func delete(_ automation: ProjectAutomation) {
@@ -213,51 +247,64 @@ struct AutomationsSheet: View {
     }
 }
 
-/// All project routines, with the existing project editor as the single editing surface.
+private struct AutomationScope: Identifiable {
+    var folder: String?
+    var id: String { folder ?? "general" }
+}
+
+/// General and project routines, sharing one editor.
 struct AutomationsCenter: View {
     @Environment(AppModel.self) private var model
     @AppStorage("themeBackground") private var theme = "standard"
     @State private var routines: [ProjectAutomation] = []
     @State private var runs: [String: AutomationRunState] = [:]
-    @State private var editingFolder: String?
+    @State private var editingTarget: AutomationScope?
+    @State private var problem: String?
     /// The automation whose agent and model are being picked.
     @State private var pickingModel: UUID?
-    private var folders: [String] { Array(Set(routines.map(\.projectFolder))).sorted { name($0).localizedStandardCompare(name($1)) == .orderedAscending } }
-    private var projects: [String] { Array(Set(model.activeSessions.compactMap { $0.record.projectFolder })).sorted { name($0).localizedStandardCompare(name($1)) == .orderedAscending } }
-    private func name(_ folder: String) -> String {
-        model.activeSessions.first { $0.record.projectFolder == folder }?.projectName ?? URL(fileURLWithPath: folder).lastPathComponent
+    private var folders: [String?] { Array(Set(routines.map(\.projectFolder))).sorted { a, b in
+        if a == nil { return b != nil }; if b == nil { return false }; return name(a).localizedStandardCompare(name(b)) == .orderedAscending
+    } }
+    private var projects: [String] { Array(Set(model.activeSessions.filter { $0.record.worktreeOf == nil && $0.record.sidechatOf == nil }.compactMap { $0.record.projectFolder })).sorted { name($0).localizedStandardCompare(name($1)) == .orderedAscending } }
+    private func name(_ folder: String?) -> String {
+        guard let folder else { return "General" }
+        return model.activeSessions.first { $0.record.projectFolder == folder }?.projectName ?? URL(fileURLWithPath: folder).lastPathComponent
     }
-    private func reload() { routines = ProjectAutomations.load(); runs = ProjectAutomations.loadState() }
+    private func reload() { routines = ProjectAutomations.routines(in: ProjectAutomations.load()).compactMap(\.first); runs = ProjectAutomations.loadState() }
     /// A project's own agent: what an automation uses when it names none.
-    private func projectBackend(_ folder: String) -> Backend {
-        model.activeSessions.first { $0.record.projectFolder == folder && $0.record.worktreeOf == nil && $0.record.sidechatOf == nil }?.record.backend ?? .claude
+    private func projectBackend(_ folder: String?) -> Backend {
+        guard folder != nil else { return Backend(rawValue: AppPreferences.defaults.string(forKey: "defaultBackend") ?? "") ?? .claude }
+        return model.activeSessions.first { $0.record.projectFolder == folder && $0.record.worktreeOf == nil && $0.record.sidechatOf == nil }?.record.backend ?? .claude
     }
     private func change(_ id: UUID, _ edit: (inout ProjectAutomation) -> Void) {
         var all = ProjectAutomations.load()
-        guard let index = all.firstIndex(where: { $0.id == id }) else { return }
-        edit(&all[index])
-        try? ProjectAutomations.save(all)
-        reload()
+        guard let routine = ProjectAutomations.routines(in: all).first(where: { $0.contains { $0.id == id } }) else { return }
+        let ids = Set(routine.map(\.id))
+        for index in all.indices where ids.contains(all[index].id) { edit(&all[index]) }
+        do { try ProjectAutomations.save(all); problem = nil; reload() }
+        catch { problem = error.localizedDescription }
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
                 VStack(alignment: .leading) {
                     Text("Automations").font(.largeTitle.bold())
-                    Text("All project routines · \(routines.count) total · \(routines.filter(\.enabled).count) enabled")
+                    Text("General and project routines · \(routines.count) total · \(routines.filter(\.enabled).count) enabled")
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
                 Menu {
+                    Button("General") { editingTarget = AutomationScope(folder: nil) }
+                    Divider()
                     ForEach(projects, id: \.self) { folder in
-                        Button(name(folder)) { editingFolder = folder }
+                        Button(name(folder)) { editingTarget = AutomationScope(folder: folder) }
                     }
                 } label: { Label("Add Automation", systemImage: "plus") }
-                .disabled(projects.isEmpty)
             }
+            if let problem { Text(problem).font(.callout).foregroundStyle(.orange) }
             if routines.isEmpty {
                 ContentUnavailableView("No automations yet", systemImage: "clock.arrow.circlepath",
-                    description: Text("Choose a project with Add Automation to create its first routine."))
+                    description: Text("Choose General or a project with Add Automation to create a routine."))
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 16) {
@@ -266,19 +313,22 @@ struct AutomationsCenter: View {
                                 HStack {
                                     Text(name(folder)).font(.title3.bold())
                                     Spacer()
-                                    Button("Manage") { editingFolder = folder }
+                                    Button("Manage") { editingTarget = AutomationScope(folder: folder) }
                                 }
                                 ForEach(routines.filter { $0.projectFolder == folder }) { routine in
                                     HStack {
                                         Image(systemName: routine.enabled ? "clock" : "pause.circle").foregroundStyle(.secondary)
                                         VStack(alignment: .leading, spacing: 4) {
                                             Text(routine.title).font(.headline)
-                                            Text(ProjectAutomations.scheduleText(routine) + (routine.enabled ? "" : " · Paused"))
+                                            Text(ProjectAutomations.routineScheduleText(routine) + (routine.enabled ? "" : " · Paused"))
                                                 .font(.callout).foregroundStyle(.secondary)
+                                            if routine.isGeneral {
+                                                Text("Reports to \(routine.reportingTitle)").font(.caption).foregroundStyle(.secondary)
+                                            }
                                             if routine.enabled, let next = ProjectAutomations.nextOccurrence(of: routine) {
                                                 Text("Next: \(next.formatted(date: .abbreviated, time: .shortened))").font(.caption).foregroundStyle(.secondary)
                                             }
-                                            if let last = runs[routine.id.uuidString]?.lastRun {
+                                            if let last = latestRun(routine)?.lastRun {
                                                 Text("Last run: \(last.formatted(date: .abbreviated, time: .shortened))").font(.caption).foregroundStyle(.secondary)
                                             }
                                         }
@@ -297,7 +347,11 @@ struct AutomationsCenter: View {
                                             .frame(width: 340)
                                             .fixedSize(horizontal: false, vertical: true)
                                         }
-                                        if let thread = runs[routine.id.uuidString]?.threadID, model.sessions.contains(where: { $0.id == thread }) {
+                                        if let report = routine.reportSessionID {
+                                            Button("Open Session") { openReport(routine, report: report) }
+                                                .help("Reports to \(routine.reportingTitle)")
+                                        }
+                                        if let thread = latestRun(routine)?.threadID, model.sessions.contains(where: { $0.id == thread }) {
                                             Button("Open Thread") { model.showingAutomations = false; model.selectedID = thread }
                                         }
                                     }
@@ -314,14 +368,29 @@ struct AutomationsCenter: View {
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Theme.background(theme) ?? Color(nsColor: .windowBackgroundColor))
-        .sheet(isPresented: Binding(get: { editingFolder != nil }, set: { if !$0 { editingFolder = nil; reload() } })) {
-            if let folder = editingFolder { AutomationsSheet(projectFolder: folder, projectName: name(folder)).environment(model) }
+        .sheet(item: $editingTarget, onDismiss: reload) { target in
+            AutomationsSheet(projectFolder: target.folder, projectName: name(target.folder)).environment(model)
         }
         .task {
             while !Task.isCancelled { reload(); do { try await Task.sleep(for: .seconds(15)) } catch { return } }
         }
         .onChange(of: model.automationsRevision) { reload() }
     }
+    private func latestRun(_ routine: ProjectAutomation) -> AutomationRunState? {
+        let days = ProjectAutomations.routines(in: ProjectAutomations.load()).first { $0.contains { $0.id == routine.id } } ?? [routine]
+        return days.compactMap { runs[$0.id.uuidString] }.max { ($0.lastRun ?? .distantPast) < ($1.lastRun ?? .distantPast) }
+    }
+    private func openReport(_ routine: ProjectAutomation, report: UUID) {
+        Task {
+            do {
+                _ = try await RuntimeClient.shared.request("automationReportSession", body: ["id": .string(routine.id.uuidString)])
+                for _ in 0..<20 where !model.sessions.contains(where: { $0.id == report }) { try? await Task.sleep(for: .milliseconds(150)) }
+                model.showingAutomations = false
+                model.selectedID = report
+            } catch { problem = error.localizedDescription }
+        }
+    }
+
 }
 
 /// An automation's agent, model and effort, each run's own; a preset fills all three.

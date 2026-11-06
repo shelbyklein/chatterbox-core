@@ -783,7 +783,10 @@ enum Companion {
         var instructions: String
         /// The project's name, and its folder.
         var project: String
+        /// Empty for General, retained as a string so older phone clients can still read the list.
         var projectFolder: String
+        var reportSessionID: UUID? = nil
+        var reportSessionTitle: String? = nil
         /// "claude" or "codex": who does each run.
         var agent: String
         /// The model's name and the effort; nil: the agent's defaults.

@@ -610,6 +610,12 @@ final class MobileStore {
     }
 
     /// Changes every day of a routine; the answer is the routine as it is now.
+    func automationReportingSession(_ id: UUID) async throws -> UUID {
+        let result: [String: String] = try await call("/v1/automations/\(id.uuidString)/session", method: "POST", body: Data("{}".utf8))
+        guard let id = result["threadID"].flatMap(UUID.init(uuidString:)) else { throw URLError(.cannotParseResponse) }
+        return id
+    }
+
     func editAutomation(_ id: UUID, _ change: Companion.AutomationEdit) async throws -> Companion.AutomationRoutine {
         try await call("/v1/automations/\(id.uuidString)", method: "POST", body: try JSONEncoder().encode(change))
     }

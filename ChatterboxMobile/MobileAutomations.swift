@@ -27,7 +27,7 @@ struct MobileAutomationsView: View {
                 if let routines {
                     if routines.isEmpty {
                         ContentUnavailableView("No automations yet", systemImage: "clock.arrow.circlepath",
-                                               description: Text("Set one up on the Mac: right-click a project and choose Automations."))
+                                               description: Text("Set one up in Automations on the Mac. Choose General or a project."))
                     }
                     ForEach(routines) { routine in
                         MobileAutomationRow(routine: routine, switching: switching.contains(routine.id),
@@ -248,6 +248,19 @@ struct MobileAutomationEditor: View {
     var body: some View {
         Form {
             Section { runNow } footer: { Text(runFooter) }
+            if routine.reportSessionID != nil {
+                Section("General") {
+                    Button {
+                        Task {
+                            do { ran(try await store.automationReportingSession(routine.id)) }
+                            catch { problem = MobileAutomations.describe(error) }
+                        }
+                    } label: {
+                        Label("Open \(routine.reportSessionTitle ?? routine.title)", systemImage: "bubble.left.and.bubble.right")
+                    }
+                    .accessibilityIdentifier("automation-report-session")
+                }
+            }
             Section("Name") {
                 TextField("Name", text: $title)
                     .accessibilityIdentifier("automation-title")
@@ -260,7 +273,7 @@ struct MobileAutomationEditor: View {
             } header: {
                 Text("What each run does")
             } footer: {
-                Text("Every run also reports first and asks before changing anything, never touches staging or production without your approval, and backs up first. Its report goes to \(routine.project)'s session.")
+                Text("Every run also reports first and asks before changing anything, never touches staging or production without your approval, and backs up first. Its report goes to \(routine.reportSessionTitle ?? (routine.project + "’s session")).")
             }
             Section {
                 dayChips
@@ -325,7 +338,7 @@ struct MobileAutomationEditor: View {
     }
 
     private var runFooter: String {
-        var parts = ["Runs as a sidequest of \(routine.project)'s session, then opens it."]
+        var parts = ["Runs separately and reports to \(routine.reportSessionTitle ?? (routine.project + "’s session")), then opens the run."]
         if let last = routine.lastRunAt {
             parts.append(routine.isRunning == true ? "Running now." : "Last run \(last.formatted(.relative(presentation: .named))).")
         }
