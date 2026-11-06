@@ -41,6 +41,32 @@ struct AutomationRunState: Codable {
 }
 
 enum ProjectAutomations {
+    /// The configured intake used by this Desk. Exact identity only: never run an unrelated
+    /// maintenance routine because its instructions happen to mention mail or tasks.
+    static func deskSourceRoutine(in automations: [ProjectAutomation]) throws -> [ProjectAutomation] {
+        let matches = routines(in: automations).filter {
+            $0.first?.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                .caseInsensitiveCompare("ClickUp + Outlook morning priorities") == .orderedSame
+        }
+        guard matches.count == 1, let routine = matches.first else {
+            throw NSError(domain: "DeskSources", code: 1, userInfo: [NSLocalizedDescriptionKey:
+                matches.isEmpty ? "Set up the ClickUp + Outlook morning priorities routine in Automations first." : "More than one morning-priorities routine is configured. Keep one source-check routine before checking from the Desk."])
+        }
+        return routine
+    }
+
+    static func deskSourceInstructions(_ configured: String, includeNew: Bool) -> String {
+        """
+        \(configured)
+
+        This manual run is Check for updates from the Desk. \(includeNew ? "Find new source tasks as well as updates to existing Desk cards." : "Check existing Desk cards only; do not add new tasks.")
+        - Read only the sources/accounts covered by the configured instructions above. Do not change ClickUp, send/draft email, publish, install anything, or perform the tasks themselves.
+        - Use each source's last verified coverage checkpoint in the existing reports. A last-requested or last-run timestamp is NOT a coverage checkpoint. If a previous pull was partial, resume from the last verified checkpoint; report inaccessible sources and never advance their checkpoint.
+        - Read `desk list --json` before adding anything. De-duplicate by source reference, or sender/subject/date when no ID exists; preserve existing tasks and board columns. Update source status and verified links with `desk source REF --status STATUS --url URL --task DESK_ID`. Warn about mismatches; do not complete or archive existing tasks.
+        - For genuinely new tasks, preserve the verified source reference/title/link, propose the correct place and give the approved yes/no confidence reason. Never invent IDs, links, successful coverage or new work when nothing changed.
+        - Finish with counts of new items, updated items and sources that could not be checked, plus links to relevant source material and reports. Leave existing verified checkpoints unchanged for every partial source.
+        """
+    }
     /// The automations, as set in the app (Automations… on a project).
     static var configFile: URL { RuntimePaths.data.appendingPathComponent("Automations.json") }
     /// Their runs, as recorded by the background service.

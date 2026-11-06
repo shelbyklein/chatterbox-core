@@ -4,23 +4,23 @@ import SwiftUI
 /// On iPad the open chat sits beside them; on iPhone it opens over them.
 struct ChatListView: View {
     enum Page: String, CaseIterable, Identifiable {
-        /// In this order in the tab bar. Pinned: what's pinned on the Mac, in its order. All:
+        /// In this order in the tab bar. Activity: live sessions and unread replies. All:
         /// every session at once, newest first.
-        case pinned, projects, studios, chats, all
+        case activity, projects, studios, chats, all
         var id: String { rawValue }
         var title: String { rawValue.capitalized }
         var icon: String {
             switch self {
             case .all: "tray.full"
-            case .pinned: "pin"
+            case .activity: "waveform.path"
             case .projects: "folder"
             case .studios: "paintpalette"
             case .chats: "bubble.left.and.bubble.right"
             }
         }
-        /// The one kind of group the page lists (All and Pinned list every kind).
+        /// The one kind of group the page lists (All and Activity list every kind).
         var kind: Companion.ChatGroup.Kind { self == .projects ? .projects : self == .studios ? .studio : .chats }
-        func includes(_ kind: Companion.ChatGroup.Kind) -> Bool { self == .all || self == .pinned || kind == self.kind }
+        func includes(_ kind: Companion.ChatGroup.Kind) -> Bool { self == .all || self == .activity || kind == self.kind }
         /// The tab a session of this kind lives on (Pinned and All list every kind).
         static func home(for kind: Companion.ChatGroup.Kind?) -> Page { kind == .projects ? .projects : kind == .studio ? .studios : .chats }
     }
@@ -137,7 +137,7 @@ struct ChatListView: View {
                 // The tab on screen opens it when it's the chat's own tab (ChatterboxTabs goes
                 // there), or All, which lists every chat.
                 let kind = store.chatList?.groups.first { $0.chats.contains { $0.id == id } }?.kind
-                guard fixedPage == .all || fixedPage == Page.home(for: kind) else { return }
+                guard fixedPage == .all || fixedPage == .activity || fixedPage == Page.home(for: kind) else { return }
             }
             if let chat = allChats.first(where: { $0.id == id }) {
                 open(chat); MobilePushNotifications.shared.pendingChat = nil
@@ -306,11 +306,13 @@ struct ChatListView: View {
                     ToolbarItem(placement: .topBarTrailing) {
                         Menu {
                             connectionItems
+                            if page != .activity {
                             Picker("Sort", selection: Binding(get: { sort }, set: { new in withAnimation(.easeOut(duration: 0.2)) { sortName = new.rawValue } })) {
                                 ForEach(Sort.allCases) { Label($0.title, systemImage: $0.icon).tag($0) }
                             }
                             Button { withAnimation(.easeOut(duration: 0.2)) { showsCards.toggle() } } label: {
                                 Label(showsCards ? "Show as List" : "Show as Cards", systemImage: showsCards ? "list.bullet" : "square.grid.2x2")
+                            }
                             }
                         } label: { Image(systemName: "ellipsis") }
                         .accessibilityLabel("Connection")
@@ -332,7 +334,9 @@ struct ChatListView: View {
     /// iPad's sidebar style beside the chat; the iPhone's grouped list on its own.
     @ViewBuilder
     private var sidebar: some View {
-        if page == .studios {
+        if page == .activity {
+            activityPage
+        } else if page == .studios {
             studioWorkspace
         } else if showsCards {
             chatCards
@@ -341,6 +345,22 @@ struct ChatListView: View {
         } else {
             chatList.listStyle(.insetGrouped)
         }
+    }
+
+    /// Activity is a destination of its own; opening a row uses this page's same detail pane.
+    private var activityPage: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                loadingStatus
+                if let problem = store.problem { MobileProblemCard(problem, updated: store.chatsUpdatedAt) { await store.loadChats() } }
+                if let list = store.chatList {
+                    MobileNewReplies(activity: list.activity ?? [], chats: allChats, summary: summary(for:), open: open,
+                                     rename: beginRename, dedicated: true, query: search)
+                }
+            }.padding(16)
+        }
+        .background(Color(uiColor: .systemGroupedBackground))
+        .accessibilityIdentifier("activity-page")
     }
 
     /// The page's groups; a search looks through every page.
@@ -355,8 +375,7 @@ struct ChatListView: View {
             return group
         }
         let shown = filtered(search.isEmpty || fixedPage != nil ? lists.filter { page.includes($0.kind) } : lists)
-        if page == .pinned { return Self.pinned(shown) }
-        return sorted(page == .all ? Self.mixed(shown) : shown)
+                return sorted(page == .all ? Self.mixed(shown) : shown)
     }
 
     /// Pinned's one list: the Mac's pinned sessions, in the Mac's order.
@@ -476,9 +495,8 @@ struct ChatListView: View {
     private var emptyPage: some View {
         if store.chatList != nil, groups.isEmpty {
             if search.isEmpty {
-                ContentUnavailableView(page == .all ? "No Sessions" : page == .pinned ? "Nothing Pinned" : "No \(page.title)", systemImage: page.icon,
+                ContentUnavailableView(page == .all ? "No Sessions" : "No \(page.title)", systemImage: page.icon,
                                        description: Text(page == .all ? "Projects, Studios and sessions from the Mac show up here." : page == .studios ? "Studios you make on the Mac show up here." :
-                                                         page == .pinned ? "Sessions you pin on the Mac (right-click, Pin to Top) show up here, in the same order." :
                                                          page == .projects ? "Projects you open on the Mac show up here." :
                                                          "Chats outside a project or Studio show up here."))
             } else {
@@ -788,7 +806,7 @@ struct ChatListView: View {
     @ViewBuilder
     private var connectionItems: some View {
         if let connection = store.connection { Text("Connected to \(connection.macName)") }
-        Button { showingActivity = true } label: { Label("Activity", systemImage: "clock") }
+        Button { showingActivity = true } label: { Label("Activity History", systemImage: "clock") }
         Button { showingAutomations = true } label: { Label("Automations", systemImage: "clock.arrow.circlepath") }
         #if canImport(RoyalVNCKit)
         Button { store.showingMacScreen = true } label: { Label("Mac Screen", systemImage: "display") }

@@ -130,6 +130,7 @@ final class DeskModel {
     /// The last thing silenced here: a few seconds to Undo it.
     var silencedNote: DeskNeed?
     private(set) var adding = false
+    private(set) var checkingSources = false
     /// What last went wrong, shown under the header.
     var problem: String?
     /// The last request started (or continued) here: it runs in the background, with a note to open it.
@@ -153,6 +154,16 @@ final class DeskModel {
     }
 
     // MARK: Loading
+
+    func checkSources() async {
+        guard !checkingSources, snapshot?.sourcePull?.isRunning != true else { return }
+        checkingSources = true
+        defer { checkingSources = false }
+        do {
+            load(try await send(["action": "checkSources"]).decode(Companion.Desk.self))
+            problem = nil
+        } catch { note(error, "check source updates") }
+    }
 
     /// The service's Desk as it is now (a reply, an event, or a test's stand-in).
     func load(_ desk: Companion.Desk) {
@@ -818,8 +829,26 @@ struct DeskView: View {
                 Text(sections.summary).font(.title3).foregroundStyle(Color.metadata).lineLimit(1)
                     .deskFrame("summary")
                 Spacer()
+                Button { Task { await desk.checkSources() } } label: {
+                    HStack(spacing: 6) {
+                        if desk.checkingSources || desk.snapshot?.sourcePull?.isRunning == true { ProgressView().controlSize(.small) }
+                        else { Image(systemName: "arrow.clockwise") }
+                        Text(desk.snapshot?.sourcePull?.needsYou == true ? "Check needs you" : desk.snapshot?.sourcePull?.isRunning == true ? "Checking…" : "Check for updates")
+                    }
+                }
+                .disabled(desk.checkingSources || desk.snapshot?.sourcePull?.isRunning == true)
+                .deskFrame("checkSources")
             }
             askField.frame(maxWidth: 760, alignment: .leading)
+            if let pull = desk.snapshot?.sourcePull {
+                HStack(spacing: 10) {
+                    if let date = pull.lastRequestedAt { Text("Last requested \(date.formatted(.relative(presentation: .numeric)))").foregroundStyle(Color.metadata) }
+                    if let id = pull.threadID {
+                        Button(pull.needsYou ? "Needs you · Open check" : "Open check") { desk.open(id, in: model) }
+                            .buttonStyle(.link).deskFrame("sourcePullOpen")
+                    }
+                }.font(.callout)
+            }
             if let started = desk.startedNote {
                 HStack(spacing: 8) {
                     Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)

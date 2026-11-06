@@ -84,6 +84,7 @@ struct MobileDeskView: View {
     @State private var showingAutomations = false
     /// A run's session picked in Automations: opened once the sheet has closed.
     @State private var automationPick: UUID?
+    @State private var checkingSources = false
 
     /// What the Desk's tab counts, as of its last answer: what needs you and requests
     /// waiting to be placed (not what's ready to mark complete: nothing waits on that).
@@ -242,6 +243,35 @@ struct MobileDeskView: View {
         }
         // Nothing to ask of a Mac without the Desk, or one not reached yet.
         if desk != nil || (loadProblem == nil && store.problem == nil) { askBox }
+        if let desk {
+            VStack(alignment: .leading, spacing: 8) {
+                Button {
+                    guard !checkingSources else { return }
+                    checkingSources = true
+                    Task { @MainActor in
+                        defer { checkingSources = false }
+                        do { try await store.checkDeskSources() }
+                        catch { actionProblem = Self.describe(error) }
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        if checkingSources || desk.sourcePull?.isRunning == true { ProgressView() }
+                        else { Image(systemName: "arrow.clockwise") }
+                        Text(desk.sourcePull?.needsYou == true ? "Check needs you" : desk.sourcePull?.isRunning == true ? "Checking…" : "Check for updates")
+                    }.frame(minHeight: 32)
+                }
+                .buttonStyle(.bordered)
+                .disabled(checkingSources || desk.sourcePull?.isRunning == true)
+                .accessibilityIdentifier("desk-check-sources")
+                if let date = desk.sourcePull?.lastRequestedAt {
+                    Text("Last requested \(Self.ago(date))").font(.caption).foregroundStyle(.secondary)
+                }
+                if let id = desk.sourcePull?.threadID {
+                    Button(desk.sourcePull?.needsYou == true ? "Needs you · Open check" : "Open check") { open(id) }
+                        .font(.subheadline).accessibilityIdentifier("desk-source-check-open")
+                }
+            }
+        }
         if desk == nil, loadProblem == nil, store.problem == nil { loading }
     }
 

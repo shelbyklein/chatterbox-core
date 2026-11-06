@@ -117,6 +117,7 @@ final class DeskStore {
         var ready: [Companion.DeskReady] = []
         var done: [Companion.DeskDone] = []
         var linked: [Companion.DeskTask] = []
+        var sourcePull: Companion.DeskSourcePull? = nil
     }
     /// Something a session waits on Shelby for.
     private struct Waiting {
@@ -845,6 +846,10 @@ final class DeskStore {
     /// Codex), never from Shelby.
     func operation(_ body: JSON, agent: Bool) throws -> JSON {
         switch body["action"]?.string ?? "get" {
+        case "checkSources":
+            guard !agent else { throw Failure(status: 403, message: "Only you can request a source check.") }
+            try checkSources(includeNew: body["includeNew"]?.bool ?? true)
+            return try .value(snapshot())
         case "get":
             return try .value(snapshot())
         case "places":
@@ -1001,7 +1006,27 @@ final class DeskStore {
                        working: working.sorted(by: newestFirst).map(\.item), silenced: silenced.sorted(by: newestFirst).map(\.item),
                        ready: Array(ready.sorted(by: newestFirst).prefix(Self.readyLimit).map(\.item)),
                        done: done.map { (date: $0.completedAt, item: $0) }.sorted(by: newestFirst).map(\.item),
-                       linked: linked)
+                       linked: linked, sourcePull: sourcePullState())
+    }
+
+    private func sourcePullState() -> Companion.DeskSourcePull {
+        guard let routine = try? ProjectAutomations.deskSourceRoutine(in: ProjectAutomations.load()) else { return .init() }
+        let state = ProjectAutomations.loadState()
+        let latest = routine.compactMap { state[$0.id.uuidString] }.max { ($0.lastRun ?? .distantPast) < ($1.lastRun ?? .distantPast) }
+        let thread = latest?.threadID.flatMap { id in model?.sessions.first { $0.id == id } }
+        return .init(routineID: routine.first?.id, lastRequestedAt: latest?.lastRun, threadID: thread?.id,
+                     isRunning: thread.map { $0.record.archivedAt == nil && ($0.isRunning || $0.isWaitingOnYou) } ?? false,
+                     needsYou: thread?.isWaitingOnYou ?? false)
+    }
+
+    /// A user tap reuses the configured intake, without a second scheduler or duplicate run.
+    func checkSources(includeNew: Bool = true) throws {
+        let routine: [ProjectAutomation]
+        do { routine = try ProjectAutomations.deskSourceRoutine(in: ProjectAutomations.load()) }
+        catch { throw Failure(status: 409, message: error.localizedDescription) }
+        if sourcePullState().isRunning { return }
+        _ = try CompanionServer.shared.runAutomation(routine[0].id, deskSources: true, includeNew: includeNew)
+        changed()
     }
 
     /// Tasks follow their threads: one archived outside the board is done (when it was
@@ -1200,7 +1225,7 @@ final class DeskStore {
 
     private static func desk(_ content: Content, revision: Int) -> Companion.Desk {
         .init(revision: revision, needsYou: content.needsYou, incoming: content.incoming, working: content.working, silenced: content.silenced,
-              ready: content.ready, done: content.done, linked: content.linked)
+              ready: content.ready, done: content.done, linked: content.linked, sourcePull: content.sourcePull)
     }
 
     /// Now, in whole seconds, as desk.json keeps it.

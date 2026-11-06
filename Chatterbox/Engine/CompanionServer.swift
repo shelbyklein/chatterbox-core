@@ -384,6 +384,11 @@ final class CompanionServer {
             guard let body = try? Companion.decoder.decode(Companion.DeskOriginReport.self, from: request.body) else { return .error(400, "Say which source and its status.") }
             do { try DeskStore.shared.reportOrigin(body) } catch { return failure(error) }
             return .json(DeskStore.shared.snapshot())
+        case ("POST", 3) where parts[1] == "desk" && parts[2] == "check-sources":
+            do {
+                try DeskStore.shared.checkSources()
+                return .json(DeskStore.shared.snapshot())
+            } catch { return failure(error) }
         case ("POST", 3) where parts[1] == "desk" && parts[2] == "task":
             // Make this a task (from a thread): a new task, already linked to it.
             guard let body = try? Companion.decoder.decode(Companion.DeskTaskRequest.self, from: request.body) else { return .error(400, "Say which session.") }
@@ -740,7 +745,7 @@ final class CompanionServer {
 
     /// Runs a routine now, as Run Now on the Mac does, in a new session reporting to its
     /// project's. The day that ran last is the one run, so a run of it still going is left alone.
-    func runAutomation(_ id: UUID) throws -> ChatSession {
+    func runAutomation(_ id: UUID, deskSources: Bool = false, includeNew: Bool = true) throws -> ChatSession {
         guard let model else { throw Failure(status: 503, message: "Chatterbox is starting.") }
         guard let routine = ProjectAutomations.routines(in: ProjectAutomations.load()).first(where: { $0.contains { $0.id == id } }) else {
             throw Failure(status: 404, message: "That automation is gone.")
@@ -748,7 +753,8 @@ final class CompanionServer {
         #if CHATTERBOX_HEADLESS
         guard let runner = AutomationRunner.shared else { throw Failure(status: 503, message: "Automations aren't running yet.") }
         let state = ProjectAutomations.loadState()
-        let latest = routine.max { (state[$0.id.uuidString]?.lastRun ?? .distantPast) < (state[$1.id.uuidString]?.lastRun ?? .distantPast) } ?? routine[0]
+        var latest = routine.max { (state[$0.id.uuidString]?.lastRun ?? .distantPast) < (state[$1.id.uuidString]?.lastRun ?? .distantPast) } ?? routine[0]
+        if deskSources { latest.instructions = ProjectAutomations.deskSourceInstructions(latest.instructions, includeNew: includeNew) }
         let thread: UUID
         do { thread = try runner.run(latest, manual: true) } catch { throw Failure(status: 409, message: error.localizedDescription) }
         model.automationsChanged()

@@ -599,6 +599,11 @@ final class MobileStore {
 
     // MARK: Automations
 
+    func checkDeskSources() async throws {
+        let fresh: Companion.Desk = try await call("/v1/desk/check-sources", method: "POST", body: Data("{}".utf8))
+        latestDesk = fresh
+    }
+
     /// Every project's routines, the soonest to run first.
     func automations() async throws -> [Companion.AutomationRoutine] {
         try await call("/v1/automations")

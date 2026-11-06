@@ -112,6 +112,9 @@ struct MobileNewReplies: View {
     let open: (Companion.ChatSummary) -> Void
     let rename: (Companion.ChatSummary) -> Void
     var headingInset: CGFloat = 4
+    /// The Activity tab shows every unread reply and cannot be collapsed.
+    var dedicated = false
+    var query = ""
     @Environment(MobileStore.self) private var store
     @AppStorage("mobileActivityExpanded") private var expanded = true
     @State private var pending: ManagementAction?
@@ -129,28 +132,40 @@ struct MobileNewReplies: View {
     // them, and the front thread shows here when it replies or works.
     private var replies: [Companion.TurnCompletion] {
         MobileSeenReplies.shared.newest(in: activity.filter {
-            summary($0.chatID).map { $0.workOf == nil } == true && !MobileActivityDismissals.shared.hides($0)
-        }, limit: 3)
+            summary($0.chatID).map { $0.workOf == nil && matches($0) } == true && !MobileActivityDismissals.shared.hides($0)
+        }, limit: dedicated ? .max : 3)
     }
     private var working: [Companion.ChatSummary] {
-        chats.filter { $0.isRunning && $0.workOf == nil && !MobileActivityDismissals.shared.hides($0, activity: activity) }
+        chats.filter { ($0.isRunning || (dedicated && $0.isWaitingOnYou)) && $0.workOf == nil && matches($0) && !MobileActivityDismissals.shared.hides($0, activity: activity) }
     }
     /// Work threads waiting on you: one row each, under their front thread's name.
     private var workNeedingYou: [Companion.ChatSummary] {
-        chats.filter { $0.workOf != nil && $0.isWaitingOnYou }
+        chats.filter { $0.workOf != nil && $0.isWaitingOnYou && matches($0) }
+    }
+
+    private func matches(_ chat: Companion.ChatSummary) -> Bool {
+        query.isEmpty || ([chat.title, chat.project ?? ""] + (chat.tags ?? []))
+            .contains { $0.localizedCaseInsensitiveContains(query) }
     }
 
     var body: some View {
         let replies = replies
         let working = working
-        let entries = workNeedingYou.map(needsYouEntry) + working.map { entry($0, reply: nil) }
-            + replies.compactMap { reply in summary(reply.chatID).map { entry($0, reply: reply) } }
+        let active = dedicated ? working.sorted { $0.isWaitingOnYou && !$1.isWaitingOnYou } : working
+        let activeIDs = Set(active.map(\.id))
+        let entries = workNeedingYou.map(needsYouEntry) + active.map { entry($0, reply: nil) }
+            + replies.filter { !dedicated || !activeIDs.contains($0.chatID) }.compactMap { reply in summary(reply.chatID).map { entry($0, reply: reply) } }
         // How hard the Mac is working, when it's under pressure (MobilePressure.swift).
         let pressure = store.chatList?.pressure.flatMap { $0.isOK ? nil : $0 }
         Group {
             if !entries.isEmpty || pressure != nil {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 10) {
+                        if dedicated {
+                            Text("\(working.count + workNeedingYou.count) active · \(replies.count) new")
+                                .font(.subheadline).foregroundStyle(.secondary)
+                            Spacer()
+                        } else {
                         Button { withAnimation(.easeOut(duration: 0.2)) { expanded.toggle() } } label: {
                             HStack(spacing: 6) {
                                 Text("ACTIVITY")
@@ -167,6 +182,7 @@ struct MobileNewReplies: View {
                         .buttonStyle(.plain)
                         .accessibilityLabel("Activity, \(replies.count) new replies, \(working.count) \(store.isStale ? "last seen working" : "working")")
                         .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+                        }
                         if let pressure {
                             Button { showingPressure = true } label: { MobilePressurePill(pressure: pressure, stale: store.isStale) }
                                 .buttonStyle(.plain)
@@ -175,7 +191,7 @@ struct MobileNewReplies: View {
                                 .accessibilityIdentifier("mac-pressure")
                         }
                     }
-                    if expanded && !entries.isEmpty {
+                    if (dedicated || expanded) && !entries.isEmpty {
                         TimelineView(.periodic(from: .now, by: 60)) { context in
                             MobileActivityRows(entries: entries, busy: busy, now: context.date, stale: store.isStale, open: open, rename: rename, dismiss: dismiss,
                                                archive: { manage($0, deleting: false) }, delete: { manage($0, deleting: true) })
@@ -184,6 +200,10 @@ struct MobileNewReplies: View {
                         }
                     }
                 }
+            } else if dedicated {
+                ContentUnavailableView(query.isEmpty ? "All caught up" : "No matching activity", systemImage: "checkmark.circle",
+                                       description: Text(query.isEmpty ? "Working sessions, requests for you and new replies appear here." : "Try another session name or tag."))
+                    .accessibilityIdentifier("activity-empty")
             }
         }
         .onChange(of: chats, initial: true) { _, chats in MobileActivityDismissals.shared.reconcile(chats) }
@@ -442,6 +462,7 @@ private final class MobileActivityCell: UITableViewCell {
 
     func configure(_ entry: MobileActivityEntry, busy: Bool, now: Date, stale: Bool = false) {
         let chat = entry.chat
+        let needsYou = entry.needsYouIn != nil || (entry.reply == nil && chat.isWaitingOnYou)
         name.text = entry.title
         sidequest.isHidden = !chat.isSidequest
         subtitle.text = entry.subtitle
@@ -449,18 +470,18 @@ private final class MobileActivityCell: UITableViewCell {
         provider.image = UIImage(named: (Backend(rawValue: entry.backend) ?? .claude).iconName)?.withRenderingMode(.alwaysTemplate)
         provider.tintColor = accent; spinner.color = accent
         // New reply: blue. A work thread waiting on you: the attention color.
-        dot.isHidden = entry.reply == nil && entry.needsYouIn == nil
-        dot.backgroundColor = entry.needsYouIn != nil ? UIColor(Color.attention) : .systemBlue
-        let working = entry.reply == nil && entry.needsYouIn == nil
+        dot.isHidden = entry.reply == nil && !needsYou
+        dot.backgroundColor = needsYou ? UIColor(Color.attention) : .systemBlue
+        let working = entry.reply == nil && !needsYou
         lastSeen.isHidden = !(working && stale)
         if working && !stale { spinner.startAnimating() } else { spinner.stopAnimating() }
         if busy { time.text = "Updating…" }
         else if let reply = entry.reply {
             let formatter = RelativeDateTimeFormatter(); formatter.unitsStyle = .short
             time.text = formatter.localizedString(for: reply.endedAt, relativeTo: now)
-        } else if entry.needsYouIn != nil { time.text = "Needs you" }
+        } else if needsYou { time.text = "Needs you" }
         else { time.text = stale ? "Last seen working" : "Working" }
-        if entry.needsYouIn != nil { accessibilityLabel = "Needs you: \(entry.title)" }
+        if needsYou { accessibilityLabel = "Needs you: \(entry.title)" }
         else { accessibilityLabel = "\(working ? (stale ? "Last seen working" : "Working") : "New reply"): \(chat.isSidequest ? entry.title + " · Sidequest" : chat.title)" }
         accessibilityValue = [entry.subtitle, time.text].compactMap { $0 }.joined(separator: ", ")
         accessibilityHint = "Opens the chat. Swipe left to clear it from Activity, right to archive or delete."

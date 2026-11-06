@@ -457,6 +457,17 @@ enum Companion {
         /// Every task linked to a thread (open, and done this week): which thread carries which
         /// task, for thread menus and the Mac's own Working. Nil from a service older than tasks.
         var linked: [DeskTask]? = nil
+        /// The existing source-intake routine, not a separate sync engine.
+        var sourcePull: DeskSourcePull? = nil
+    }
+
+    struct DeskSourcePull: Codable, Equatable {
+        var routineID: UUID? = nil
+        /// When the last pull was requested; this is not a successful coverage watermark.
+        var lastRequestedAt: Date? = nil
+        var threadID: UUID? = nil
+        var isRunning = false
+        var needsYou = false
     }
 
     /// A task linked to its thread (plans/work-threads.md). One task per thread, one thread per task.
