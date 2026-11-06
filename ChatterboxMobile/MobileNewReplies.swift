@@ -115,6 +115,8 @@ struct MobileNewReplies: View {
     /// The Activity tab shows every unread reply and cannot be collapsed.
     var dedicated = false
     var query = ""
+    var cards = false
+    @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(MobileStore.self) private var store
     @AppStorage("mobileActivityExpanded") private var expanded = true
     @State private var pending: ManagementAction?
@@ -158,7 +160,9 @@ struct MobileNewReplies: View {
         // How hard the Mac is working, when it's under pressure (MobilePressure.swift).
         let pressure = store.chatList?.pressure.flatMap { $0.isOK ? nil : $0 }
         Group {
-            if !entries.isEmpty || pressure != nil {
+            if dedicated {
+                dedicatedContent(entries: entries, workingCount: working.count + workNeedingYou.count, replyCount: replies.count, pressure: pressure)
+            } else if !entries.isEmpty || pressure != nil {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 10) {
                         if dedicated {
@@ -222,6 +226,101 @@ struct MobileNewReplies: View {
         .alert("Couldn't update session", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
             Button("OK", role: .cancel) { problem = nil }
         } message: { Text(problem ?? "") }
+    }
+
+    /// The dedicated destination reuses the ordinary thread views. Only embedded Activity
+    /// keeps the compact UIKit table; it no longer controls this page's row sizing.
+    @ViewBuilder
+    private func dedicatedContent(entries: [MobileActivityEntry], workingCount: Int, replyCount: Int, pressure: Companion.Pressure?) -> some View {
+        if entries.isEmpty {
+            VStack(alignment: .leading, spacing: 16) {
+                dedicatedHeader(workingCount: workingCount, replyCount: replyCount, pressure: pressure).padding(.horizontal, 16)
+                ContentUnavailableView(query.isEmpty ? "All caught up" : "No matching activity", systemImage: "checkmark.circle",
+                    description: Text(query.isEmpty ? "Working sessions, requests for you and new replies appear here." : "Try another session name or tag."))
+                    .accessibilityIdentifier("activity-empty")
+            }
+        } else if cards {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    dedicatedHeader(workingCount: workingCount, replyCount: replyCount, pressure: pressure)
+                    LazyVGrid(columns: typeSize.isAccessibilitySize ? [GridItem(.flexible())] : [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                        ForEach(entries) { entry in expandedEntry(entry, card: true) }
+                    }.accessibilityIdentifier("activity-cards")
+                }.padding(16)
+            }
+        } else {
+            List {
+                Section {
+                    ForEach(entries) { entry in
+                        expandedEntry(entry, card: false)
+                            .padding(.vertical, 8)
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button { dismiss(entry) } label: { Label("Dismiss", systemImage: "checkmark") }.tint(.blue)
+                            }
+                            .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                                Button { manage(entry.chat, deleting: false) } label: { Label("Archive", systemImage: "archivebox") }.tint(.orange)
+                                Button(role: .destructive) { manage(entry.chat, deleting: true) } label: { Label("Delete", systemImage: "trash") }
+                            }
+                    }
+                } header: {
+                    dedicatedHeader(workingCount: workingCount, replyCount: replyCount, pressure: pressure).textCase(nil)
+                }
+            }
+            .listStyle(.insetGrouped)
+            .accessibilityIdentifier("activity-list")
+        }
+    }
+
+    private func dedicatedHeader(workingCount: Int, replyCount: Int, pressure: Companion.Pressure?) -> some View {
+        HStack(spacing: 10) {
+            Text("\(workingCount) active · \(replyCount) new").font(.subheadline).foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+            if let pressure {
+                Button { showingPressure = true } label: { MobilePressurePill(pressure: pressure, stale: store.isStale) }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(pressure.label)\(store.isStale ? ", last seen" : ""). Show readings")
+                    .accessibilityIdentifier("mac-pressure")
+            }
+        }
+    }
+
+    private func expandedEntry(_ entry: MobileActivityEntry, card: Bool) -> some View {
+        var display = entry.chat
+        if let source = entry.source { display.project = source }
+        if let needs = entry.needsYouIn { display.subtitle = "Needs you in " + needs + (entry.subtitle.map { " · " + $0 } ?? "") }
+        if store.isStale { display.isRunning = false }
+        let needsYou = entry.needsYouIn != nil || (entry.reply == nil && entry.chat.isWaitingOnYou)
+        let state = needsYou ? "Needs you" : entry.reply != nil ? "New reply" : store.isStale ? "Last seen working" : "Working"
+        let label = state + ": " + (entry.reply != nil ? entry.chat.title : entry.title)
+        return TimelineView(.periodic(from: .now, by: 60)) { context in
+            let status = entry.reply.map { reply in
+                let formatter = RelativeDateTimeFormatter(); formatter.unitsStyle = .short
+                return state + " · " + formatter.localizedString(for: reply.endedAt, relativeTo: context.date)
+            } ?? state
+            Group {
+                if card {
+                    ChatCard(chat: display, isNew: entry.reply != nil, status: status) { open(entry.chat) }
+                } else {
+                    ChatRow(chat: display, status: status, isNew: entry.reply != nil) { open(entry.chat) }
+                }
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(label)
+            .accessibilityValue([entry.subtitle, status].compactMap { $0 }.joined(separator: ", "))
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { open(entry.chat) }
+            .accessibilityAction(named: "Dismiss from Activity") { dismiss(entry) }
+            .accessibilityAction(named: "Rename Session") { rename(entry.chat) }
+            .accessibilityAction(named: "Archive Session") { manage(entry.chat, deleting: false) }
+            .accessibilityAction(named: "Delete Session") { manage(entry.chat, deleting: true) }
+            .contextMenu {
+                Button { rename(entry.chat) } label: { Label("Rename", systemImage: "pencil") }
+                Button { dismiss(entry) } label: { Label("Dismiss from Activity", systemImage: "checkmark") }
+                Button { manage(entry.chat, deleting: false) } label: { Label("Archive", systemImage: "archivebox") }
+                Button(role: .destructive) { manage(entry.chat, deleting: true) } label: { Label("Delete", systemImage: "trash") }
+            }
+            .disabled(busy.contains(entry.chat.id))
+        }
     }
 
     private func entry(_ chat: Companion.ChatSummary, reply: Companion.TurnCompletion?) -> MobileActivityEntry {

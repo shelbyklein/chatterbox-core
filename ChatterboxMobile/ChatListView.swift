@@ -310,9 +310,9 @@ struct ChatListView: View {
                             Picker("Sort", selection: Binding(get: { sort }, set: { new in withAnimation(.easeOut(duration: 0.2)) { sortName = new.rawValue } })) {
                                 ForEach(Sort.allCases) { Label($0.title, systemImage: $0.icon).tag($0) }
                             }
+                            }
                             Button { withAnimation(.easeOut(duration: 0.2)) { showsCards.toggle() } } label: {
                                 Label(showsCards ? "Show as List" : "Show as Cards", systemImage: showsCards ? "list.bullet" : "square.grid.2x2")
-                            }
                             }
                         } label: { Image(systemName: "ellipsis") }
                         .accessibilityLabel("Connection")
@@ -349,16 +349,18 @@ struct ChatListView: View {
 
     /// Activity is a destination of its own; opening a row uses this page's same detail pane.
     private var activityPage: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                loadingStatus
-                if let problem = store.problem { MobileProblemCard(problem, updated: store.chatsUpdatedAt) { await store.loadChats() } }
-                if let list = store.chatList {
-                    MobileNewReplies(activity: list.activity ?? [], chats: allChats, summary: summary(for:), open: open,
-                                     rename: beginRename, dedicated: true, query: search)
-                }
-            }.padding(16)
+        VStack(alignment: .leading, spacing: 0) {
+            loadingStatus.padding(.horizontal, 16)
+            if let problem = store.problem {
+                MobileProblemCard(problem, updated: store.chatsUpdatedAt) { await store.loadChats() }
+                    .padding(.horizontal, 16).padding(.vertical, 8)
+            }
+            if let list = store.chatList {
+                MobileNewReplies(activity: list.activity ?? [], chats: allChats, summary: summary(for:), open: open,
+                                 rename: beginRename, dedicated: true, query: search, cards: showsCards)
+            } else { Spacer() }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Color(uiColor: .systemGroupedBackground))
         .accessibilityIdentifier("activity-page")
     }
@@ -971,10 +973,12 @@ struct ChatListView: View {
     }
 }
 
-private struct ChatRow: View {
+struct ChatRow: View {
     @Environment(MobileStore.self) private var store
     let chat: Companion.ChatSummary
     var activity: String? = nil
+    var status: String? = nil
+    var isNew = false
     var open: () -> Void
 
     var body: some View {
@@ -1000,6 +1004,7 @@ private struct ChatRow: View {
                                 .foregroundStyle(chat.isWaitingOnYou ? Color.attention : Color.secondary)
                                 .lineLimit(2)
                         }
+                        if let status { Text(status).font(.caption).foregroundStyle(.secondary) }
                         if let activity { Label(activity, systemImage: "flame").font(.caption2).foregroundStyle(.orange) }
                     }
                     Spacer(minLength: 0)
@@ -1007,6 +1012,8 @@ private struct ChatRow: View {
                         Circle().fill(Color.attention).frame(width: 8, height: 8)
                     } else if chat.isRunning {
                         MobileWorkingMark()
+                    } else if isNew {
+                        Circle().fill(.blue).frame(width: 8, height: 8)
                     }
                 }
                 .contentShape(Rectangle())
@@ -1081,7 +1088,7 @@ private struct NestedChatRow: View {
 }
 
 /// A chat as a card: its agent, name, latest line and state, sized to sit two to a row.
-private struct ChatCard: View {
+struct ChatCard: View {
     @Environment(MobileStore.self) private var store
     @State private var thumbnail: UIImage?
     let chat: Companion.ChatSummary
@@ -1089,6 +1096,7 @@ private struct ChatCard: View {
     var selected = false
     var isNew = false
     var activity: String? = nil
+    var status: String? = nil
     /// Inside a family card (ChatListView.familyCard), which draws the card around it.
     var embedded = false
     var open: () -> Void
@@ -1110,6 +1118,8 @@ private struct ChatCard: View {
                         Circle().fill(Color.attention).frame(width: 8, height: 8).accessibilityLabel("Waiting on you")
                     } else if chat.isRunning {
                         MobileWorkingMark(size: .mini)
+                    } else if isNew {
+                        Circle().fill(.blue).frame(width: 8, height: 8).accessibilityLabel("New reply")
                     }
                 }
                 Text(chat.worktreeBranch ?? chat.project ?? chat.title)
@@ -1123,6 +1133,7 @@ private struct ChatCard: View {
                         .lineLimit(3)
                         .multilineTextAlignment(.leading)
                 }
+                if let status { Text(status).font(.caption).foregroundStyle(.secondary) }
                 sidequestLine
                 if showsThumbnail, let thumbnail {
                     Image(uiImage: thumbnail).resizable().scaledToFit()
