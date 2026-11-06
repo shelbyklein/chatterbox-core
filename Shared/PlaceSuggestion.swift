@@ -14,20 +14,44 @@ enum PlaceSuggestion {
         var kind: Kind = .studio
     }
 
+    /// The one place the text names: its whole name (strongest), a distinctive word of its name
+    /// ("archery", "SDHQ"), or a website its instructions or brief name ("usarchery" from
+    /// usarchery.org). Ordinary words its instructions happen to share no longer count: one
+    /// Studio with long instructions matched most chats on "create", "image", "version".
     static func best(for text: String, among places: [Place]) -> Place? {
         let said = words(text)
         guard !said.isEmpty else { return nil }
         let scored = places.map { place -> (Place, Int) in
             let name = words(place.name)
-            // The Studio named outright (every word of it) is the strongest sign.
             var score = !name.isEmpty && name.isSubset(of: said) ? 10 : 0
-            score += words(place.instructions).subtracting(name).intersection(said).count
+            score += terms(of: place).intersection(said).count * 3
             return (place, score)
         }.sorted { $0.1 > $1.1 }
         guard let first = scored.first, first.1 >= 3 else { return nil }
-        if scored.count > 1, scored[1].1 >= first.1 - 1 { return nil }
+        if scored.count > 1, scored[1].1 >= first.1 { return nil }
         return first.0
     }
+
+    /// A place's own terms: the distinctive words of its name, and the sites its instructions
+    /// or brief name (the part before .org/.com, and the words of it).
+    static func terms(of place: Place) -> Set<String> {
+        var terms = words(place.name).subtracting(genericNameWords)
+        let text = place.instructions.lowercased()
+        let pattern = try? NSRegularExpression(pattern: #"(?:https?://)?(?:www\.)?([a-z0-9-]+)\.(?:org|com|net|io|co|app|dev|us)\b"#)
+        for match in pattern?.matches(in: text, range: NSRange(text.startIndex..., in: text)) ?? [] {
+            guard let range = Range(match.range(at: 1), in: text) else { continue }
+            let stem = String(text[range])
+            if stem.count >= 4, !genericNameWords.contains(stem) { terms.insert(stem) }
+        }
+        return terms
+    }
+
+    /// Name words too common to point at one place on their own.
+    private static let genericNameWords: Set<String> = [
+        "usa", "product", "studio", "design", "shop", "store", "home", "personal", "team", "club", "labs", "lab",
+        "company", "group", "media", "creative", "agency", "app", "apps", "site", "web", "website", "google", "github",
+        "youtube", "instagram", "facebook", "clickup", "dropbox", "apple", "example",
+    ]
 
     /// The place called `name` (any case, and "the" or "Studio"/"project" around it ignored),
     /// when exactly one is.
