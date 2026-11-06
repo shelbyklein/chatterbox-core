@@ -801,6 +801,7 @@ private struct DeskWaitingCard: View {
                     .buttonStyle(.bordered)
                     .accessibilityIdentifier("desk-open-\(id)")
             }
+            if item.autoStarted == true { MobileDeskAutoStartedTag() }
             MobileDeskSourceLine(id: (item.task ?? item.chatID).uuidString, origin: item.origin, check: item.check,
                                  matchLabel: "Mark Complete", match: completeChat, writeBack: writeBack, taps: { taps($0) })
             if let task = item.taskText, item.task != nil {
@@ -920,6 +921,7 @@ private struct DeskWorkingCard: View {
             .accessibilityLabel("\(item.title)\(item.subtitle.map { ", " + $0 } ?? ""), \(stale ? "last seen working" : "working")\(item.place.flatMap { $0 != item.title ? ", in \($0)" : nil } ?? "")\(item.activity.map { ": " + $0 } ?? "")")
             .accessibilityHint("Opens the session")
             .accessibilityIdentifier("desk-working-\(item.id.uuidString)")
+            if item.autoStarted == true { MobileDeskAutoStartedTag() }
             MobileDeskSourceLine(id: (item.task ?? item.id).uuidString, origin: item.origin, check: item.check, writeBack: writeBack)
             Button("Open", action: open)
                 .buttonStyle(.bordered)
@@ -992,6 +994,7 @@ private struct DeskReadyCard: View {
                 }
                 .accessibilityIdentifier("desk-ready-assets-\(item.id.uuidString)")
             }
+            if item.autoStarted == true { MobileDeskAutoStartedTag() }
             MobileDeskSourceLine(id: (item.task ?? item.id).uuidString, origin: item.origin, check: item.check,
                                  writeBack: writeBack, taps: { taps($0) })
             HStack(spacing: 8) {
@@ -1230,6 +1233,10 @@ private struct DeskRequestCard: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             Text("\(source) · \(request.createdAt.formatted(.relative(presentation: .named)))")
                 .font(.caption).foregroundStyle(Color.metadata)
+            if let confidence = request.confidence {
+                MobileDeskConfidenceLine(confidence: confidence)
+                    .accessibilityIdentifier("desk-confidence-\(request.id.uuidString)")
+            }
             Button(action: taps(change)) {
                 HStack(spacing: 6) {
                     Image(systemName: MobileDeskPlaces.icon(place))
@@ -1755,5 +1762,31 @@ private struct MobileDeskSourceLine: View {
         }
         if let title = origin.title, !title.isEmpty { parts.append(title) }
         return parts.joined(separator: " \u{00B7} ")
+    }
+}
+
+/// The rubric's answer on a To do card (plans/desk-confidence.md).
+private struct MobileDeskConfidenceLine: View {
+    let confidence: Companion.DeskConfidence
+
+    var body: some View {
+        Label {
+            Text(confidence.canRunAlone ? "Can run without you" : "Needs you").fontWeight(.semibold)
+                + Text(" \u{00B7} " + confidence.reason)
+        } icon: {
+            Image(systemName: confidence.canRunAlone ? "checkmark.seal.fill" : "person.fill.questionmark")
+                .foregroundStyle(confidence.canRunAlone ? Color.green : Color.attention)
+        }
+        .font(.footnote)
+        .foregroundStyle(Color.metadata)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// On a card whose task started by itself because it scored Yes.
+private struct MobileDeskAutoStartedTag: View {
+    var body: some View {
+        Label("Started automatically", systemImage: "bolt.fill")
+            .font(.caption.weight(.medium)).foregroundStyle(Color.metadata)
     }
 }

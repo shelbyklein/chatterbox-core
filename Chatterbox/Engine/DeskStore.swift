@@ -84,14 +84,18 @@ final class DeskStore {
         var followsThread: Bool? = nil
         /// Where it came from: a ClickUp task or an email (plans/source-linked-tasks.md).
         var origin: Companion.DeskOrigin? = nil
+        /// Can an agent finish it without Shelby? (plans/desk-confidence.md)
+        var confidence: Companion.DeskConfidence? = nil
+        /// Started by itself because it scored Yes.
+        var autoStarted: Bool? = nil
 
         init(_ request: Companion.DeskRequest) {
             id = request.id; text = request.text; source = request.source; createdAt = request.createdAt
-            proposed = request.proposed; note = request.note; origin = request.origin
+            proposed = request.proposed; note = request.note; origin = request.origin; confidence = request.confidence
         }
         var request: Companion.DeskRequest {
             .init(id: id, text: text, source: source, createdAt: createdAt, proposed: proposed, note: note,
-                  origin: origin, check: DeskOriginRules.check(origin, column: .todo, since: createdAt))
+                  origin: origin, check: DeskOriginRules.check(origin, column: .todo, since: createdAt), confidence: confidence)
         }
         var isOpen: Bool { completedAt == nil }
     }
@@ -191,6 +195,8 @@ final class DeskStore {
                 guard let self else { return }
                 self.refreshScheduled = false
                 _ = self.snapshot()
+                // A thread finished: an auto-started slot may be free.
+                self.autoStartWaiting()
             }
         }
     }
@@ -289,13 +295,108 @@ final class DeskStore {
             origin = DeskOriginRules.clickUp(in: (note ?? "") + "\n" + text)
         }
         if let title = Self.clean(body.originTitle) { origin?.title = String(title.prefix(200)) }
-        let request = Companion.DeskRequest(id: UUID(), text: text, source: source, createdAt: now, proposed: proposed, note: note, origin: origin)
+        var confidence: Companion.DeskConfidence?
+        if let answer = Self.clean(body.confidence)?.lowercased() {
+            guard ["yes", "no"].contains(answer) else { throw Failure(status: 400, message: "Confidence is yes or no.") }
+            guard let reason = Self.clean(body.reason) else { throw Failure(status: 400, message: "Give the reason for the confidence: what makes it safe, or what needs Shelby.") }
+            confidence = .init(canRunAlone: answer == "yes", reason: String(reason.prefix(300)), by: source, at: now)
+        }
+        let request = Companion.DeskRequest(id: UUID(), text: text, source: source, createdAt: now, proposed: proposed, note: note, origin: origin, confidence: confidence)
         tasks.insert(TaskRecord(request), at: 0)
         // The oldest to do go first; linked and done ones stay.
         let todo = tasks.filter(isToDo)
         if todo.count > Self.limit { let old = Set(todo.suffix(todo.count - Self.limit).map(\.id)); tasks.removeAll { old.contains($0.id) } }
         changed()
+        if confidence == nil { scoreQuickly(request.id) } else { autoStartWaiting() }
         return request
+    }
+
+    // MARK: - Confidence and auto-start (plans/desk-confidence.md)
+
+    /// Auto-started tasks working at once; the rest start as those finish.
+    static let autoStartLimit = 2
+    /// Settings → Background service: Yes tasks start by themselves (on by default). Tests set
+    /// `autoStartOverride`.
+    var autoStartOverride: Bool?
+    var autoStartEnabled: Bool { autoStartOverride ?? (AppPreferences.defaults.object(forKey: "deskAutoStart") as? Bool ?? true) }
+    /// Scores a task added without one (the quick pass); tests replace it, so no model runs.
+    var scoreTask: (Companion.DeskRequest, Companion.DeskPlace?) async -> Companion.DeskConfidence? = { request, place in
+        await DeskStore.quickScore(request, place: place)
+    }
+    /// Tasks auto-start tried (and failed to start), so they aren't tried again until restart.
+    private var autoStartTried: Set<UUID> = []
+
+    /// The quick pass: a small model scores a task nobody scored, against the rubric.
+    private func scoreQuickly(_ id: UUID) {
+        guard let request = requests.first(where: { $0.id == id }) else { return }
+        let place = request.proposed.flatMap { proposed in places().first { $0.id == proposed.id && $0.kind == proposed.kind } } ?? request.proposed
+        Task { [weak self] in
+            guard let self, let score = await self.scoreTask(request, place) else { return }
+            guard let index = self.tasks.firstIndex(where: { $0.id == id }), self.isToDo(self.tasks[index]), self.tasks[index].confidence == nil else { return }
+            self.tasks[index].confidence = score
+            self.changed()
+            self.autoStartWaiting()
+        }
+    }
+
+    /// Starts the To do tasks that scored Yes, oldest first, while fewer than two auto-started
+    /// ones are working. Only with a reason and a proposed place, and not while its source
+    /// disagrees with the board. New sessions still wait while the Mac is under pressure.
+    func autoStartWaiting() {
+        guard autoStartEnabled, let model else { return }
+        let byID = Dictionary(model.sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let running = tasks.filter { task in
+            guard task.autoStarted == true, task.isOpen, let chat = task.chatID, let session = byID[chat] else { return false }
+            return session.isWorkingOn || session.isRunning || session.record.pressureHold != nil
+        }.count
+        var slots = Self.autoStartLimit - running
+        guard slots > 0 else { return }
+        let ready = tasks.filter { task in
+            guard isToDo(task), !autoStartTried.contains(task.id), let score = task.confidence, score.canRunAlone,
+                  !score.reason.trimmingCharacters(in: .whitespaces).isEmpty, task.proposed != nil else { return false }
+            return DeskOriginRules.check(task.origin, column: .todo, since: task.createdAt) == nil
+        }.sorted { $0.createdAt < $1.createdAt }
+        for task in ready where slots > 0 {
+            autoStartTried.insert(task.id)
+            do { _ = try start(task.id, auto: true); slots -= 1 }
+            catch { RuntimeHooks.note("The Desk couldn't start \u{201C}\(Self.short(task.text, limit: 60))\u{201D} by itself: \(error.localizedDescription)") }
+        }
+    }
+
+    /// The rubric, as the quick pass is given it.
+    static let rubric = """
+    You score one task for Shelby's Desk: can an AI agent finish it without Shelby? Answer No if any of these holds:
+    1. Creative judgment: it needs Shelby's taste or direction (choosing between designs, deciding a look, writing in Shelby's voice for something that matters).
+    2. Missing info or access: something it needs isn't in the task, its note, its source or its place (a file, a detail, a login, a decision).
+    3. Outward-facing: finishing it means sending email, publishing, pushing live, changing ClickUp, or anything other people see.
+    4. Approvals mid-work: it would need permission for installs, deleting files, working outside its folder, or spending money.
+    5. No clear place: it isn't clear which Studio or project it belongs in.
+    Otherwise Yes: a clear deliverable, everything at hand, staying inside the Mac and its folder. When unsure, answer No.
+    Reply with JSON only: {"canRunAlone": true or false, "reason": "one short line: the blocking rule for No, or why it's safe for Yes"}
+    """
+
+    /// The quick pass itself: Claude Haiku with no tools or files, a minute at most. Nil when it
+    /// doesn't answer (the task stays unscored and waits for Shelby, as before).
+    static func quickScore(_ request: Companion.DeskRequest, place: Companion.DeskPlace?) async -> Companion.DeskConfidence? {
+        var prompt = "Task: \(request.text)\nAdded by: \(request.source)"
+        if let note = request.note { prompt += "\nNote: \(note)" }
+        if let origin = request.origin { prompt += "\nSource: \(origin.kind) \(origin.title ?? origin.id)" }
+        if let place {
+            prompt += "\nPlace: \(place.kind) \u{201C}\(place.name)\u{201D}" + (place.detail.map { " — what belongs there: " + String($0.prefix(1_500)) } ?? "")
+        } else {
+            prompt += "\nPlace: none proposed"
+        }
+        guard let raw = await NextSteps.quick(prompt, system: rubric, backend: .claude) else { return nil }
+        return parseScore(raw, at: wholeSeconds())
+    }
+
+    /// The quick pass's JSON answer.
+    static func parseScore(_ raw: String, at: Date) -> Companion.DeskConfidence? {
+        guard let open = raw.firstIndex(of: "{"), let close = raw.lastIndex(of: "}"), open < close,
+              let object = try? JSONSerialization.jsonObject(with: Data(raw[open...close].utf8)) as? [String: Any],
+              let yes = object["canRunAlone"] as? Bool,
+              let reason = (object["reason"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !reason.isEmpty else { return nil }
+        return .init(canRunAlone: yes, reason: String(reason.prefix(300)), by: "quick pass", at: at)
     }
 
     /// Silence: takes one waiting thing off the Desk, on every device, without answering it
@@ -479,7 +580,7 @@ final class DeskStore {
     /// it works), nothing new starts, and the task is linked to it; a session carrying another
     /// open task is refused unless `body.replace` (that task goes back to To do). The agent and
     /// model given switch that session first, as Session Settings would.
-    func start(_ id: UUID, _ body: Companion.DeskStartRequest = .init()) throws -> ChatSession {
+    func start(_ id: UUID, _ body: Companion.DeskStartRequest = .init(), auto: Bool = false) throws -> ChatSession {
         guard let index = tasks.firstIndex(where: { $0.id == id && isToDo($0) }) else { throw Failure(status: 404, message: "That request is gone.") }
         let request = tasks[index].request
         if let chat = body.continueChat {
@@ -544,9 +645,11 @@ final class DeskStore {
         if settings.model != nil || settings.effort != nil || settings.openModel != nil { CompanionMapper.apply(settings, to: session) }
         // Linked (and saved so) before it's sent, so a request is never started twice.
         link(id, to: session.id)
+        if auto, let index = tasks.firstIndex(where: { $0.id == id }) { tasks[index].autoStarted = true }
         save()
         // A work thread waits to start while the Mac is under pressure (ChatSession+Pressure).
-        session.sendFirstOrHold(Self.message(request)) { sendFirstMessage(session, $0) }
+        let first = auto ? Self.autoPreface(request) + Self.message(request) : Self.message(request)
+        session.sendFirstOrHold(first) { sendFirstMessage(session, $0) }
         if let front = session.record.workOf.flatMap({ id in model?.sessions.first { $0.id == id } }) { front.noteWorkStarted(session) }
         changed()
         return session
@@ -838,6 +941,7 @@ final class DeskStore {
                 shown.item.task = task?.id
                 shown.item.taskText = task?.text
                 shown.item.origin = task?.origin
+                shown.item.autoStarted = task?.autoStarted
                 shown.item.check = task.flatMap { DeskOriginRules.check($0.origin, column: .needsYou, since: $0.linkedAt ?? $0.createdAt) }
                 needs.append((shown.date, shown.item))
             } else if !all.isEmpty || task == nil {
@@ -851,7 +955,8 @@ final class DeskStore {
                                 .init(id: session.id, title: name.title, place: placeName(session), subtitle: name.subtitle,
                                       activity: session.lastActionSummary.map { Self.short($0, limit: 160) }, since: session.record.turnStartedAt,
                                       task: task?.id, taskText: task?.text, origin: task?.origin,
-                                      check: task.flatMap { DeskOriginRules.check($0.origin, column: .working, since: $0.linkedAt ?? $0.createdAt) })))
+                                      check: task.flatMap { DeskOriginRules.check($0.origin, column: .working, since: $0.linkedAt ?? $0.createdAt) },
+                                      autoStarted: task?.autoStarted)))
             } else {
                 let finished = finished(session, task: task)
                 if let silence = silences.first(where: { $0.kind == "ready" && $0.chatID == session.id && $0.itemID == finished.replyID }) {
@@ -876,7 +981,7 @@ final class DeskStore {
             let name = CompanionMapper.heading(session)
             done.append(.init(id: session.id, title: name.title, place: placeName(session), subtitle: name.subtitle, completedAt: completed,
                               task: task.id, taskText: task.text, origin: task.origin,
-                              check: DeskOriginRules.check(task.origin, column: .done, since: completed)))
+                              check: DeskOriginRules.check(task.origin, column: .done, since: completed), autoStarted: task.autoStarted))
         }
         // To do: not linked, or linked to a thread that's gone (until its deletion unlinks it).
         let incoming = tasks.filter { $0.isOpen && ($0.chatID.map { byID[$0] == nil } ?? true) }.map(\.request)
@@ -930,7 +1035,8 @@ final class DeskStore {
         return Finished(date: date, item: .init(id: session.id, title: name.title, place: placeName(session), subtitle: name.subtitle,
                                                 text: text, finishedAt: date, task: task?.id, taskText: task?.text,
                                                 assets: reply.map { Self.assets(of: $0, folder: session.workingFolder) }.flatMap { $0.isEmpty ? nil : $0 },
-                                                origin: task?.origin, check: DeskOriginRules.check(task?.origin, column: .review, since: date)),
+                                                origin: task?.origin, check: DeskOriginRules.check(task?.origin, column: .review, since: date),
+                                                autoStarted: task?.autoStarted),
                         replyID: reply?.id ?? session.id)
     }
 
@@ -1107,6 +1213,13 @@ final class DeskStore {
     }
 
     /// The first message: the request, and the asker's note labelled as theirs.
+    /// What an auto-started task's first message opens with: why it started, and to stop and
+    /// ask at anything the rubric says needs Shelby.
+    static func autoPreface(_ request: Companion.DeskRequest) -> String {
+        let why = request.confidence.map { " (\($0.reason))" } ?? ""
+        return "[Started automatically from the Desk: it was judged doable without the user\(why). If you reach a creative call, missing information or access, anything outward-facing (sending, publishing, changing ClickUp), or something needing approval, stop and ask instead of guessing.]\n\n"
+    }
+
     static func message(_ request: Companion.DeskRequest) -> String {
         guard let note = request.note else { return request.text }
         let who = ["you": "Shelby", "claude": "Claude", "codex": "Codex"][request.source] ?? request.source.capitalized

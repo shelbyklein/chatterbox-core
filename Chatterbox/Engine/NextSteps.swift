@@ -105,6 +105,12 @@ final class NextSteps {
 
     /// One short request on the chat's own family of models; nil when it doesn't work.
     private static func ask(_ prompt: String, backend: Backend) async -> String? {
+        await quick(prompt, system: system, backend: backend)
+    }
+
+    /// One short request to a small model (Haiku, or GPT-6-Luna for Codex) with no tools, files
+    /// or saved session: Next Steps' suggestions, and the Desk's confidence pass.
+    static func quick(_ prompt: String, system: String, backend: Backend, timeout: TimeInterval = 60) async -> String? {
         let claude = ClaudeCodeProcess.locateBinary()
         let codex = CodexAppServer.locateBinary()
         let environment = BinaryLocator.environment
@@ -139,7 +145,7 @@ final class NextSteps {
             }
             // A stuck call shouldn't linger: suggestions are only useful right after the reply.
             let deadline = DispatchWorkItem { if process.isRunning { process.terminate() } }
-            DispatchQueue.global().asyncAfter(deadline: .now() + 60, execute: deadline)
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: deadline)
             let data = output.fileHandleForReading.readDataToEndOfFile()
             process.waitUntilExit()
             deadline.cancel()

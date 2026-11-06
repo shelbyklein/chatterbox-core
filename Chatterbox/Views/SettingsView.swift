@@ -785,6 +785,8 @@ struct BackgroundServiceSection: View {
     @AppStorage("idleSimulatorShutdown") private var idleSimulatorShutdown = true
     /// Open models on Shelby-PC offered in model pickers (PCModels.enabled); off while the PC is down.
     @AppStorage("openModelsEnabled") private var openModelsEnabled = true
+    /// Desk tasks scored "can run without you" start by themselves (plans/desk-confidence.md).
+    @AppStorage("deskAutoStart") private var deskAutoStart = true
     /// The Mac's pressure (PressureMonitor): when it's busy or overloaded, and whether work
     /// threads wait. Defaults as MacPressure.Thresholds.
     @AppStorage("pressureHoldsWork") private var pressureHoldsWork = true
@@ -815,6 +817,9 @@ struct BackgroundServiceSection: View {
             Toggle("Offer open models on \(RemoteMachine.pc.name)", isOn: $openModelsEnabled)
                 .help("Show the Open models choice in model pickers on the Mac and the phone. Turn it off while the PC is down; chats already on an open model keep theirs.")
                 .accessibilityIdentifier("open-models-enabled")
+            Toggle("Start Desk tasks that can run without you", isOn: $deskAutoStart)
+                .help("Tasks brought onto the Desk are scored Yes or No: can an agent finish this without you? Yes tasks with a place start by themselves, two at a time, and their cards say Started automatically. Off: the scores still show, nothing starts.")
+                .accessibilityIdentifier("desk-auto-start")
             LabeledContent("Mac load") { MacPressureBadge(alwaysLabelled: true) }
             Toggle("Hold back work threads when the Mac is under pressure", isOn: $pressureHoldsWork)
                 .help("While the Mac is busy, new work threads wait to start until it's OK; while it's overloaded, work threads don't start their next turn either. A reply already going is never stopped.")

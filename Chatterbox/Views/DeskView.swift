@@ -993,6 +993,7 @@ private struct DeskNeedRow: View {
                     .deskFrame("open:\(need.id)")
             }
             DeskTaskLine(chatID: waiting.chatID, task: waiting.task, text: waiting.taskText, desk: desk)
+            if waiting.autoStarted == true { DeskAutoStartedTag().deskFrame("auto:\(need.id)") }
             DeskSourceLine(id: waiting.task ?? waiting.chatID, origin: waiting.origin, check: waiting.check, matchLabel: "Mark complete",
                            match: { Task { await desk.completeChat(waiting.chatID) } },
                            writeBack: waiting.task.map { task in { Task { await desk.writeBack(task, in: model) } } })
@@ -1114,6 +1115,7 @@ private struct DeskRequestRow: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)
             Text(DeskText.origin(request)).font(.caption).foregroundStyle(Color.metadata)
+            if let confidence = request.confidence { DeskConfidenceLine(confidence: confidence).deskFrame("confidence:\(request.id)") }
             if let note = request.note, !note.isEmpty {
                 Label { Text(note) } icon: { Image(systemName: "text.quote") }
                     .font(.subheadline).foregroundStyle(Color.metadata).lineLimit(3)
@@ -1706,6 +1708,7 @@ private struct DeskWorkingCard: View {
                 Text(activity).font(.subheadline).foregroundStyle(Color.metadata).lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
+            if item.autoStarted == true { DeskAutoStartedTag().deskFrame("auto:\(item.id)") }
             // Working can't be completed mid-reply: only the write-back.
             DeskSourceLine(id: item.task ?? item.id, origin: item.origin, check: item.check,
                            writeBack: item.task.map { task in { Task { await desk.writeBack(task, in: model) } } })
@@ -1757,6 +1760,7 @@ private struct DeskReadyRow: View {
             Text(item.text).font(.subheadline).foregroundStyle(Color.metadata).lineLimit(3)
                 .frame(maxWidth: .infinity, alignment: .leading)
             if let assets = item.assets, !assets.isEmpty { DeskAssetLinks(assets: assets) }
+            if item.autoStarted == true { DeskAutoStartedTag().deskFrame("auto:\(item.id)") }
             // Mark complete is already on the card.
             DeskSourceLine(id: item.task ?? item.id, origin: item.origin, check: item.check,
                            writeBack: item.task.map { task in { Task { await desk.writeBack(task, in: model) } } })
@@ -1807,6 +1811,7 @@ private struct DeskDoneRow: View {
                 if let subtitle = item.subtitle { Text(subtitle).font(.caption).foregroundStyle(Color.metadata).lineLimit(1) }
                 DeskTaskText(text: item.taskText, title: item.title, subtitle: item.subtitle, quiet: true)
                 if let place = item.place, place != item.title { DeskPlaceLabel(name: place).padding(.top, 2) }
+                if item.autoStarted == true { DeskAutoStartedTag() }
                 DeskSourceLine(id: item.task ?? item.id, origin: item.origin, check: item.check,
                                writeBack: item.task.map { task in { Task { await desk.writeBack(task, in: model) } } })
             }
@@ -1915,5 +1920,36 @@ enum DeskSourceText {
     static func help(_ origin: Companion.DeskOrigin) -> String {
         let checked = origin.checkedAt.map { " Checked \($0.formatted(.relative(presentation: .named)))." } ?? " Not checked yet."
         return (origin.url.map { "Open \($0)." } ?? "\(origin.kind == "email" ? "Message" : "Task") id \(origin.id).") + checked
+    }
+}
+
+/// The rubric's answer on a To do card (plans/desk-confidence.md): Yes, an agent can finish it
+/// without you (it starts by itself), or what needs you.
+private struct DeskConfidenceLine: View {
+    let confidence: Companion.DeskConfidence
+
+    var body: some View {
+        Label {
+            Text(confidence.canRunAlone ? "Can run without you" : "Needs you").fontWeight(.semibold)
+                + Text(" \u{00B7} " + confidence.reason)
+        } icon: {
+            Image(systemName: confidence.canRunAlone ? "checkmark.seal.fill" : "person.fill.questionmark")
+                .foregroundStyle(confidence.canRunAlone ? Color.green : Color.attention)
+        }
+        .font(.subheadline)
+        .foregroundStyle(Color.metadata)
+        .fixedSize(horizontal: false, vertical: true)
+        .help(confidence.canRunAlone
+              ? "Scored Yes\(confidence.by.map { " by \($0)" } ?? ""): it starts by itself when it has a place (Settings \u{2192} Background service)."
+              : "Scored No\(confidence.by.map { " by \($0)" } ?? ""): it waits for you.")
+    }
+}
+
+/// On a card whose task started by itself because it scored Yes.
+private struct DeskAutoStartedTag: View {
+    var body: some View {
+        Label("Started automatically", systemImage: "bolt.fill")
+            .font(.caption.weight(.medium)).foregroundStyle(Color.metadata)
+            .help("Its task was scored able to run without you, so it started by itself. Open it to check on it or stop it.")
     }
 }

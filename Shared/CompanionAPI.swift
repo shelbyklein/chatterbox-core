@@ -497,6 +497,8 @@ enum Companion {
         /// (plans/source-linked-tasks.md). Nil when it has no source, or from an older service.
         var origin: DeskOrigin? = nil
         var check: DeskOriginCheck? = nil
+        /// Started by itself: its task was scored able to run without Shelby (plans/desk-confidence.md).
+        var autoStarted: Bool? = nil
     }
 
     /// Where work goes: a Studio, a project (its work starts as a Sidechat of it), or loose.
@@ -525,6 +527,19 @@ enum Companion {
         /// (plans/source-linked-tasks.md). Nil when it has no source, or from an older service.
         var origin: DeskOrigin? = nil
         var check: DeskOriginCheck? = nil
+        /// Can an agent finish it without Shelby? Nil until it's scored.
+        var confidence: DeskConfidence? = nil
+    }
+
+    /// The Desk's rubric (plans/desk-confidence.md): Yes when an agent can finish the task
+    /// without Shelby (no creative judgment, nothing missing, nothing outward-facing, no
+    /// approvals on the way, a clear place); No names what needs Shelby.
+    struct DeskConfidence: Codable, Hashable {
+        var canRunAlone: Bool
+        var reason: String
+        /// Who scored it: the agent that added it ("claude", "codex"), or "quick pass".
+        var by: String? = nil
+        var at: Date? = nil
     }
 
     struct DeskWorking: Codable, Identifiable, Hashable {
@@ -545,6 +560,8 @@ enum Companion {
         /// (plans/source-linked-tasks.md). Nil when it has no source, or from an older service.
         var origin: DeskOrigin? = nil
         var check: DeskOriginCheck? = nil
+        /// Started by itself: its task was scored able to run without Shelby (plans/desk-confidence.md).
+        var autoStarted: Bool? = nil
     }
 
     /// A task whose thread finished its reply and asks nothing: Ready to mark complete. Only
@@ -570,6 +587,8 @@ enum Companion {
         /// (plans/source-linked-tasks.md). Nil when it has no source, or from an older service.
         var origin: DeskOrigin? = nil
         var check: DeskOriginCheck? = nil
+        /// Started by itself: its task was scored able to run without Shelby (plans/desk-confidence.md).
+        var autoStarted: Bool? = nil
     }
 
     struct DeskAsset: Codable, Hashable {
@@ -598,6 +617,8 @@ enum Companion {
         /// (plans/source-linked-tasks.md). Nil when it has no source, or from an older service.
         var origin: DeskOrigin? = nil
         var check: DeskOriginCheck? = nil
+        /// Started by itself: its task was scored able to run without Shelby (plans/desk-confidence.md).
+        var autoStarted: Bool? = nil
     }
 
     /// Where a task came from: a ClickUp task or an email (plans/source-linked-tasks.md). Its
@@ -680,6 +701,10 @@ enum Companion {
         var origin: String? = nil
         /// The ClickUp task's name or the email's subject.
         var originTitle: String? = nil
+        /// The rubric's answer from whoever adds it: "yes" (an agent can finish it without
+        /// Shelby) or "no", with the reason. Without one, a quick pass scores it.
+        var confidence: String? = nil
+        var reason: String? = nil
     }
 
     /// POST /v1/desk/<id>/start: start it where proposed, or in `place` instead, on `agent`
