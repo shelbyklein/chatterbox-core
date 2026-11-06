@@ -84,7 +84,7 @@ final class DeskStore {
         var followsThread: Bool? = nil
         /// Where it came from: a ClickUp task or an email (plans/source-linked-tasks.md).
         var origin: Companion.DeskOrigin? = nil
-        /// Can an agent finish it without Shelby? (plans/desk-confidence.md)
+        /// Can an agent prepare it for review without Shelby? (plans/desk-confidence.md)
         var confidence: Companion.DeskConfidence? = nil
         /// Started by itself because it scored Yes.
         var autoStarted: Bool? = nil
@@ -383,14 +383,17 @@ final class DeskStore {
 
     /// The rubric, as the quick pass is given it.
     static let rubric = """
-    You score one task for Shelby's Desk: can an AI agent finish it without Shelby? Answer No if any of these holds:
-    1. Creative judgment: it needs Shelby's taste or direction (choosing between designs, deciding a look, writing in Shelby's voice for something that matters).
-    2. Missing info or access: something it needs isn't in the task, its note, its source or its place (a file, a detail, a login, a decision).
-    3. Outward-facing: finishing it means sending email, publishing, pushing live, changing ClickUp, or anything other people see.
-    4. Approvals mid-work: it would need permission for installs, deleting files, working outside its folder, or spending money.
+    You score one task for Shelby's Desk: can an AI agent prepare a useful, reviewable deliverable without Shelby? Score the preparation, separately from approval to carry out an outbound action.
+    Answer No if any of these blocks preparation:
+    1. Creative judgment: it needs Shelby's taste or direction before meaningful work can proceed (choosing between designs or deciding a look).
+    2. Missing info or access: something needed to prepare the deliverable isn't in the task, its note, its source or its place (a file, a detail, a login, a substantive decision).
+    3. No preparatory work: the task is only sending, publishing, pushing live or changing an external system, with no useful deliverable that can be prepared for review.
+    4. Approvals mid-preparation: an install, deletion, spending money or other permission is required before useful preparation can proceed.
     5. No clear place: it isn't clear which Studio or project it belongs in.
-    Otherwise Yes: a clear deliverable, everything at hand, staying inside the Mac and its folder. When unsure, answer No.
-    Reply with JSON only: {"canRunAlone": true or false, "reason": "one short line: the blocking rule for No, or why it's safe for Yes"}
+    Otherwise Yes: the work is clear, everything needed for preparation is at hand, and the agent can produce a reviewable result. Final approval to send, publish, follow up or change ClickUp is an outbound requirement; it is NOT a reason to score clear preparation No. A final review is not missing creative direction. High confidence never authorizes the outbound action.
+    Examples: prepare a specified website policy correction from supplied copy, then request publication approval = Yes; draft a factual follow-up from a complete source thread, then request send approval = Yes; choose a new brand direction without Shelby's decision = No; prepare a correction without the replacement policy or required site access = No; only click Send on an existing message without authorization = No.
+    The reason explains why preparation is possible for Yes, or what actually blocks preparation for No. When preparation is genuinely uncertain, answer No.
+    Reply with JSON only: {"canRunAlone": true or false, "reason": "one short line about preparation; keep outbound approval separate"}
     """
 
     /// The quick pass itself: Claude Haiku with no tools or files, a minute at most. Nil when it
@@ -1266,7 +1269,7 @@ final class DeskStore {
     /// ask at anything the rubric says needs Shelby.
     static func autoPreface(_ request: Companion.DeskRequest) -> String {
         let why = request.confidence.map { " (\($0.reason))" } ?? ""
-        return "[Started automatically from the Desk: it was judged doable without the user\(why). If you reach a creative call, missing information or access, anything outward-facing (sending, publishing, changing ClickUp), or something needing approval, stop and ask instead of guessing.]\n\n"
+        return "[Started automatically from the Desk: preparation was judged doable without the user\(why). Prepare a useful, reviewable result first. Final outbound approval is separate from preparation confidence: before sending, publishing, changing ClickUp or any other outbound action, stop and ask for approval. If a creative decision, missing information or access, or a permission blocks preparation itself, stop and ask instead of guessing. High confidence is not authorization to act outwardly.]\n\n"
     }
 
     static func message(_ request: Companion.DeskRequest) -> String {

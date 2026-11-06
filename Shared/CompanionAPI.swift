@@ -538,13 +538,13 @@ enum Companion {
         /// (plans/source-linked-tasks.md). Nil when it has no source, or from an older service.
         var origin: DeskOrigin? = nil
         var check: DeskOriginCheck? = nil
-        /// Can an agent finish it without Shelby? Nil until it's scored.
+        /// Can an agent prepare it for review without Shelby? Nil until it's scored.
         var confidence: DeskConfidence? = nil
     }
 
-    /// The Desk's rubric (plans/desk-confidence.md): Yes when an agent can finish the task
-    /// without Shelby (no creative judgment, nothing missing, nothing outward-facing, no
-    /// approvals on the way, a clear place); No names what needs Shelby.
+    /// The Desk's rubric (plans/desk-confidence.md): Yes when an agent can prepare a useful
+    /// reviewable result without Shelby; No names a blocker to preparation. Final outbound
+    /// approval is separate and is never granted by this score.
     struct DeskConfidence: Codable, Hashable {
         var canRunAlone: Bool
         var reason: String
