@@ -295,8 +295,8 @@ private struct MobileActivityRows: UIViewRepresentable {
         table.isScrollEnabled = false
         table.backgroundColor = .secondarySystemGroupedBackground
         table.separatorInset = UIEdgeInsets(top: 0, left: 32, bottom: 0, right: 0)
-        table.rowHeight = UITableView.automaticDimension
-        table.estimatedRowHeight = 36
+        table.rowHeight = MobileActivityCell.rowHeight(for: table.traitCollection)
+        table.estimatedRowHeight = 0
         table.register(MobileActivityCell.self, forCellReuseIdentifier: "activity")
         return table
     }
@@ -310,19 +310,17 @@ private struct MobileActivityRows: UIViewRepresentable {
                 if let cell = table.cellForRow(at: path) { context.coordinator.configure(cell, at: path) }
             }
         }
-        table.invalidateIntrinsicContentSize()
+        table.rowHeight = MobileActivityCell.rowHeight(for: table.traitCollection)
     }
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: ActivityTable, context: Context) -> CGSize? {
-        guard let width = proposal.width else { return nil }
-        uiView.frame.size.width = width
-        uiView.layoutIfNeeded()
-        return CGSize(width: width, height: uiView.contentSize.height)
+        guard let width = proposal.width, width.isFinite else { return nil }
+        // Rows are single-line. Measure from their font and padding, without changing the
+        // live table's frame/contentSize: doing so feeds UIKit invalidations back into
+        // SwiftUI's sizing pass when the connection-error card changes the available room.
+        return CGSize(width: width, height: CGFloat(entries.count) * MobileActivityCell.rowHeight(for: uiView.traitCollection))
     }
 
-    final class ActivityTable: UITableView {
-        override var contentSize: CGSize { didSet { if oldValue != contentSize { invalidateIntrinsicContentSize() } } }
-        override var intrinsicContentSize: CGSize { CGSize(width: UIView.noIntrinsicMetric, height: contentSize.height) }
-    }
+    final class ActivityTable: UITableView {}
 
     final class Coordinator: NSObject, UITableViewDataSource, UITableViewDelegate {
         var parent: MobileActivityRows
@@ -412,6 +410,12 @@ private final class MobileActivityCell: UITableViewCell {
     private let sidequest = UIImageView(image: UIImage(systemName: "point.topleft.down.to.point.bottomright.curvepath"))
     private let subtitle = UILabel()
     private let time = UILabel()
+
+    static func rowHeight(for traits: UITraitCollection) -> CGFloat {
+        let font = UIFontMetrics(forTextStyle: .subheadline).scaledFont(for: .systemFont(ofSize: 15, weight: .medium), compatibleWith: traits)
+        // Match the cell's 7pt top/bottom padding, 20pt status and 36pt minimum content.
+        return max(36, ceil(max(20, font.lineHeight)) + 14) + 1 / max(1, traits.displayScale)
+    }
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
