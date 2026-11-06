@@ -188,6 +188,7 @@ enum ProjectAutomations {
         \(automation.instructions.trimmingCharacters(in: .whitespacesAndNewlines))
 
         Rules for every automation run:
+        - When adding email or ClickUp work to the Desk, preserve its source: `desk add ... --source email:<message id>` or `--source clickup:<task id or link>`, with `--source-title` and `--source-url` for the verified original web link. Report source status using `desk source <ref> --status "<status>" --url "<verified link>"`. Never invent an ID or URL; if the source provides neither, retain sender, subject and date in the note and explicitly report that a direct link is unavailable. Do not send email or change ClickUp to obtain a link.
         - Report what you found first, and ask before changing anything: ask with your question tool and wait for my answer.
         - Never change staging or production without my explicit approval, for that environment.
         - Back up before you change anything, and say where the backup is.

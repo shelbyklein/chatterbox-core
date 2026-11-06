@@ -295,6 +295,10 @@ final class DeskStore {
             origin = DeskOriginRules.clickUp(in: (note ?? "") + "\n" + text)
         }
         if let title = Self.clean(body.originTitle) { origin?.title = String(title.prefix(200)) }
+        if let url = Self.clean(body.originURL) {
+            guard origin != nil else { throw Failure(status: 400, message: "Give the source reference with its link.") }
+            origin?.url = try DeskOriginRules.sourceURL(url)
+        }
         var confidence: Companion.DeskConfidence?
         if let answer = Self.clean(body.confidence)?.lowercased() {
             guard ["yes", "no"].contains(answer) else { throw Failure(status: 400, message: "Confidence is yes or no.") }
@@ -490,11 +494,12 @@ final class DeskStore {
             return parsed
         }
         guard wanted != nil || body.task != nil else { throw Failure(status: 400, message: "Say which source or task.") }
+        let sourceURL = try Self.clean(body.url).map(DeskOriginRules.sourceURL)
         let now = Self.wholeSeconds()
         var count = 0
         for index in tasks.indices {
-            let matches = body.task == tasks[index].id
-                || (wanted.map { w in tasks[index].origin.map { $0.kind == w.kind && $0.id.lowercased() == w.id.lowercased() } ?? false } ?? false)
+            let matches = body.task.map { $0 == tasks[index].id }
+                ?? (wanted.map { w in tasks[index].origin.map { $0.kind == w.kind && $0.id.lowercased() == w.id.lowercased() } ?? false } ?? false)
             guard matches else { continue }
             var origin = tasks[index].origin ?? wanted ?? Companion.DeskOrigin(kind: "clickup", id: "")
             guard !origin.id.isEmpty else { continue }
@@ -502,7 +507,7 @@ final class DeskStore {
             origin.status = String(status.prefix(60))
             origin.checkedAt = now
             if let title = Self.clean(body.title) { origin.title = String(title.prefix(200)) }
-            if let url = Self.clean(body.url) { origin.url = url }
+            if let sourceURL { origin.url = sourceURL }
             if newReply {
                 origin.replyFrom = Self.clean(body.replyFrom) ?? origin.replyFrom
                 origin.replyAt = now
@@ -1300,6 +1305,16 @@ final class DeskStore {
 /// whether what the source last said agrees with the task's column. Warn only.
 enum DeskOriginRules {
     enum Column { case todo, working, needsYou, review, done }
+
+    /// Source buttons open web pages, never arbitrary application commands or local files.
+    static func sourceURL(_ value: String) throws -> String {
+        guard let url = URL(string: value), let scheme = url.scheme?.lowercased(),
+              ["https", "http"].contains(scheme), let host = url.host, !host.isEmpty,
+              url.user == nil, url.password == nil else {
+            throw DeskStore.Failure(status: 400, message: "Give an http or https link to the source.")
+        }
+        return value
+    }
 
     /// "clickup:<id or link>", "email:<message id>", or a bare ClickUp link.
     static func parse(_ ref: String) -> Companion.DeskOrigin? {

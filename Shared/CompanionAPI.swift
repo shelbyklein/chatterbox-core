@@ -701,6 +701,8 @@ enum Companion {
         var origin: String? = nil
         /// The ClickUp task's name or the email's subject.
         var originTitle: String? = nil
+        /// A verified browser link to the original email or task, preserved by the importer.
+        var originURL: String? = nil
         /// The rubric's answer from whoever adds it: "yes" (an agent can finish it without
         /// Shelby) or "no", with the reason. Without one, a quick pass scores it.
         var confidence: String? = nil

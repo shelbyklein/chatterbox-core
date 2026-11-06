@@ -37,7 +37,10 @@ enum ConnectorTools {
         tool("propose_work", "Puts work on Shelby's Desk, to be placed and started there; nothing starts until Shelby starts it. Use it instead of start_session when it's unclear which Studio or project the work belongs in. Name the place you think fits, or leave it out and the Desk proposes one from each place's instructions or brief (or none when nothing clearly fits).",
              ["text": prop("string", "The work: the task, the files, and what done looks like. It becomes the session's first message."),
               "place": prop("string", "A Studio's or project's name from list_places, to propose (optional)"),
-              "note": prop("string", "A line for Shelby: why that place, or the plan (optional)")],
+              "note": prop("string", "A line for Shelby: why that place, or the plan (optional)"),
+              "source": prop("string", "Original source reference: clickup:<task id or link> or email:<message id>"),
+              "source_title": prop("string", "Original task name or email subject"),
+              "source_url": prop("string", "Verified web link to the original email or task; never invent a link")],
              required: ["text"]),
         tool("answer", "Answers what a session is waiting on: an approval (approve, approve_for_session or deny) or its questions (question id to chosen labels).",
              ["session_id": prop("string", "From list_sessions"), "item_id": prop("string", "The approval's or questions' id, from read_session"),
@@ -106,7 +109,7 @@ enum ConnectorTools {
             let sent = await request("POST", "/v1/chats/\(detail.summary.id.uuidString)/messages", body: Companion.SendRequest(text: text("text")), token: token)
             return await detailResult(sent, "Started session \(detail.summary.id.uuidString).")
         case "propose_work":
-            return await propose(text("text"), place: text("place"), note: text("note"), token: token)
+            return await propose(text("text"), place: text("place"), note: text("note"), origin: text("source"), originTitle: text("source_title"), originURL: text("source_url"), token: token)
         case "answer":
             guard UUID(uuidString: session) != nil, UUID(uuidString: text("item_id")) != nil else { return ("Give the session_id and item_id from read_session.", true) }
             if let decision = arguments["decision"]?.string {
@@ -199,9 +202,10 @@ enum ConnectorTools {
     }
 
     /// Puts work on the Desk from Claude, and says where it was proposed.
-    private static func propose(_ work: String, place: String, note: String, token: String) async -> (String, Bool) {
+    private static func propose(_ work: String, place: String, note: String, origin: String, originTitle: String, originURL: String, token: String) async -> (String, Bool) {
         guard !work.isEmpty else { return ("Give the work to propose.", true) }
-        let add = Companion.DeskAddRequest(text: work, source: "claude", place: place.isEmpty ? nil : place, note: note.isEmpty ? nil : note)
+        let add = Companion.DeskAddRequest(text: work, source: "claude", place: place.isEmpty ? nil : place, note: note.isEmpty ? nil : note,
+                                          origin: origin.isEmpty ? nil : origin, originTitle: originTitle.isEmpty ? nil : originTitle, originURL: originURL.isEmpty ? nil : originURL)
         switch await request("POST", "/v1/desk", body: add, token: token, as: Companion.Desk.self) {
         case .ok(let desk):
             let added = desk.incoming.first { $0.source == "claude" && $0.text == work }
