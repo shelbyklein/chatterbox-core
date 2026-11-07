@@ -236,7 +236,10 @@ final class DeskStore {
         let clear = (scores.first ?? 0) >= 4 && (scores.count < 2 || scores[0] >= scores[1] + 3)
         return ranked.enumerated().map { index, entry in
             let session = entry.0
-            let match = entry.1 < Self.threadMinimum ? "other" : index == 0 && clear ? "clear" : "possible"
+            // A thread carrying another open task is never the clear choice: continuing it sends
+            // that task back to To do, so it's only ever picked on purpose (Shelby, 2026-11-07).
+            let carries = openTask(for: session.id).map { $0.id != id } ?? false
+            let match = entry.1 < Self.threadMinimum ? "other" : index == 0 && clear && !carries ? "clear" : "possible"
             return .init(id: session.id, title: session.title, detail: session.lastActionSummary.map { Self.short($0, limit: 160) },
                          settings: session.settingsDescription, updatedAt: Self.lastActive(session), isRunning: session.isRunning,
                          match: match, task: openTask(for: session.id).map { Self.short($0.text, limit: 160) })
