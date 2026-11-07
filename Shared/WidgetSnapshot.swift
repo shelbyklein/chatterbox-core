@@ -11,6 +11,14 @@ struct WidgetSnapshot: Codable, Equatable {
             var fraction: Double?
             var resetsAt: Date?
 
+            var compactLabel: String {
+                label.replacingOccurrences(of: "Weekly limit", with: "7d")
+                    .replacingOccurrences(of: "-hour", with: "h")
+                    .replacingOccurrences(of: "-day", with: "d")
+                    .replacingOccurrences(of: "-minute", with: "m")
+                    .replacingOccurrences(of: " window", with: "")
+            }
+
             /// Text and meters must agree about unavailable or expired readings.
             func usedFraction(at date: Date) -> Double? {
                 guard let fraction, fraction.isFinite, resetsAt.map({ $0 > date }) ?? true else { return nil }
@@ -18,17 +26,33 @@ struct WidgetSnapshot: Codable, Equatable {
             }
 
             func text(at date: Date) -> String {
-                let name = label.replacingOccurrences(of: "-hour", with: "h")
-                    .replacingOccurrences(of: "-day", with: "d")
+                let name = compactLabel
                 guard let fraction = usedFraction(at: date) else {
                     return "\(name) —"
                 }
                 return "\(name) \(Int((fraction * 100).rounded()))%"
             }
         }
+        struct Account: Codable, Equatable {
+            var provider: String
+            var name: String
+            var status: String
+            /// Normalized to used, unlike proxy remaining fractions on the companion wire.
+            var windows: [Window]
+            var problem: String?
+
+            func tightest(at date: Date) -> Window? {
+                windows.filter { $0.usedFraction(at: date) != nil }
+                    .max { ($0.usedFraction(at: date) ?? 0) < ($1.usedFraction(at: date) ?? 0) }
+            }
+        }
         var syncedAt: Date
         var claude: [Window]
         var codex: [Window]
+        var proxyAccounts: [Account]? = nil
+        var proxyChecked: Date? = nil
+        var proxyProblem: String? = nil
+        var proxyRefreshing: Bool? = nil
 
         static func summary(_ windows: [Window], at date: Date) -> String {
             guard !windows.isEmpty else { return "Not reported" }

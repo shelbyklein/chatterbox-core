@@ -8,12 +8,29 @@ enum MobileWidgetSync {
     private static var lastMac = ""
     private static var lastUsage = WidgetSnapshot.load().usage
 
+    static func proxyCheckPending(_ usage: Companion.Usage) -> Bool {
+        usage.proxyAccounts != nil && usage.proxyChecked == nil && usage.proxyProblem == nil
+    }
+
     static func updateUsage(_ usage: Companion.Usage, at date: Date) {
         func windows(_ source: [Companion.Usage.Window]) -> [WidgetSnapshot.Usage.Window] {
             source.map { .init(label: $0.label, fraction: $0.fraction, resetsAt: $0.resetsAt) }
         }
+        let accounts = usage.proxyAccounts?.map { account in
+            WidgetSnapshot.Usage.Account(provider: account.provider, name: account.name, status: account.status,
+                windows: account.windows.map { window in
+                    let used = window.fraction.flatMap { $0.isFinite ? 1 - min(1, max(0, $0)) : nil }
+                    return .init(label: window.label, fraction: used, resetsAt: window.resetsAt)
+                }, problem: account.problem)
+        }
+        // A service restart clears its quota cache. Keep previously checked readings while
+        // it checks again, with their original timestamp and an explicit checking state.
+        let keepChecked = proxyCheckPending(usage) && lastUsage?.proxyChecked != nil
         let syncedAt = Date(timeIntervalSince1970: date.timeIntervalSince1970.rounded(.down))
-        lastUsage = .init(syncedAt: syncedAt, claude: windows(usage.claude), codex: windows(usage.codex))
+        lastUsage = .init(syncedAt: syncedAt, claude: windows(usage.claude), codex: windows(usage.codex),
+                          proxyAccounts: keepChecked ? lastUsage?.proxyAccounts : accounts,
+                          proxyChecked: keepChecked ? lastUsage?.proxyChecked : usage.proxyChecked,
+                          proxyProblem: usage.proxyProblem, proxyRefreshing: proxyCheckPending(usage))
         refresh()
     }
 

@@ -340,7 +340,15 @@ final class MobileStore {
 
     func usage(refresh: Bool = false) async throws -> Companion.Usage {
         let pairing = pairingID
-        let result: Companion.Usage = try await call("/v1/usage" + (refresh ? "?refresh=1" : ""))
+        var result: Companion.Usage = try await call("/v1/usage" + (refresh ? "?refresh=1" : ""))
+        if MobileWidgetSync.proxyCheckPending(result) {
+            // The first response can precede the service's quota check. One bounded read
+            // picks up a quick result without starting a refresh loop or another check.
+            try await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled, pairingID == pairing, isPaired else { throw CancellationError() }
+            let checked: Companion.Usage? = try? await call("/v1/usage")
+            if let checked { result = checked }
+        }
         guard !Task.isCancelled, pairingID == pairing, isPaired else { throw CancellationError() }
         widgetUsageChecked = Date()
         MobileWidgetSync.updateUsage(result, at: widgetUsageChecked)

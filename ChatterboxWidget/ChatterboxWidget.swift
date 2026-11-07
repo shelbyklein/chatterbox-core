@@ -5,7 +5,244 @@ import WidgetKit
 /// snapshot the app saves (see WidgetSnapshot). Each row opens its chat.
 @main
 struct ChatterboxWidgets: WidgetBundle {
-    var body: some Widget { ChatterboxWidget() }
+    var body: some Widget {
+        ChatterboxWidget()
+        ChatterboxUsageWidget()
+    }
+}
+
+/// Separate from activity so account quotas can use the whole Home Screen widget.
+struct ChatterboxUsageWidget: Widget {
+    var body: some WidgetConfiguration {
+        StaticConfiguration(kind: "ChatterboxUsage", provider: SnapshotProvider()) { entry in
+            ChatterboxUsageWidgetView(entry: entry)
+                .containerBackground(.fill.tertiary, for: .widget)
+        }
+        .configurationDisplayName("Usage")
+        .description("Claude and Codex usage for every connected account. Choose Large for all limit windows.")
+        .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
+    }
+}
+
+struct ChatterboxUsageWidgetView: View {
+    let entry: SnapshotEntry
+    @Environment(\.widgetFamily) private var family
+    @Environment(\.dynamicTypeSize) private var typeSize
+    private var usage: WidgetSnapshot.Usage? { entry.snapshot.usage }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: family == .systemLarge ? 8 : 4) {
+            HStack {
+                Text("Usage").font(family == .systemSmall ? .caption.weight(.semibold) : .subheadline.weight(.semibold))
+                Spacer(minLength: 4)
+                Text(family == .systemMedium ? "Highest limit · % used" : "% used").font(.caption2).foregroundStyle(.secondary)
+            }
+            if family == .systemSmall {
+                Text("Highest reported limit").font(.caption2).foregroundStyle(.secondary)
+                providerSummary("Claude", provider: "claude")
+                providerSummary("Codex", provider: "codex")
+            } else {
+                if family == .systemLarge {
+                    Text("Account limits").font(.caption2).foregroundStyle(.secondary)
+                }
+                if family == .systemMedium {
+                    // The usual pool fits as one compact row per account. ViewThatFits can
+                    // reject this column's ideal size even when its proposed size fits.
+                    let rows = max(accounts("claude").count + (direct("claude").isEmpty ? 0 : 1),
+                                   accounts("codex").count + (direct("codex").isEmpty ? 0 : 1))
+                    if rows <= 4, typeSize <= .large {
+                        columns(detailed: false)
+                    } else {
+                        overflowSummary
+                    }
+                } else {
+                  ViewThatFits(in: .vertical) {
+                    if family == .systemLarge {
+                        columns(detailed: true).fixedSize(horizontal: false, vertical: true)
+                    }
+                    VStack(alignment: .leading, spacing: 5) {
+                        columns(detailed: false)
+                        if family == .systemLarge {
+                            Text("Summary · open Usage for every limit").font(.caption2).foregroundStyle(.secondary)
+                                .accessibilityIdentifier("usage-overflow")
+                        }
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
+                    overflowSummary
+                  }
+                }
+            }
+            Spacer(minLength: 0)
+            freshness
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .widgetURL(URL(string: "\(Flavor.current.urlScheme)://usage")!)
+    }
+
+    private var overflowSummary: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            providerSummary("Claude", provider: "claude")
+            providerSummary("Codex", provider: "codex")
+            Text("More accounts and limits in Usage").font(.caption2).foregroundStyle(.secondary)
+                .accessibilityIdentifier("usage-overflow")
+        }
+    }
+
+    private func accounts(_ provider: String) -> [WidgetSnapshot.Usage.Account] {
+        usage?.proxyAccounts?.filter { $0.provider == provider } ?? []
+    }
+
+    private func direct(_ provider: String) -> [WidgetSnapshot.Usage.Window] {
+        provider == "claude" ? usage?.claude ?? [] : usage?.codex ?? []
+    }
+
+    private func columns(detailed: Bool) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            providerColumn("Claude", provider: "claude", detailed: detailed)
+            providerColumn("Codex", provider: "codex", detailed: detailed)
+        }
+    }
+
+    private func providerColumn(_ name: String, provider: String, detailed: Bool) -> some View {
+        let list = accounts(provider)
+        let reported = direct(provider)
+        return VStack(alignment: .leading, spacing: detailed ? 8 : 4) {
+            Text(list.isEmpty ? name : "\(name) · \(list.count)").font(.caption.weight(.semibold))
+            ForEach(Array(list.enumerated()), id: \.offset) { index, account in
+                accountView(account, detailed: detailed)
+                    .accessibilityIdentifier("usage-account-\(provider)-\(index)")
+            }
+            if !reported.isEmpty {
+                Group {
+                    if detailed {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Chat reported").font(.caption2).foregroundStyle(.secondary)
+                            ForEach(Array(reported.enumerated()), id: \.offset) { _, window in windowRow(window) }
+                        }
+                    } else {
+                        compactAccountView(.init(provider: provider, name: "Chat reported", status: "Available", windows: reported))
+                    }
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("usage-direct-\(provider)")
+            } else if list.isEmpty {
+                Text(usage?.proxyRefreshing == true ? "Checking quotas…" : "Not reported")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    private func accountView(_ account: WidgetSnapshot.Usage.Account, detailed: Bool) -> some View {
+        let tightest = account.status == "Disabled" ? nil : account.tightest(at: entry.date)
+        return VStack(alignment: .leading, spacing: 0) {
+            if !detailed {
+                compactAccountView(account)
+            } else {
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        Text(account.name).font(.caption2.weight(.medium)).lineLimit(1).truncationMode(.middle)
+                        Spacer(minLength: 0)
+                        if account.status != "Available" {
+                            Text(account.status).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                    }
+                    if !account.windows.isEmpty {
+                        ForEach(Array(account.windows.enumerated()), id: \.offset) { _, window in windowRow(window) }
+                    } else {
+                        Text(account.status == "Unavailable" || account.problem != nil ? "Quota unavailable"
+                             : account.status == "Disabled" ? "Disabled" : "No limits reported")
+                            .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accountLabel(account, detailed: detailed, tightest: tightest))
+    }
+
+    private func compactAccountView(_ account: WidgetSnapshot.Usage.Account) -> some View {
+        let tightest = account.status == "Disabled" ? nil : account.tightest(at: entry.date)
+        return HStack(spacing: 4) {
+            Text(account.name).lineLimit(1).truncationMode(.middle).frame(maxWidth: .infinity, alignment: .leading)
+            if let tightest {
+                Text(tightest.compactLabel).foregroundStyle(.secondary).lineLimit(1).frame(maxWidth: 40)
+                Text(percent(tightest)).monospacedDigit().fixedSize(horizontal: true, vertical: false)
+                bar(tightest).frame(width: 28)
+            } else {
+                Text(account.status == "Available" ? "Unknown" : account.status).foregroundStyle(.secondary).lineLimit(1)
+            }
+        }
+        .font(.caption2)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func accountLabel(_ account: WidgetSnapshot.Usage.Account, detailed: Bool, tightest: WidgetSnapshot.Usage.Window?) -> String {
+        let windows = detailed ? account.windows : tightest.map { [$0] } ?? []
+        return ([account.name, account.status] + windows.map { $0.text(at: entry.date) + " used" }).joined(separator: ", ")
+    }
+
+    private func windowRow(_ window: WidgetSnapshot.Usage.Window) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .top, spacing: 4) {
+                Text(window.compactLabel).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
+                Spacer(minLength: 0)
+                Text(percent(window)).font(.caption2.monospacedDigit()).fixedSize(horizontal: true, vertical: false)
+            }
+            bar(window)
+        }
+    }
+
+    private func percent(_ window: WidgetSnapshot.Usage.Window?) -> String {
+        window?.usedFraction(at: entry.date).map { "\(Int(($0 * 100).rounded()))%" } ?? "—"
+    }
+
+    @ViewBuilder private func bar(_ window: WidgetSnapshot.Usage.Window) -> some View {
+        if let used = window.usedFraction(at: entry.date) {
+            ProgressView(value: used, total: 1).progressViewStyle(.linear)
+                .tint(used >= 0.9 ? .red : used >= 0.75 ? .orange : .accentColor)
+                .frame(maxWidth: .infinity).frame(height: 3).accessibilityHidden(true)
+        }
+    }
+
+    private func providerSummary(_ name: String, provider: String) -> some View {
+        let list = accounts(provider)
+        let windows = list.filter { $0.status != "Disabled" }.flatMap(\.windows) + direct(provider)
+        let highest = windows.filter { $0.usedFraction(at: entry.date) != nil }
+            .max { ($0.usedFraction(at: entry.date) ?? 0) < ($1.usedFraction(at: entry.date) ?? 0) }
+        let reported = list.filter { $0.tightest(at: entry.date) != nil }.count
+        return VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text(name).font(.caption.weight(.medium))
+                Spacer(minLength: 4)
+                Text(percent(highest)).font(.caption.monospacedDigit())
+            }
+            if let highest { bar(highest) }
+            Text(list.isEmpty ? (highest == nil ? "Not reported" : "Chat reported") : "\(reported) of \(list.count) accounts reported")
+                .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("usage-summary-\(provider)")
+    }
+
+    private var freshness: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            if usage?.proxyRefreshing == true {
+                Text("Checking quotas…").accessibilityIdentifier("usage-checking")
+            } else if usage?.proxyProblem != nil {
+                Text("Quota check unavailable").foregroundStyle(.orange)
+            }
+            if let checked = usage?.proxyChecked {
+                HStack(spacing: 3) { Text("Quota checked"); Text(checked, style: .relative) }
+            } else if let synced = usage?.syncedAt {
+                HStack(spacing: 3) { Text("Synced"); Text(synced, style: .relative) }
+            } else {
+                Text("Open Chatterbox to sync usage")
+            }
+        }
+        .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+        .accessibilityElement(children: .combine).accessibilityIdentifier("usage-freshness")
+    }
 }
 
 struct ChatterboxWidget: Widget {
@@ -317,5 +554,15 @@ extension WidgetSnapshot {
         working: [.init(chatID: UUID(), title: "Vispix", detail: nil, backend: "codex", date: .now.addingTimeInterval(-120))],
         usage: .init(syncedAt: .now,
                      claude: [.init(label: "5-hour", fraction: 0.42, resetsAt: nil), .init(label: "7-day", fraction: 0.81, resetsAt: nil)],
-                     codex: [.init(label: "5-hour", fraction: 0.12, resetsAt: nil)]))
+                     codex: [.init(label: "5-hour", fraction: 0.12, resetsAt: nil)],
+                     proxyAccounts: [
+                        .init(provider: "claude", name: "Claude Personal", status: "Limited", windows: [
+                            .init(label: "5-hour window", fraction: 1, resetsAt: nil), .init(label: "7-day window", fraction: 0.6, resetsAt: nil)]),
+                        .init(provider: "claude", name: "Claude Work", status: "Available", windows: [
+                            .init(label: "5-hour window", fraction: 0.3, resetsAt: nil), .init(label: "7-day window", fraction: 0.2, resetsAt: nil),
+                            .init(label: "7-day Sonnet", fraction: 0.1, resetsAt: nil)]),
+                        .init(provider: "codex", name: "Codex One", status: "Unavailable", windows: [], problem: "Quota lookup unavailable"),
+                        .init(provider: "codex", name: "Codex Two", status: "Unavailable", windows: [], problem: "Quota lookup unavailable"),
+                        .init(provider: "codex", name: "Codex Three", status: "Available", windows: [.init(label: "5-hour window", fraction: 0.35, resetsAt: nil)])
+                     ], proxyChecked: .now, proxyRefreshing: false))
 }
