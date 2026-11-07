@@ -11,13 +11,19 @@ struct WidgetSnapshot: Codable, Equatable {
             var fraction: Double?
             var resetsAt: Date?
 
+            /// Text and meters must agree about unavailable or expired readings.
+            func usedFraction(at date: Date) -> Double? {
+                guard let fraction, fraction.isFinite, resetsAt.map({ $0 > date }) ?? true else { return nil }
+                return min(1, max(0, fraction))
+            }
+
             func text(at date: Date) -> String {
                 let name = label.replacingOccurrences(of: "-hour", with: "h")
                     .replacingOccurrences(of: "-day", with: "d")
-                guard let fraction, fraction.isFinite, resetsAt.map({ $0 > date }) ?? true else {
+                guard let fraction = usedFraction(at: date) else {
                     return "\(name) —"
                 }
-                return "\(name) \(Int((min(1, max(0, fraction)) * 100).rounded()))%"
+                return "\(name) \(Int((fraction * 100).rounded()))%"
             }
         }
         var syncedAt: Date

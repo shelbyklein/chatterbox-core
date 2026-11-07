@@ -202,7 +202,7 @@ struct ChatterboxWidgetView: View {
         Link(destination: URL(string: "\(Flavor.current.urlScheme)://usage")!) {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
-                    Text(family == .systemSmall ? "Usage (% used)" : "Usage").fontWeight(.semibold)
+                    Text("Usage (% used)").fontWeight(.semibold)
                     if let saved = snapshot.usage {
                         if family != .systemSmall { Text("Last synced") }
                         Text(saved.syncedAt, style: .relative)
@@ -230,14 +230,24 @@ struct ChatterboxWidgetView: View {
     }
 
     private func usageRow(_ name: String, _ windows: [WidgetSnapshot.Usage.Window]) -> some View {
-        HStack(spacing: 4) {
-            Text(name).fontWeight(.medium)
-            Spacer(minLength: 0)
-            Text(WidgetSnapshot.Usage.summary(windows, at: entry.date))
-                .monospacedDigit().foregroundStyle(.secondary)
+        HStack(spacing: 8) {
+            Text(name).fontWeight(.medium).frame(width: 42, alignment: .leading)
+            if windows.isEmpty {
+                Text("Not reported").foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+            }
+            ForEach(Array(windows.prefix(2).enumerated()), id: \.offset) { _, window in
+                HStack(spacing: 4) {
+                    Text(window.text(at: entry.date)).monospacedDigit().foregroundStyle(.secondary)
+                        .fixedSize(horizontal: true, vertical: false)
+                    usageBar(window)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
         .lineLimit(1)
         .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(name), \(WidgetSnapshot.Usage.summary(windows, at: entry.date))")
         .accessibilityIdentifier("widget-usage-\(name.lowercased())")
     }
 
@@ -249,12 +259,25 @@ struct ChatterboxWidgetView: View {
             }
             ForEach(Array(windows.prefix(2).enumerated()), id: \.offset) { _, window in
                 Text(window.text(at: entry.date)).monospacedDigit().foregroundStyle(.secondary)
+                usageBar(window)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .lineLimit(1)
         .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(name), \(WidgetSnapshot.Usage.summary(windows, at: entry.date))")
         .accessibilityIdentifier("widget-usage-\(name.lowercased())")
+    }
+
+    @ViewBuilder private func usageBar(_ window: WidgetSnapshot.Usage.Window) -> some View {
+        if let used = window.usedFraction(at: entry.date) {
+            ProgressView(value: used, total: 1)
+                .progressViewStyle(.linear)
+                .tint(used >= 0.9 ? .red : used >= 0.75 ? .orange : .accentColor)
+                .frame(maxWidth: .infinity)
+                .frame(height: 3)
+                .accessibilityHidden(true) // The adjacent percentage already describes this value.
+        }
     }
 
     private var caughtUp: some View {
