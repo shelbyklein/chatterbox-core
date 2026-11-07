@@ -282,6 +282,12 @@ enum Companion {
         /// In a work thread held while the Mac is under pressure: "Waiting: Mac busy" (POST
         /// …/work/start-now starts it anyway).
         var pressureWaiting: String? = nil
+        var rateLimitRetry: RateLimitRetry? = nil
+    }
+
+    struct RateLimitRetry: Codable, Equatable {
+        var requestID: UUID
+        var backend: String
     }
 
     /// One tool a thread gets (or has switched off), as a chip.

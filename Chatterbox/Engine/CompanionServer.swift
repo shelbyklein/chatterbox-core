@@ -323,6 +323,23 @@ final class CompanionServer {
             model.delete(session)
             #endif
             return .json(["ok": true])
+        case ("POST", 4) where parts[1] == "chats" && parts[3] == "retry-rate-limit":
+            guard let session = session(parts[2]) else { return .error(404, "That session is gone.") }
+            guard let body = try? Companion.decoder.decode(Companion.RateLimitRetry.self, from: request.body) else {
+                return .error(400, "Bad retry request.")
+            }
+            let target: Backend = session.record.backend == .claude ? .codex : .claude
+            guard let original = session.rateLimitedRequest, original.id == body.requestID,
+                  body.backend == target.rawValue else {
+                return .error(409, "This request is no longer waiting for a retry. Refresh the chat.")
+            }
+            let attachments = original.attachments ?? []
+            guard attachments.allSatisfy({ FileManager.default.fileExists(atPath: $0.url.path) }) else {
+                return .error(409, "An original attachment is missing. Attach it again and resend your request.")
+            }
+            session.setBackend(target)
+            session.send(original.text, attachments: attachments)
+            return .json(CompanionMapper.detail(session, model: model))
         case ("POST", 4) where parts[1] == "chats" && parts[3] == "messages":
             guard let session = session(parts[2]) else { return .error(404, "That session is gone.") }
             guard !session.isRestartingThread else { return .error(409, "This thread is reconnecting. Your message wasn't sent; try again when it's ready.") }
@@ -1100,7 +1117,10 @@ enum CompanionMapper {
                      branch: branch(session), machine: session.runMachine?.name,
                      studio: session.record.studioID.flatMap { model.studio($0) }?.name,
                      tools: ThreadTools.shared.chips(for: session),
-                     pressureWaiting: session.pressureWaitingText)
+                     pressureWaiting: session.pressureWaitingText,
+                     rateLimitRetry: session.rateLimitedRequest.map {
+                         .init(requestID: $0.id, backend: session.record.backend == .claude ? "codex" : "claude")
+                     })
     }
 
     /// When git was last asked about each folder for the phone: the service doesn't open chats,

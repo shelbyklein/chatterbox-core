@@ -276,6 +276,10 @@ final class MobileStore {
         try await call("/v1/chats/\(id.uuidString)/stop", method: "POST", body: Data("{}".utf8))
     }
 
+    func retryRateLimit(_ offer: Companion.RateLimitRetry, in chat: UUID) async throws -> Companion.ChatDetail {
+        try await call("/v1/chats/\(chat.uuidString)/retry-rate-limit", method: "POST", body: try JSONEncoder().encode(offer))
+    }
+
     func restart(_ id: UUID) async throws -> Companion.ChatDetail {
         try await call("/v1/chats/\(id.uuidString)/restart", method: "POST", body: Data("{}".utf8))
     }

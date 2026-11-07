@@ -2,6 +2,23 @@ import Foundation
 
 /// Context usage and queued-message bookkeeping, shared by both agents.
 extension ChatSession {
+    var rateLimitedRequest: DisplayItem? {
+        guard !isRunning, !isRestartingThread, record.archivedAt == nil,
+              record.pressureHold == nil, record.openModel == nil, pendingRequests.isEmpty,
+              let failure = record.items.last, failure.kind == .notice,
+              let request = record.items.last(where: { $0.kind == .user }),
+              request.queued != true, !request.steered,
+              !request.text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("!"),
+              !request.text.isEmpty || !(request.attachments ?? []).isEmpty else { return nil }
+        let text = failure.text.lowercased()
+        let providerError = record.backend == .claude
+            ? text.hasPrefix("claude code reported a problem:")
+            : text.hasPrefix("codex:") || text.hasPrefix("codex hit an error:")
+        let limited = ["rate_limit", "rate limit", "usage limit", "too many requests"].contains { text.contains($0) }
+            || text.range(of: #"\b429\b"#, options: .regularExpression) != nil
+        return providerError && limited ? request : nil
+    }
+
     /// Progress notes for the current reply stay readable while it runs. A message sent
     /// mid-turn does not hide the notes before it; completed turns keep their folded steps.
     var liveCommentaryIDs: Set<UUID> {

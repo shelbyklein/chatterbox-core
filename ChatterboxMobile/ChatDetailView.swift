@@ -98,6 +98,7 @@ struct ChatDetailView: View {
     @State private var opened = false
     @Environment(\.scenePhase) private var scenePhase
     @State private var error: String?
+    @State private var retryingRateLimit = false
     @FocusState private var composing: Bool
     /// The sketch canvas, when open.
     @State private var sketch: SketchRequest?
@@ -277,6 +278,9 @@ struct ChatDetailView: View {
                                 .frame(maxWidth: .infinity)
                         }
                         MobileTranscriptRows(items: detail.items, chat: chat.id, backend: summary.backend, actions: actions)
+                        if let offer = detail.rateLimitRetry, !summary.isRunning {
+                            rateLimitRetry(offer)
+                        }
                         if summary.isRunning {
                             HStack(spacing: 8) {
                                 ProgressView().controlSize(.small)
@@ -707,11 +711,47 @@ struct ChatDetailView: View {
     }
 
     private var canSend: Bool {
-        !sending && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingImages.isEmpty)
+        !sending && !retryingRateLimit && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingImages.isEmpty)
+    }
+
+    private func rateLimitRetry(_ offer: Companion.RateLimitRetry) -> some View {
+        let target = offer.backend == "codex" ? "Codex" : "Claude"
+        let source = offer.backend == "codex" ? "Claude" : "Codex"
+        return VStack(alignment: .leading, spacing: 10) {
+            Text("\(source) is rate-limited. Try \(target) instead.")
+                .font(.callout).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button {
+                guard !retryingRateLimit, !sending else { return }
+                retryingRateLimit = true
+                Task {
+                    defer { retryingRateLimit = false }
+                    do {
+                        history.apply(try await store.retryRateLimit(offer, in: chat.id))
+                        pinRequests += 1
+                        error = nil
+                    } catch { self.error = error.localizedDescription }
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    if retryingRateLimit { ProgressView().controlSize(.small) }
+                    Text("Switch to \(target) and ask again")
+                }
+            }
+            .buttonStyle(.bordered)
+            .tint(MobileConversationStyle.accent(for: offer.backend))
+            .disabled(retryingRateLimit || sending || history.isCached || store.isStale)
+            .accessibilityIdentifier("rate-limit-retry")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("rate-limit-suggestion")
     }
 
     /// `now`: stop the agent and send this right away, instead of adding it to the reply.
     private func send(now: Bool = false) async {
+        guard !retryingRateLimit else { return }
         let state = composerState
         guard let submission = state.beginSend() else { return }
         let generation = scrollWork.generation
