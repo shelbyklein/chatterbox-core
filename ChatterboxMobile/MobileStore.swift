@@ -556,6 +556,12 @@ final class MobileStore {
         return try await changeDesk { try await self.call("/v1/desk/\(task.uuidString)/link", method: "POST", body: body) }
     }
 
+    @discardableResult
+    func holdDesk(_ task: UUID, resume: Bool = false) async throws -> Companion.Desk {
+        let action = resume ? "resume" : "hold"
+        return try await changeDesk { try await self.call("/v1/desk/\(task.uuidString)/\(action)", method: "POST", body: Data("{}".utf8)) }
+    }
+
     /// Unlink: the task goes back to To do.
     @discardableResult
     func unlinkDesk(_ task: UUID) async throws -> Companion.Desk {

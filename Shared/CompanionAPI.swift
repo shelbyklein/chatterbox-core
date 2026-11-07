@@ -459,6 +459,18 @@ enum Companion {
         var linked: [DeskTask]? = nil
         /// The existing source-intake routine, not a separate sync engine.
         var sourcePull: DeskSourcePull? = nil
+        /// Manual holds; nil from services that do not support hold/resume.
+        var onHold: [DeskHeld]? = nil
+    }
+
+    struct DeskHeld: Codable, Identifiable, Hashable {
+        /// The task, not its linked thread.
+        var id: UUID
+        var text: String
+        var heldAt: Date
+        var place: String? = nil
+        var chatID: UUID? = nil
+        var note: String? = nil
     }
 
     struct DeskSourcePull: Codable, Equatable {

@@ -394,11 +394,15 @@ final class CompanionServer {
             guard let body = try? Companion.decoder.decode(Companion.DeskTaskRequest.self, from: request.body) else { return .error(400, "Say which session.") }
             do { try DeskStore.shared.makeTask(body) } catch { return failure(error) }
             return .json(DeskStore.shared.snapshot())
-        case ("POST", 4) where parts[1] == "desk" && (parts[3] == "link" || parts[3] == "unlink"):
+        case ("POST", 4) where parts[1] == "desk" && (parts[3] == "link" || parts[3] == "unlink" || parts[3] == "hold" || parts[3] == "resume"):
             // Link a thread to a task, or unlink it (back to To do).
             guard let id = UUID(uuidString: parts[2]) else { return .error(404, "That task is gone.") }
             do {
-                if parts[3] == "unlink" {
+                if parts[3] == "hold" {
+                    try DeskStore.shared.hold(id)
+                } else if parts[3] == "resume" {
+                    try DeskStore.shared.resume(id)
+                } else if parts[3] == "unlink" {
                     try DeskStore.shared.unlink(id)
                 } else {
                     guard let body = try? Companion.decoder.decode(Companion.DeskLinkRequest.self, from: request.body) else { return .error(400, "Say which session.") }

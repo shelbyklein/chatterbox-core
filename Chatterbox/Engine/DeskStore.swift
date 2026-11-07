@@ -88,6 +88,8 @@ final class DeskStore {
         var confidence: Companion.DeskConfidence? = nil
         /// Started by itself because it scored Yes.
         var autoStarted: Bool? = nil
+        /// Manual workflow pause; the thread and its progress stay linked.
+        var heldAt: Date? = nil
 
         init(_ request: Companion.DeskRequest) {
             id = request.id; text = request.text; source = request.source; createdAt = request.createdAt
@@ -118,6 +120,7 @@ final class DeskStore {
         var done: [Companion.DeskDone] = []
         var linked: [Companion.DeskTask] = []
         var sourcePull: Companion.DeskSourcePull? = nil
+        var onHold: [Companion.DeskHeld] = []
     }
     /// Something a session waits on Shelby for.
     private struct Waiting {
@@ -481,7 +484,7 @@ final class DeskStore {
             if let shown, shown != session.id, model.sessions.contains(where: { $0.id == shown }) { model.selectedID = shown }
         }
         let now = Self.wholeSeconds()
-        for index in tasks.indices where tasks[index].chatID == chatID && tasks[index].completedAt == nil { tasks[index].completedAt = now }
+        for index in tasks.indices where tasks[index].chatID == chatID && tasks[index].completedAt == nil { tasks[index].completedAt = now; tasks[index].heldAt = nil }
         changed()
     }
 
@@ -546,6 +549,7 @@ final class DeskStore {
     /// is only drafted. Answers the session it went to.
     func writeBack(_ id: UUID) throws -> ChatSession {
         guard let task = tasks.first(where: { $0.id == id }), let origin = task.origin else { throw Failure(status: 404, message: "That task has no source.") }
+        guard task.heldAt == nil else { throw Failure(status: 409, message: "Resume this task before starting source work.") }
         let desk = snapshot()
         let checks: [Companion.DeskOriginCheck?] = desk.incoming.filter { $0.id == id }.map(\.check)
             + desk.needsYou.filter { $0.task == id }.map(\.check) + desk.working.filter { $0.task == id }.map(\.check)
@@ -721,7 +725,40 @@ final class DeskStore {
 
     /// To do: open, and not linked (or linked to a thread that's gone).
     func isToDo(_ task: TaskRecord) -> Bool {
-        task.isOpen && (task.chatID.map { id in model?.sessions.contains { $0.id == id } != true } ?? true)
+        task.isOpen && task.heldAt == nil && (task.chatID.map { id in model?.sessions.contains { $0.id == id } != true } ?? true)
+    }
+
+    /// Holding never interrupts a reply. Only an explicit resume clears this saved pause.
+    func hold(_ id: UUID) throws {
+        guard let index = tasks.firstIndex(where: { $0.id == id && $0.isOpen }) else {
+            throw Failure(status: 404, message: "That open task is gone.")
+        }
+        if tasks[index].heldAt != nil { return }
+        if let chat = tasks[index].chatID, let session = model?.sessions.first(where: { $0.id == chat }) {
+            guard session.record.archivedAt == nil else { throw Failure(status: 409, message: "That task is already complete.") }
+            guard !session.isRunning && !session.isWorkingOn && session.record.pressureHold == nil else {
+                throw Failure(status: 409, message: "That reply is still active. Put the task on hold once it finishes.")
+            }
+        }
+        tasks[index].heldAt = Self.wholeSeconds()
+        changed()
+    }
+
+    func resume(_ id: UUID) throws {
+        guard let index = tasks.firstIndex(where: { $0.id == id && $0.isOpen }) else {
+            throw Failure(status: 404, message: "That open task is gone.")
+        }
+        guard tasks[index].heldAt != nil else { return }
+        tasks[index].heldAt = nil
+        changed()
+    }
+
+    private var heldItems: [Companion.DeskHeld] {
+        tasks.filter { $0.isOpen && $0.heldAt != nil }.map { task in
+            let session = task.chatID.flatMap { id in model?.sessions.first { $0.id == id } }
+            return Companion.DeskHeld(id: task.id, text: task.text, heldAt: task.heldAt!,
+                place: session.flatMap { placeName($0) } ?? task.proposed?.name, chatID: session?.id, note: task.note)
+        }.sorted { $0.heldAt == $1.heldAt ? $0.id.uuidString < $1.id.uuidString : $0.heldAt > $1.heldAt }
     }
 
     /// The open task a thread carries.
@@ -734,6 +771,7 @@ final class DeskStore {
             throw Failure(status: 409, message: "Sidequests and automation runs report to their session; they aren't tasks.")
         }
         guard let other = openTask(for: session.id) else { return }
+        guard other.heldAt == nil else { throw Failure(status: 409, message: "That thread carries a task on hold. Resume it before replacing its task.") }
         guard replacing else {
             throw Failure(status: 409, message: "That thread already carries a task: \u{201C}\(Self.short(other.text, limit: 80))\u{201D}. Link it anyway to send that one back to To do.")
         }
@@ -921,6 +959,11 @@ final class DeskStore {
             guard let request = try? body.decode(Companion.DeskLinkRequest.self) else { throw Failure(status: 400, message: "Say which thread.") }
             try link(id, request)
             return try .value(snapshot())
+        case "hold", "resume":
+            guard !agent else { throw Failure(status: 403, message: "Only Shelby can put tasks on hold or resume them.") }
+            let id = try Self.requestID(body)
+            if body["action"]?.string == "hold" { try hold(id) } else { try resume(id) }
+            return try .value(snapshot())
         case "unlink":
             try unlink(try Self.requestID(body))
             return try .value(snapshot())
@@ -946,7 +989,7 @@ final class DeskStore {
     /// by what they're doing. Done: tasks completed this week. Silences that no longer match
     /// anything waiting (or ready) go.
     private func current() -> Content {
-        guard let model else { return Content(needsYou: [], incoming: requests, working: [], silenced: []) }
+        guard let model else { return Content(needsYou: [], incoming: requests, working: [], silenced: [], onHold: heldItems) }
         let now = Date()
         let byID = Dictionary(model.sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         if reconcile(byID, now: now) { scheduleSave() }
@@ -959,6 +1002,7 @@ final class DeskStore {
         var live = Set<Silence>()
         for session in model.sessions where session.record.archivedAt == nil {
             let task = carried[session.id]
+            if task?.heldAt != nil { continue }
             let all = waiting(in: session, now: now)
             var shown: Waiting?
             for waiting in all {
@@ -998,6 +1042,7 @@ final class DeskStore {
                 }
             }
         }
+        live.formUnion(silences.filter { carried[$0.chatID]?.heldAt != nil })
         if live.count < silences.count { silences.removeAll { !live.contains($0) } }
         // Done: tasks completed this week whose threads are still archived.
         var done: [Companion.DeskDone] = []
@@ -1016,7 +1061,7 @@ final class DeskStore {
                               check: DeskOriginRules.check(task.origin, column: .done, since: completed), autoStarted: task.autoStarted))
         }
         // To do: not linked, or linked to a thread that's gone (until its deletion unlinks it).
-        let incoming = tasks.filter { $0.isOpen && ($0.chatID.map { byID[$0] == nil } ?? true) }.map(\.request)
+        let incoming = tasks.filter { $0.isOpen && $0.heldAt == nil && ($0.chatID.map { byID[$0] == nil } ?? true) }.map(\.request)
         let linked = tasks.compactMap { task -> Companion.DeskTask? in
             guard let chat = task.chatID, byID[chat] != nil else { return nil }
             return .init(id: task.id, text: task.text, chatID: chat, completedAt: task.completedAt)
@@ -1028,7 +1073,7 @@ final class DeskStore {
                        working: working.sorted(by: newestFirst).map(\.item), silenced: silenced.sorted(by: newestFirst).map(\.item),
                        ready: Array(ready.sorted(by: newestFirst).prefix(Self.readyLimit).map(\.item)),
                        done: done.map { (date: $0.completedAt, item: $0) }.sorted(by: newestFirst).map(\.item),
-                       linked: linked, sourcePull: sourcePullState())
+                       linked: linked, sourcePull: sourcePullState(), onHold: heldItems)
     }
 
     private func sourcePullState() -> Companion.DeskSourcePull {
@@ -1060,6 +1105,7 @@ final class DeskStore {
             guard let chat = tasks[index].chatID, let session = byID[chat] else { continue }
             if let archived = session.record.archivedAt, tasks[index].completedAt == nil {
                 tasks[index].completedAt = Date(timeIntervalSince1970: archived.timeIntervalSince1970.rounded(.down))
+                tasks[index].heldAt = nil
                 changed = true
             } else if session.record.archivedAt == nil, tasks[index].completedAt != nil {
                 tasks[index].completedAt = nil
@@ -1247,7 +1293,7 @@ final class DeskStore {
 
     private static func desk(_ content: Content, revision: Int) -> Companion.Desk {
         .init(revision: revision, needsYou: content.needsYou, incoming: content.incoming, working: content.working, silenced: content.silenced,
-              ready: content.ready, done: content.done, linked: content.linked, sourcePull: content.sourcePull)
+              ready: content.ready, done: content.done, linked: content.linked, sourcePull: content.sourcePull, onHold: content.onHold)
     }
 
     /// Now, in whole seconds, as desk.json keeps it.

@@ -8,7 +8,7 @@ import SwiftUI
 
 /// The board's columns, left to right.
 enum MobileDeskColumn: String, CaseIterable, Identifiable {
-    case todo, working, needsYou = "needs-you", ready, done
+    case todo, working, needsYou = "needs-you", ready, onHold = "on-hold", done
     var id: String { rawValue }
 
     var title: String {
@@ -17,6 +17,7 @@ enum MobileDeskColumn: String, CaseIterable, Identifiable {
         case .working: "Working"
         case .needsYou: "Needs you"
         case .ready: "Review"
+        case .onHold: "On hold"
         case .done: "Done"
         }
     }
@@ -29,6 +30,7 @@ enum MobileDeskColumn: String, CaseIterable, Identifiable {
         case .working: "Nothing running."
         case .needsYou: "Nothing needs you."
         case .ready: "Nothing finished to mark complete."
+        case .onHold: "Put a task on hold from its menu."
         case .done: "Nothing completed this week."
         }
     }
@@ -116,6 +118,9 @@ struct MobileDeskView: View {
     private var ready: [Companion.DeskReady] {
         (desk?.ready ?? []).filter { !completing.contains($0.id) && !silencing.contains(Self.silenceKey($0)) }
     }
+    private var held: [Companion.DeskHeld] { desk?.onHold ?? [] }
+    private var supportsHold: Bool { desk?.onHold != nil }
+    private var columns: [MobileDeskColumn] { MobileDeskColumn.allCases.filter { $0 != .onHold || supportsHold } }
     private var done: [Companion.DeskDone] { (desk?.done ?? []).filter { !reopening.contains($0.id) } }
     /// Silenced, still waiting in their sessions: the quiet row at the foot of Needs you.
     private var silenced: [Companion.DeskWaiting] { (desk?.silenced ?? []).filter { !unsilencing.contains(Self.silenceKey($0)) } }
@@ -126,6 +131,7 @@ struct MobileDeskView: View {
         case .working: working.count
         case .needsYou: needsYou.count
         case .ready: ready.count
+        case .onHold: held.count
         case .done: done.count
         }
     }
@@ -301,8 +307,21 @@ struct MobileDeskView: View {
 
     /// The columns as tabs, each with its count; the one shown is raised.
     private var tabs: some View {
+        Group {
+            if supportsHold {
+                ScrollViewReader { proxy in
+                    ScrollView(.horizontal) { tabButtons }.scrollIndicators(.hidden)
+                        .onChange(of: shown, initial: true) { _, column in
+                            withAnimation { proxy.scrollTo(column.id, anchor: .center) }
+                        }
+                }
+            } else { tabButtons }
+        }
+    }
+
+    private var tabButtons: some View {
         HStack(spacing: 2) {
-            ForEach(MobileDeskColumn.allCases) { column in
+            ForEach(columns) { column in
                 let on = shown == column
                 let count = count(column)
                 Button { withAnimation(.snappy(duration: 0.2)) { self.column = column } } label: {
@@ -312,7 +331,7 @@ struct MobileDeskView: View {
                         Text(column.short).font(.caption2.weight(on ? .semibold : .medium)).lineLimit(1).minimumScaleFactor(0.8)
                             .foregroundStyle(on ? Color.primary : Color.metadata)
                     }
-                    .frame(maxWidth: .infinity)
+                    .frame(minWidth: supportsHold ? 56 : 0, maxWidth: .infinity)
                     .padding(.vertical, 6)
                     .background {
                         if on {
@@ -327,6 +346,7 @@ struct MobileDeskView: View {
                 .accessibilityLabel("\(column.title), \(count)")
                 .accessibilityAddTraits(on ? [.isButton, .isSelected] : .isButton)
                 .accessibilityIdentifier("desk-tab-\(column.id)")
+                .id(column.id)
             }
         }
         .padding(3)
@@ -345,7 +365,7 @@ struct MobileDeskView: View {
             ScrollViewReader { proxy in
                 ScrollView(.horizontal) {
                     HStack(alignment: .top, spacing: 12) {
-                        ForEach(MobileDeskColumn.allCases) { column in
+                        ForEach(columns) { column in
                             lane(column).id(column)
                         }
                     }
@@ -408,7 +428,8 @@ struct MobileDeskView: View {
                                 ignore: { ignore(request) },
                                 markDone: { markDone(request) },
                                 link: hasTasks && place(for: request) != nil ? { linking = request } : nil,
-                                writeBack: { writeBack(request.id) })
+                                writeBack: { writeBack(request.id) },
+                                hold: supportsHold ? { setHold(request.id) } : nil)
             }
         case .working:
             ForEach(working) { item in
@@ -426,7 +447,8 @@ struct MobileDeskView: View {
                                 makeTask: { makeTask(item.chatID) },
                                 unlink: item.task.map { task in { unlink(task) } },
                                 writeBack: item.task.map { task in { writeBack(task) } },
-                                completeChat: { completeChat(item.chatID) })
+                                completeChat: { completeChat(item.chatID) },
+                                hold: supportsHold ? item.task.map { task in { setHold(task) } } : nil)
             }
             if !silenced.isEmpty {
                 DeskSilencedList(items: silenced, busy: unsilencing) { unsilence($0) }
@@ -435,7 +457,14 @@ struct MobileDeskView: View {
             ForEach(ready) { item in
                 DeskReadyCard(item: item, swipes: !wide, open: { open(item.id) }, complete: { complete(item) }, silence: { silence(item) },
                               unlink: item.task.map { task in { unlink(task) } },
-                              writeBack: item.task.map { task in { writeBack(task) } })
+                              writeBack: item.task.map { task in { writeBack(task) } },
+                              hold: supportsHold ? item.task.map { task in { setHold(task) } } : nil)
+            }
+        case .onHold:
+            ForEach(held) { item in
+                MobileDeskHeldCard(item: item, busy: busy.contains(item.id),
+                    resume: { setHold(item.id, resume: true) },
+                    open: item.chatID.map { chat in { open(chat) } })
             }
         case .done:
             ForEach(done) { item in
@@ -451,6 +480,7 @@ struct MobileDeskView: View {
         case .working: working.map(\.id)
         case .needsYou: needsYou.map(\.id)
         case .ready: ready.map(\.id)
+        case .onHold: held.map(\.id)
         case .done: done.map(\.id)
         }
     }
@@ -598,6 +628,21 @@ struct MobileDeskView: View {
         Task {
             defer { silencing.remove(key) }
             do { _ = try await store.silenceDesk(item) } catch { actionProblem = Self.describe(error) }
+        }
+    }
+
+    private func setHold(_ task: UUID, resume: Bool = false) {
+        guard supportsHold, busy.insert(task).inserted else { return }
+        Task {
+            defer { busy.remove(task) }
+            do {
+                let updated = try await store.holdDesk(task, resume: resume)
+                if !resume { column = .onHold }
+                else if updated.ready?.contains(where: { $0.task == task }) == true { column = .ready }
+                else if updated.needsYou.contains(where: { $0.task == task }) { column = .needsYou }
+                else if updated.working.contains(where: { $0.task == task }) { column = .working }
+                else { column = .todo }
+            } catch { actionProblem = Self.describe(error) }
         }
     }
 
@@ -795,6 +840,8 @@ private struct DeskWaitingCard: View {
     private var decides: Bool { item.kind == "approval" || item.kind == "plan" }
     private var context: String { deskContext(title: item.title, place: item.place, subtitle: item.subtitle) }
 
+    var hold: (() -> Void)? = nil
+
     var body: some View {
         DeskSwipe(action: .silence, id: item.id.uuidString, enabled: swipes, fullSwipe: false, perform: silence) { taps in card(taps) }
     }
@@ -852,6 +899,7 @@ private struct DeskWaitingCard: View {
         .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 16, style: .continuous))
         .contextMenu {
             Button("Open", systemImage: "arrow.up.forward.square", action: open)
+            if let hold { Button("Put on hold", systemImage: "pause.circle", action: hold) }
             if let unlink { Button("Unlink Task", systemImage: "link", action: unlink) }
             else if hasTasks { Button("Make This a Task", systemImage: "checklist", action: makeTask) }
             Button("Silence", systemImage: "bell.slash", action: silence)
@@ -977,6 +1025,8 @@ private struct DeskReadyCard: View {
     var unlink: (() -> Void)? = nil
     var writeBack: (() -> Void)? = nil
 
+    var hold: (() -> Void)? = nil
+
     var body: some View {
         DeskSwipe(action: .complete, id: item.id.uuidString, enabled: swipes, perform: complete) { taps in card(taps) }
     }
@@ -1042,6 +1092,7 @@ private struct DeskReadyCard: View {
         .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 16, style: .continuous))
         .contextMenu {
             Button("Open", systemImage: "arrow.up.forward.square", action: open)
+            if let hold { Button("Put on hold", systemImage: "pause.circle", action: hold) }
             Button("Mark Complete", systemImage: "checkmark.circle", action: complete)
             if let unlink { Button("Unlink Task", systemImage: "link", action: unlink) }
             Button("Silence", systemImage: "bell.slash", action: silence)
@@ -1251,8 +1302,13 @@ private struct DeskRequestCard: View {
         }
     }
 
+    var hold: (() -> Void)? = nil
+
     var body: some View {
         DeskSwipe(action: .remove, id: request.id.uuidString, enabled: swipes && !busy, fullSwipe: false, perform: ignore) { taps in card(taps) }
+            .contextMenu {
+                if let hold { Button("Put on hold", systemImage: "pause.circle", action: hold) }
+            }
     }
 
     /// The card; its buttons go through `taps`, so letting go of a swipe doesn't press them.
@@ -1818,5 +1874,34 @@ private struct MobileDeskAutoStartedTag: View {
     var body: some View {
         Label("Started automatically", systemImage: "bolt.fill")
             .font(.caption.weight(.medium)).foregroundStyle(Color.metadata)
+    }
+}
+
+private struct MobileDeskHeldCard: View {
+    let item: Companion.DeskHeld
+    let busy: Bool
+    let resume: () -> Void
+    var open: (() -> Void)?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("On hold", systemImage: "pause.circle").font(.subheadline).foregroundStyle(Color.metadata)
+                Spacer(minLength: 4)
+                if let place = item.place { Text(place).font(.caption).foregroundStyle(Color.metadata).lineLimit(1) }
+            }
+            Text(item.text).font(.headline).lineLimit(3)
+            Text("Held " + MobileDeskView.ago(item.heldAt)).font(.footnote).foregroundStyle(Color.metadata)
+            if let note = item.note { Text(note).font(.footnote).foregroundStyle(Color.metadata).lineLimit(3) }
+            HStack {
+                Button("Resume", action: resume).buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("desk-resume-" + item.id.uuidString)
+                if let open { Button("Open", action: open).buttonStyle(.bordered) }
+            }
+        }
+        .deskCard()
+        .disabled(busy)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("desk-held-" + item.id.uuidString)
     }
 }

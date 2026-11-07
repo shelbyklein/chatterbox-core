@@ -42,7 +42,7 @@ struct DeskNeed: Identifiable, Equatable {
 struct DeskSections: Equatable {
     /// The columns, left to right.
     enum Section: String, CaseIterable, Identifiable {
-        case todo = "To do", working = "Working", needsYou = "Needs you", ready = "Review", done = "Done"
+        case todo = "To do", working = "Working", needsYou = "Needs you", ready = "Review", onHold = "On hold", done = "Done"
         var id: String { key }
         /// For DeskDebug's frames ("section:needsYou").
         var key: String {
@@ -51,6 +51,7 @@ struct DeskSections: Equatable {
             case .working: "working"
             case .needsYou: "needsYou"
             case .ready: "ready"
+            case .onHold: "onHold"
             case .done: "done"
             }
         }
@@ -60,6 +61,7 @@ struct DeskSections: Equatable {
             case .working: "Nothing running."
             case .needsYou: "Nothing needs you."
             case .ready: "Nothing finished to mark complete."
+            case .onHold: "Put a task on hold from its menu."
             case .done: "Nothing completed this week."
             }
         }
@@ -69,6 +71,7 @@ struct DeskSections: Equatable {
     var incoming: [Companion.DeskRequest] = []
     var working: [Companion.DeskWorking] = []
     var ready: [Companion.DeskReady] = []
+    var onHold: [Companion.DeskHeld] = []
     var done: [Companion.DeskDone] = []
     /// Silenced (on any device), still waiting in their sessions: the quiet row at the foot of
     /// Needs you, each with Unsilence. Not counted in Needs you.
@@ -80,10 +83,15 @@ struct DeskSections: Equatable {
         case .working: working.count
         case .needsYou: needsYou.count
         case .ready: ready.count
+        case .onHold: onHold.count
         case .done: done.count
         }
     }
-    var summary: String { Self.summary(needsYou: needsYou.count, incoming: incoming.count, working: working.count, ready: ready.count) }
+    var summary: String {
+        let active = Self.summary(needsYou: needsYou.count, incoming: incoming.count, working: working.count, ready: ready.count)
+        guard !onHold.isEmpty else { return active }
+        return (active == "All clear" ? "" : active + " · ") + "\(onHold.count) on hold"
+    }
     /// What needs acting on: the toolbar's Desk badge. Not what's ready to mark complete:
     /// nothing waits on that.
     var actionCount: Int { needsYou.count + incoming.count }
@@ -246,11 +254,12 @@ final class DeskModel {
     func sections(in model: AppModel, now: Date = Date()) -> DeskSections {
         let sessions = model.activeSessions
         let carried = openTasks
+        let heldChats = Set((snapshot?.onHold ?? []).compactMap(\.chatID))
         var needs: [(date: Date, need: DeskNeed)] = []
         var waiting = Set<UUID>()
         // Silenced on any device: the service keeps them (its replies already leave them out).
         let silenced = Set((snapshot?.silenced ?? []).filter { $0.kind != "reply" }.map(\.id))
-        for session in sessions {
+        for session in sessions where !heldChats.contains(session.id) {
             let pending = session.pendingRequests
             guard !pending.isEmpty else { continue }
             waiting.insert(session.id)
@@ -284,7 +293,7 @@ final class DeskModel {
         }
         needs.sort { $0.date == $1.date ? $0.need.id.uuidString < $1.need.id.uuidString : $0.date > $1.date }
         // Only threads carrying a task (all of them from a service older than tasks).
-        let working = Attention.shared.workingChats(in: model).filter { !waiting.contains($0.id) && (carried == nil || carried?[$0.id] != nil) }.map { session in
+        let working = Attention.shared.workingChats(in: model).filter { !heldChats.contains($0.id) && !waiting.contains($0.id) && (carried == nil || carried?[$0.id] != nil) }.map { session in
             let name = CompanionMapper.heading(session)
             return Companion.DeskWorking(id: session.id, title: name.title, place: Self.placeName(of: session, in: model), subtitle: name.subtitle,
                                          activity: session.lastActionSummary, since: session.record.turnStartedAt,
@@ -300,7 +309,7 @@ final class DeskModel {
             !reopening.contains(item.id) && all[item.id].map { $0.record.archivedAt != nil } ?? true
         }
         let silencedNow = (snapshot?.silenced ?? []).filter { !unsilencing.contains(DeskNeed.silenceKey(chatID: $0.chatID, id: $0.id, reply: $0.kind == "reply" ? $0.text : nil)) }
-        return DeskSections(needsYou: needs.map(\.need), incoming: snapshot?.incoming ?? [], working: working, ready: ready, done: done, silenced: silencedNow)
+        return DeskSections(needsYou: needs.map(\.need), incoming: snapshot?.incoming ?? [], working: working, ready: ready, onHold: snapshot?.onHold ?? [], done: done, silenced: silencedNow)
     }
 
     /// What silencing a ready session hides: the session, as its last reply says.
@@ -463,6 +472,16 @@ final class DeskModel {
                 return
             }
         }
+    }
+
+    var canHold: Bool { snapshot?.onHold != nil }
+
+    func hold(_ task: UUID, resume: Bool = false) async {
+        guard canHold, busy.insert(task).inserted else { return }
+        defer { busy.remove(task) }
+        await change(["action": .string(resume ? "resume" : "hold"), "id": .string(task.uuidString)],
+                     doing: resume ? "resume the task" : "put it on hold",
+                     older: "On hold needs the newest background service.")
     }
 
     /// Unlink: the task goes back to To do; its thread carries on.
@@ -803,7 +822,7 @@ struct DeskView: View {
             ScrollViewReader { proxy in
                 ScrollView(.horizontal) {
                     HStack(alignment: .top, spacing: 14) {
-                        ForEach(DeskSections.Section.allCases) { section in
+                        ForEach(DeskSections.Section.allCases.filter { $0 != .onHold || desk.canHold }) { section in
                             column(section, sections).id(section)
                         }
                     }
@@ -962,6 +981,7 @@ struct DeskView: View {
             ForEach(sections.needsYou) { DeskNeedRow(need: $0, desk: desk) }
             if !sections.silenced.isEmpty { DeskSilencedRows(items: sections.silenced, desk: desk) }
         case .ready: ForEach(sections.ready) { DeskReadyRow(item: $0, desk: desk) }
+        case .onHold: ForEach(sections.onHold) { DeskHeldRow(item: $0, desk: desk) }
         case .done: ForEach(sections.done) { DeskDoneRow(item: $0, desk: desk) }
         }
     }
@@ -972,6 +992,7 @@ struct DeskView: View {
         case .working: sections.working.map(\.id)
         case .needsYou: sections.needsYou.map(\.id)
         case .ready: sections.ready.map(\.id)
+        case .onHold: sections.onHold.map(\.id)
         case .done: sections.done.map(\.id)
         }
     }
@@ -1195,6 +1216,11 @@ private struct DeskRequestRow: View {
         }
         .deskCard()
         .accessibilityElement(children: .contain)
+        .contextMenu {
+            if desk.canHold {
+                Button("Put on hold", systemImage: "pause.circle") { Task { await desk.hold(request.id) } }
+            }
+        }
         .accessibilityLabel("Request: \(request.text)")
         .deskFrame("request:\(request.id)")
     }
@@ -1630,10 +1656,14 @@ private struct DeskTaskMenuItems: View {
     let chatID: UUID
     let task: UUID?
     let desk: DeskModel
+    var canHoldHere = true
 
     var body: some View {
         if desk.hasTasks {
             if let task {
+                if desk.canHold && canHoldHere {
+                    Button("Put on hold", systemImage: "pause.circle") { Task { await desk.hold(task) } }
+                }
                 Button("Unlink Task", systemImage: "link.badge.plus") { Task { await desk.unlink(task) } }
             } else {
                 Button("Make This a Task", systemImage: "checklist") { Task { await desk.makeTask(chatID) } }
@@ -1751,7 +1781,7 @@ private struct DeskWorkingCard: View {
         .onHover { hovered = $0 }
         .contextMenu {
             Button("Open Session") { desk.openWorking(item.id, in: model) }
-            DeskTaskMenuItems(chatID: item.id, task: item.task, desk: desk)
+            DeskTaskMenuItems(chatID: item.id, task: item.task, desk: desk, canHoldHere: false)
         }
         .help("\(item.title)\(item.subtitle.map { " · " + $0 } ?? "")\(item.place.flatMap { $0 != item.title ? " · " + $0 : nil } ?? "") is working. Click to open it.")
         .accessibilityElement(children: .contain)
@@ -1980,5 +2010,36 @@ private struct DeskAutoStartedTag: View {
         Label("Started automatically", systemImage: "bolt.fill")
             .font(.caption.weight(.medium)).foregroundStyle(Color.metadata)
             .help("Its task was scored able to run without you, so it started by itself. Open it to check on it or stop it.")
+    }
+}
+
+/// A held task keeps its conversation and finished work; Resume restores its derived lane.
+private struct DeskHeldRow: View {
+    @Environment(AppModel.self) private var model
+    let item: Companion.DeskHeld
+    let desk: DeskModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label("On hold", systemImage: "pause.circle").font(.caption).foregroundStyle(Color.metadata)
+                Spacer(minLength: 4)
+                if let place = item.place { DeskPlaceLabel(name: place) }
+            }
+            Text(item.text).font(.headline).lineLimit(3)
+            Text("Held " + DeskText.ago(item.heldAt)).font(.caption).foregroundStyle(Color.metadata)
+            if let note = item.note { Text(note).font(.callout).foregroundStyle(Color.metadata).lineLimit(3) }
+            HStack {
+                Button("Resume") { Task { await desk.hold(item.id, resume: true) } }
+                    .deskFrame("resume:\(item.id)")
+                if let chat = item.chatID {
+                    Button("Open") { desk.open(chat, in: model) }.deskFrame("heldOpen:\(item.id)")
+                }
+            }
+        }
+        .deskCard()
+        .disabled(desk.busy.contains(item.id))
+        .accessibilityElement(children: .contain)
+        .deskFrame("held:\(item.id)")
     }
 }
