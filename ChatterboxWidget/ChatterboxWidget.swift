@@ -15,7 +15,7 @@ struct ChatterboxWidget: Widget {
                 .containerBackground(.fill.tertiary, for: .widget)
         }
         .configurationDisplayName("Chatterbox")
-        .description("What's waiting on you, new replies and chats working now.")
+        .description("What's waiting on you, new replies, work in progress and account usage.")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge, .accessoryCircular, .accessoryRectangular])
     }
 }
@@ -70,7 +70,7 @@ struct ChatterboxWidgetView: View {
         case .accessoryRectangular: rectangular
         case .systemSmall: small
         case .systemLarge: list(limit: 6)
-        default: list(limit: 3, compactWorking: true)
+        default: list(limit: 2, compactWorking: true)
         }
     }
 
@@ -111,10 +111,11 @@ struct ChatterboxWidgetView: View {
             if let first = rows.first {
                 Text(label(first.state)).font(.caption2.weight(.semibold)).foregroundStyle(color(first))
                 Text(first.item.title).font(.subheadline.weight(.semibold)).lineLimit(2)
-                Text(first.item.date, style: .relative).font(.caption2).foregroundStyle(.secondary)
             } else {
                 caughtUp
             }
+            Spacer(minLength: 0)
+            usage
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .widgetURL(rows.first?.item.link)
@@ -151,6 +152,7 @@ struct ChatterboxWidgetView: View {
                 }
                 Spacer(minLength: 0)
             }
+            usage
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
@@ -196,6 +198,65 @@ struct ChatterboxWidgetView: View {
         .foregroundStyle(.secondary)
     }
 
+    private var usage: some View {
+        Link(destination: URL(string: "\(Flavor.current.urlScheme)://usage")!) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 4) {
+                    Text(family == .systemSmall ? "Usage (% used)" : "Usage").fontWeight(.semibold)
+                    if let saved = snapshot.usage {
+                        if family != .systemSmall { Text("Last synced") }
+                        Text(saved.syncedAt, style: .relative)
+                    }
+                }
+                .lineLimit(1)
+                .foregroundStyle(.secondary)
+                if family == .systemSmall {
+                    HStack(alignment: .top, spacing: 8) {
+                        usageColumn("Claude", snapshot.usage?.claude ?? [])
+                        usageColumn("Codex", snapshot.usage?.codex ?? [])
+                    }
+                } else {
+                    usageRow("Claude", snapshot.usage?.claude ?? [])
+                    usageRow("Codex", snapshot.usage?.codex ?? [])
+                }
+                if snapshot.usage == nil, family != .systemSmall {
+                    Text("Open Chatterbox to sync usage").foregroundStyle(.secondary)
+                }
+            }
+            .font(.caption2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func usageRow(_ name: String, _ windows: [WidgetSnapshot.Usage.Window]) -> some View {
+        HStack(spacing: 4) {
+            Text(name).fontWeight(.medium)
+            Spacer(minLength: 0)
+            Text(WidgetSnapshot.Usage.summary(windows, at: entry.date))
+                .monospacedDigit().foregroundStyle(.secondary)
+        }
+        .lineLimit(1)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("widget-usage-\(name.lowercased())")
+    }
+
+    private func usageColumn(_ name: String, _ windows: [WidgetSnapshot.Usage.Window]) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(name).fontWeight(.medium)
+            if windows.isEmpty {
+                Text("Not reported").foregroundStyle(.secondary)
+            }
+            ForEach(Array(windows.prefix(2).enumerated()), id: \.offset) { _, window in
+                Text(window.text(at: entry.date)).monospacedDigit().foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .lineLimit(1)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("widget-usage-\(name.lowercased())")
+    }
+
     private var caughtUp: some View {
         Label("All caught up", systemImage: "checkmark.circle").font(.subheadline).foregroundStyle(.secondary)
     }
@@ -230,5 +291,8 @@ extension WidgetSnapshot {
         waiting: [.init(chatID: UUID(), title: "SDHQ", detail: "Which plugin should I update first?", backend: "claude", date: .now.addingTimeInterval(-300))],
         newReplies: [.init(chatID: UUID(), title: "Spoolside", detail: "Both changes are live.", backend: "claude", date: .now.addingTimeInterval(-900)),
                      .init(chatID: UUID(), title: "Event Logos", detail: "Here are four ribbon concepts.", backend: "codex", date: .now.addingTimeInterval(-2400))],
-        working: [.init(chatID: UUID(), title: "Vispix", detail: nil, backend: "codex", date: .now.addingTimeInterval(-120))])
+        working: [.init(chatID: UUID(), title: "Vispix", detail: nil, backend: "codex", date: .now.addingTimeInterval(-120))],
+        usage: .init(syncedAt: .now,
+                     claude: [.init(label: "5-hour", fraction: 0.42, resetsAt: nil), .init(label: "7-day", fraction: 0.81, resetsAt: nil)],
+                     codex: [.init(label: "5-hour", fraction: 0.12, resetsAt: nil)]))
 }

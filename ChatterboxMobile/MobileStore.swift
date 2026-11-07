@@ -40,6 +40,9 @@ final class MobileStore {
     var isStale: Bool { problem != nil }
     @ObservationIgnored private var listRefresh: Task<Void, Never>?
     @ObservationIgnored private var listRefreshID = UUID()
+    @ObservationIgnored private var pairingID = UUID()
+    @ObservationIgnored private var widgetUsageTask: Task<Void, Never>?
+    @ObservationIgnored private var widgetUsageChecked = Date.distantPast
     @ObservationIgnored private var token: String?
     /// Persisted text per chat. The shared composer writes this synchronously while typing
     /// and when a submitted draft is consumed, before any network suspension.
@@ -50,6 +53,7 @@ final class MobileStore {
     @ObservationIgnored private var composers: [UUID: MobileComposerDraft<PendingImage>] = [:]
     /// Mac Screen (the ⋯ menu): the Mac's screen, to see and control.
     var showingMacScreen = false
+    var showingUsage = false
     /// Feedback (top bar): the app's screenshot open in Mark Up.
     var feedbackSketch: SketchRequest?
     var feedbackProblem: String?
@@ -125,6 +129,7 @@ final class MobileStore {
         let (data, response) = try await URLSession.shared.data(for: request(host: host, path: "/v1/pair", method: "POST", body: body, token: nil))
         try checkStatus(data, response)
         let reply = try Companion.decoder.decode(Companion.PairResponse.self, from: data)
+        resetWidgetUsage()
         var hosts = [host]
         for address in reply.addresses where !hosts.contains(address) { hosts.append(address) }
         token = reply.token
@@ -149,6 +154,7 @@ final class MobileStore {
     }
 
     func forget() {
+        resetWidgetUsage()
         listRefresh?.cancel()
         listRefresh = nil
         listRefreshID = UUID()
@@ -198,6 +204,7 @@ final class MobileStore {
             hasRefreshedChats = true
             MobileTranscriptCache.saveList(fresh)
             prefetchRecent()
+            refreshWidgetUsage()
             await syncPushRegistration()
             if Date().timeIntervalSince(addressesChecked) > 60 { await refreshAddresses() }
         } catch {
@@ -328,7 +335,33 @@ final class MobileStore {
     }
 
     func usage(refresh: Bool = false) async throws -> Companion.Usage {
-        try await call("/v1/usage" + (refresh ? "?refresh=1" : ""))
+        let pairing = pairingID
+        let result: Companion.Usage = try await call("/v1/usage" + (refresh ? "?refresh=1" : ""))
+        guard !Task.isCancelled, pairingID == pairing, isPaired else { throw CancellationError() }
+        widgetUsageChecked = Date()
+        MobileWidgetSync.updateUsage(result, at: widgetUsageChecked)
+        return result
+    }
+
+    private func refreshWidgetUsage() {
+        guard Flavor.current.appGroup != nil, widgetUsageTask == nil,
+              Date().timeIntervalSince(widgetUsageChecked) >= 60 else { return }
+        widgetUsageChecked = Date()
+        let pairing = pairingID
+        widgetUsageTask = Task { [weak self] in
+            guard let self else { return }
+            defer { if pairingID == pairing { widgetUsageTask = nil } }
+            _ = try? await usage()
+        }
+    }
+
+    private func resetWidgetUsage() {
+        showingUsage = false
+        pairingID = UUID()
+        widgetUsageTask?.cancel()
+        widgetUsageTask = nil
+        widgetUsageChecked = .distantPast
+        MobileWidgetSync.clear()
     }
 
     func setBrief(_ chat: UUID, to brief: String) async throws -> Companion.ChatDetail {

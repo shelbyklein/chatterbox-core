@@ -1,10 +1,34 @@
 import Foundation
 
-/// What the iPhone widget shows: chats waiting on you, new replies, and chats working now.
+/// What the iPhone widget shows: activity and the account limits last synced by the phone.
 /// The Chatterbox app writes it whenever its chat list changes or you open a chat; the
 /// widget reads it from their shared app group, since a widget can't hold a connection to the
 /// Mac itself.
 struct WidgetSnapshot: Codable, Equatable {
+    struct Usage: Codable, Equatable {
+        struct Window: Codable, Equatable {
+            var label: String
+            var fraction: Double?
+            var resetsAt: Date?
+
+            func text(at date: Date) -> String {
+                let name = label.replacingOccurrences(of: "-hour", with: "h")
+                    .replacingOccurrences(of: "-day", with: "d")
+                guard let fraction, fraction.isFinite, resetsAt.map({ $0 > date }) ?? true else {
+                    return "\(name) —"
+                }
+                return "\(name) \(Int((min(1, max(0, fraction)) * 100).rounded()))%"
+            }
+        }
+        var syncedAt: Date
+        var claude: [Window]
+        var codex: [Window]
+
+        static func summary(_ windows: [Window], at date: Date) -> String {
+            guard !windows.isEmpty else { return "Not reported" }
+            return windows.prefix(2).map { $0.text(at: date) }.joined(separator: " · ") + " used"
+        }
+    }
     struct Item: Codable, Equatable, Identifiable {
         var chatID: UUID
         var title: String
@@ -22,6 +46,7 @@ struct WidgetSnapshot: Codable, Equatable {
     var waiting: [Item]
     var newReplies: [Item]
     var working: [Item]
+    var usage: Usage? = nil
 
     static let empty = WidgetSnapshot(updatedAt: .distantPast, macName: "", waiting: [], newReplies: [], working: [])
 
@@ -32,6 +57,10 @@ struct WidgetSnapshot: Codable, Equatable {
     }
 
     static func load() -> WidgetSnapshot {
+        load(from: file)
+    }
+
+    static func load(from file: URL?) -> WidgetSnapshot {
         guard let file, let data = try? Data(contentsOf: file),
               let snapshot = try? decoder.decode(WidgetSnapshot.self, from: data) else { return .empty }
         return snapshot
@@ -40,8 +69,13 @@ struct WidgetSnapshot: Codable, Equatable {
     /// Saves it; returns false when nothing changed, so callers can skip reloading the widget.
     @discardableResult
     func save() -> Bool {
-        guard let file = Self.file else { return false }
-        var unchanged = Self.load()
+        save(to: Self.file)
+    }
+
+    @discardableResult
+    func save(to file: URL?) -> Bool {
+        guard let file else { return false }
+        var unchanged = Self.load(from: file)
         unchanged.updatedAt = updatedAt
         if unchanged == self { return false }
         guard let data = try? Self.encoder.encode(self) else { return false }
