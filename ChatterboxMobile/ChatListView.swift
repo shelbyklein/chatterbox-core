@@ -343,7 +343,10 @@ struct ChatListView: View {
         } else if sizeClass == .regular {
             chatList.listStyle(.sidebar)
         } else {
-            chatList.listStyle(.insetGrouped)
+            // As the card view: each family a 14 pt rounded block, 16 pt from the edges and 10 pt
+            // apart. A plain list with the blocks drawn per row (rowShape), since a grouped
+            // list clips them to iOS's own, larger rounding.
+            chatList.listStyle(.plain).scrollContentBackground(.hidden).background(Color(uiColor: .systemGroupedBackground))
         }
     }
 
@@ -772,14 +775,23 @@ struct ChatListView: View {
                         if family.first, search.isEmpty, let pins = group.pins, !pins.isEmpty {
                             MobilePinPills(pins: pins)
                         }
-                        listRow(ChatRow(chat: family.parent, activity: sort == .active ? Self.activityLine(family.parent) : nil) { open(family.parent) }, family.parent)
                         let visible = MobileFamilyExpansion.shared.visible(family.children, of: family.parent.id)
+                        let toggle = familyToggle(family.parent, hidden: visible.hidden)
+                        let lastChild = visible.shown.last?.id
+                        listRow(ChatRow(chat: family.parent, activity: sort == .active ? Self.activityLine(family.parent) : nil) { open(family.parent) }, family.parent,
+                                top: true, bottom: lastChild == nil && toggle == nil)
+                            .listRowInsets(sizeClass == .regular ? nil : compactInsets(leading: 0, top: true, bottom: lastChild == nil && toggle == nil))
                         ForEach(visible.shown) { child in
-                            listRow(NestedChatRow(chat: child, parent: family.parent, compact: true) { open(child) }, child)
-                                .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 8))
+                            listRow(NestedChatRow(chat: child, parent: family.parent, compact: true) { open(child) }, child,
+                                    top: false, bottom: child.id == lastChild && toggle == nil)
+                                .listRowInsets(sizeClass == .regular ? EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 8)
+                                               : compactInsets(leading: 20, top: false, bottom: child.id == lastChild && toggle == nil))
                         }
-                        if let toggle = familyToggle(family.parent, hidden: visible.hidden) {
-                            toggle.listRowInsets(EdgeInsets(top: 0, leading: 48, bottom: 0, trailing: 8))
+                        if let toggle {
+                            toggle.listRowInsets(sizeClass == .regular ? EdgeInsets(top: 0, leading: 48, bottom: 0, trailing: 8)
+                                                 : compactInsets(leading: 36, top: false, bottom: true))
+                                .listRowBackground(sizeClass == .regular ? nil : rowShape(top: false, bottom: true, selected: false))
+                                .listRowSeparator(sizeClass == .regular ? .automatic : .hidden)
                         }
                     } header: {
                         if family.first, showsHeader(group) {
@@ -908,13 +920,33 @@ struct ChatListView: View {
     }
 
     /// A row in list mode, with the open session's tint, its menu and Archive on a swipe.
-    private func listRow(_ content: some View, _ chat: Companion.ChatSummary) -> some View {
-        content
-            .listRowBackground(sizeClass == .regular && selection == chat.id ? Color.primary.opacity(0.08) : nil)
+    private func listRow(_ content: some View, _ chat: Companion.ChatSummary, top: Bool = true, bottom: Bool = true) -> some View {
+        let regular = sizeClass == .regular
+        return content
+            .listRowBackground(regular ? (selection == chat.id ? AnyView(Color.primary.opacity(0.08)) : nil)
+                               : AnyView(rowShape(top: top, bottom: bottom, selected: false)))
+            .listRowSeparator(regular ? .automatic : .hidden)
             .contextMenu { chatActions(chat) }
             .swipeActions(edge: .trailing) {
                 Button(role: .destructive) { archive(chat) } label: { Label("Archive", systemImage: "archivebox") }
             }
+    }
+
+    /// A row's part of its family's card on iPhone: rounded at the family's top and bottom
+    /// only, 14 pt as the card view's cards.
+    private func rowShape(top: Bool, bottom: Bool, selected: Bool) -> some View {
+        UnevenRoundedRectangle(topLeadingRadius: top ? 14 : 0, bottomLeadingRadius: bottom ? 14 : 0,
+                               bottomTrailingRadius: bottom ? 14 : 0, topTrailingRadius: top ? 14 : 0, style: .continuous)
+            .fill(selected ? Color.primary.opacity(0.08) : Color(uiColor: .secondarySystemGroupedBackground))
+            // 16 pt from the screen's edges, and 10 pt below a family's last row.
+            .padding(.horizontal, 16)
+            .padding(.bottom, bottom ? 10 : 0)
+    }
+
+    /// A row's insets inside its block on iPhone: the block's 16 pt margin plus 12 pt padding,
+    /// and room for the 10 pt gap under a family's last row.
+    private func compactInsets(leading: CGFloat, top: Bool, bottom: Bool) -> EdgeInsets {
+        EdgeInsets(top: top ? 12 : 8, leading: 28 + leading, bottom: bottom ? 22 : 8, trailing: 28)
     }
 
     @ViewBuilder private func chatActions(_ chat: Companion.ChatSummary) -> some View {
