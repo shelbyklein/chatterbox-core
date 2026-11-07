@@ -35,6 +35,9 @@ struct ProjectAutomation: Codable, Identifiable, Equatable {
     /// nil means the model's default effort.
     var effort: String?
     var createdAt = Date()
+    /// Set only on the in-memory copy used for a manual Desk run, never saved to config.
+    var deskSourceCheck: Bool? = nil
+    var deskSourceCheckIncludeNew: Bool? = nil
 }
 
 extension ProjectAutomation {
@@ -79,7 +82,9 @@ enum ProjectAutomations {
         - Use each source's last verified coverage checkpoint in the existing reports. A last-requested or last-run timestamp is NOT a coverage checkpoint. If a previous pull was partial, resume from the last verified checkpoint; report inaccessible sources and never advance their checkpoint.
         - Read `desk list --json` before adding anything. Compare its complete `tasks` inventory, including in-progress, waiting-for-Shelby, Review, silenced and Done tasks; never compare only incoming cards. De-duplicate by source reference, or sender/subject/date when no ID exists; preserve existing tasks and board columns. Update source status and verified links with `desk source REF --status STATUS --url URL --task DESK_ID`. Warn about mismatches; do not complete or archive existing tasks.
         - For genuinely new tasks, preserve the verified source reference/title/link, propose the correct place and score preparation confidence yes/no with a reason. Clear, bounded preparation is Yes even when publication, sending or follow-up needs final approval; score No only for a real blocker to preparation or an outbound-only task with no useful preparatory deliverable. Outbound approval remains required. Never invent IDs, links, successful coverage or new work when nothing changed.
-        - Finish with counts of new items, updated items and sources that could not be checked, plus links to relevant source material and reports. Leave existing verified checkpoints unchanged for every partial source.
+        - Parse each individual actionable request into its own Desk item. A summary in this chat is not delivery. Write a JSON manifest with `items` (Desk add fields: text, place, note, origin, originTitle, originURL, confidence, reason), `updates` (Desk source fields: ref, status, title, url, task, replyFrom), and `unavailable` (source names/reasons that could not be fully checked). Use an empty array for any empty group. Do not invent source IDs; when unavailable, preserve sender, subject and date in the note and reuse the exact existing item rather than creating another.
+        - Save the manifest to a local file, then run `desk ingest FILE`. It applies the individual items/updates and returns the persisted receipt. Include every source that could not be checked in `unavailable`; zero new items is valid when nothing changed. Correct validation errors and retry the same manifest safely. Do not call the check successful unless ingestion succeeds with no unavailable sources. Leave existing verified checkpoints unchanged for every partial source.
+        - End with the receipt's counts and any unavailable sources. The service dismisses a successful check; do not ask Shelby to open another report chat or start a reporting reply.
         """
     }
     /// The automations, as set in the app (Automations… on a project).

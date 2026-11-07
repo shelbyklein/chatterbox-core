@@ -852,7 +852,7 @@ struct DeskView: View {
                     HStack(spacing: 6) {
                         if desk.checkingSources || desk.snapshot?.sourcePull?.isRunning == true { ProgressView().controlSize(.small) }
                         else { Image(systemName: "arrow.clockwise") }
-                        Text(desk.snapshot?.sourcePull?.needsYou == true ? "Check needs you" : desk.snapshot?.sourcePull?.isRunning == true ? "Checking…" : "Check for updates")
+                        Text(desk.snapshot?.sourcePull?.isRunning == true ? "Checking…" : "Check for updates")
                     }
                 }
                 .disabled(desk.checkingSources || desk.snapshot?.sourcePull?.isRunning == true)
@@ -860,13 +860,15 @@ struct DeskView: View {
             }
             askField.frame(maxWidth: 760, alignment: .leading)
             if let pull = desk.snapshot?.sourcePull {
-                HStack(spacing: 10) {
-                    if let date = pull.lastRequestedAt { Text("Last requested \(date.formatted(.relative(presentation: .numeric)))").foregroundStyle(Color.metadata) }
-                    if let id = pull.threadID {
-                        Button(pull.needsYou ? "Needs you · Open check" : "Open check") { desk.open(id, in: model) }
-                            .buttonStyle(.link).deskFrame("sourcePullOpen")
+                Group {
+                    if !pull.isRunning, let problem = pull.problem {
+                        Text(problem)
+                    } else if !pull.isRunning, let result = pull.result, result.complete {
+                        Text("Checked \(result.finishedAt.formatted(.relative(presentation: .numeric))) · \(result.summary)")
+                    } else if let date = pull.lastRequestedAt {
+                        Text("Last requested \(date.formatted(.relative(presentation: .numeric)))")
                     }
-                }.font(.callout)
+                }.font(.callout).foregroundStyle(Color.metadata).lineLimit(3).deskFrame("sourcePullStatus")
             }
             if let started = desk.startedNote {
                 HStack(spacing: 8) {

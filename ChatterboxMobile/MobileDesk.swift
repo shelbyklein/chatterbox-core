@@ -263,18 +263,23 @@ struct MobileDeskView: View {
                     HStack(spacing: 8) {
                         if checkingSources || desk.sourcePull?.isRunning == true { ProgressView() }
                         else { Image(systemName: "arrow.clockwise") }
-                        Text(desk.sourcePull?.needsYou == true ? "Check needs you" : desk.sourcePull?.isRunning == true ? "Checking…" : "Check for updates")
+                        Text(desk.sourcePull?.isRunning == true ? "Checking…" : "Check for updates")
                     }.frame(minHeight: 32)
                 }
                 .buttonStyle(.bordered)
                 .disabled(checkingSources || desk.sourcePull?.isRunning == true)
                 .accessibilityIdentifier("desk-check-sources")
-                if let date = desk.sourcePull?.lastRequestedAt {
-                    Text("Last requested \(Self.ago(date))").font(.caption).foregroundStyle(.secondary)
-                }
-                if let id = desk.sourcePull?.threadID {
-                    Button(desk.sourcePull?.needsYou == true ? "Needs you · Open check" : "Open check") { open(id) }
-                        .font(.subheadline).accessibilityIdentifier("desk-source-check-open")
+                if let pull = desk.sourcePull {
+                    Group {
+                        if !pull.isRunning, let problem = pull.problem {
+                            Text(problem)
+                        } else if !pull.isRunning, let result = pull.result, result.complete {
+                            Text("Checked \(Self.ago(result.finishedAt)) · \(result.summary)")
+                        } else if let date = pull.lastRequestedAt {
+                            Text("Last requested \(Self.ago(date))")
+                        }
+                    }.font(.caption).foregroundStyle(.secondary).lineLimit(3)
+                        .accessibilityIdentifier("desk-source-check-status")
                 }
             }
         }

@@ -190,6 +190,9 @@ struct ConversationRecord: Codable {
     var pcErrand: Bool?
     /// Set on a project's Automation thread: the automation it runs (see ProjectAutomations).
     var automationID: UUID?
+    /// A manual Desk source run: its result is ingested directly, without a parent reply.
+    var deskSourceCheck: Bool? = nil
+    var deskSourceCheckIncludeNew: Bool? = nil
     /// A work thread (plans/work-threads.md): the front thread it reports to, the last reply
     /// already reported, and when it last reported by itself (`work report`), so the reply
     /// that ends that turn isn't sent again (see ChatSession+Work).

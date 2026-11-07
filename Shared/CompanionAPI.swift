@@ -480,6 +480,25 @@ enum Companion {
         var threadID: UUID? = nil
         var isRunning = false
         var needsYou = false
+        var result: DeskIngestResult? = nil
+        var problem: String? = nil
+    }
+
+    /// A source agent submits individual requests, never a prose report to parse later.
+    struct DeskIngestion: Codable {
+        var items: [DeskAddRequest]
+        var updates: [DeskOriginReport]
+        var unavailable: [String]
+    }
+
+    struct DeskIngestResult: Codable, Equatable {
+        var finishedAt: Date
+        var added: [UUID]
+        var updated: [UUID]
+        var unavailable: [String]
+        var fingerprint: String? = nil
+        var complete: Bool { unavailable.isEmpty }
+        var summary: String { "\(added.count) added · \(updated.count) updated" }
     }
 
     /// A task linked to its thread (plans/work-threads.md). One task per thread, one thread per task.

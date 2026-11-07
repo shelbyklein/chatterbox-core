@@ -767,7 +767,11 @@ final class CompanionServer {
         guard let runner = AutomationRunner.shared else { throw Failure(status: 503, message: "Automations aren't running yet.") }
         let state = ProjectAutomations.loadState()
         var latest = routine.max { (state[$0.id.uuidString]?.lastRun ?? .distantPast) < (state[$1.id.uuidString]?.lastRun ?? .distantPast) } ?? routine[0]
-        if deskSources { latest.instructions = ProjectAutomations.deskSourceInstructions(latest.instructions, includeNew: includeNew) }
+        if deskSources {
+            latest.instructions = ProjectAutomations.deskSourceInstructions(latest.instructions, includeNew: includeNew)
+            latest.deskSourceCheck = true
+            latest.deskSourceCheckIncludeNew = includeNew
+        }
         let thread: UUID
         do { thread = try runner.run(latest, manual: true) } catch { throw Failure(status: 409, message: error.localizedDescription) }
         model.automationsChanged()

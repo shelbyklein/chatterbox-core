@@ -76,6 +76,11 @@ extension ChatSession {
         var record = sidequestRecord(of: project, anchor: project, number: number, backend: automationBackend(automation, project: project),
                                      task: ProjectAutomations.message(for: automation, manual: manual))
         record.automationID = automation.id
+        record.deskSourceCheck = automation.deskSourceCheck
+        record.deskSourceCheckIncludeNew = automation.deskSourceCheckIncludeNew
+        if automation.deskSourceCheck == true {
+            record.sidequestTask = (record.sidequestTask ?? "") + "\n\nFor this check, submit the manifest with `desk ingest FILE --chat \(record.id.uuidString)`. This is the check's run ID, not a task or source ID."
+        }
         record.title = "Automation \u{00B7} " + automation.title
         record.parentContext = nil
         record.pendingHandoff = Prompts.automationStart(title: automation.title, project: automation.isGeneral ? nil : project.projectName)
@@ -140,6 +145,15 @@ extension ChatSession {
     /// Sends the newest reply back to `parent`, which carries on from it.
     func returnSidequest(to parent: ChatSession) {
         guard let reply = unreturnedSidequestReply else { return }
+        if record.deskSourceCheck == true {
+            // A final paragraph alone is not successful intake. Partial/failed runs remain
+            // available for retry and never start a second agent in the reporting chat.
+            guard RuntimeHooks.sourceCheckComplete(id), !isWaitingOnYou else { return }
+            record.sidequestReturned = reply.id
+            setArchived(true)
+            onChange?(self)
+            return
+        }
         record.sidequestReturned = reply.id
         let automation = record.automationID != nil
         let task = record.sidequestTask ?? title

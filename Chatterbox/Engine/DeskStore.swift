@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 // The Desk: tasks (desk.json), place proposals, and what needs Shelby. plans/front-desk.md
 // The board's Review and Done: plans/desk-board.md
@@ -110,6 +111,7 @@ final class DeskStore {
         var silences: [Silence]? = nil
         /// Every task; nil in a desk.json from before tasks, whose requests become tasks to do.
         var tasks: [TaskRecord]? = nil
+        var sourceChecks: [String: Companion.DeskIngestResult]? = nil
     }
     private struct Content: Equatable {
         var needsYou: [Companion.DeskWaiting]
@@ -142,6 +144,8 @@ final class DeskStore {
     }
 
     private let file: URL
+    private var sourceChecks: [String: Companion.DeskIngestResult] = [:]
+    private var ingesting = false
     /// What the Desk last showed, to notice changes.
     private var shown: Content?
     private var refreshScheduled = false
@@ -161,6 +165,7 @@ final class DeskStore {
                 tasks[index].origin = DeskOriginRules.clickUp(in: (tasks[index].note ?? "") + "\n" + tasks[index].text)
             }
             silences = saved.silences ?? []
+            sourceChecks = saved.sourceChecks ?? [:]
             // Sessions may have changed while the service was down.
             revision = saved.revision + 1
         } else {
@@ -328,8 +333,81 @@ final class DeskStore {
         let todo = tasks.filter(isToDo)
         if todo.count > Self.limit { let old = Set(todo.suffix(todo.count - Self.limit).map(\.id)); tasks.removeAll { old.contains($0.id) } }
         changed()
-        if confidence == nil { scoreQuickly(request.id) } else { autoStartWaiting() }
+        if !ingesting {
+            if confidence == nil { scoreQuickly(request.id) } else { autoStartWaiting() }
+        }
         return request
+    }
+
+    func sourceCheckResult(_ id: UUID) -> Companion.DeskIngestResult? { sourceChecks[id.uuidString] }
+
+    /// Commit individual source findings and their receipt together. Existing identities use
+    /// the same de-duplication rules as `desk add`; task threads and their columns stay put.
+    func ingest(_ manifest: Companion.DeskIngestion, in session: ChatSession) throws -> Companion.DeskIngestResult {
+        guard session.record.deskSourceCheck == true, session.record.automationID != nil, session.isRunning,
+              session.record.archivedAt == nil, !ingesting else {
+            throw Failure(status: 403, message: "Only an active Desk source check can ingest its findings.")
+        }
+        guard manifest.items.count <= Self.limit, manifest.updates.count <= 1_000, manifest.unavailable.count <= 100 else {
+            throw Failure(status: 400, message: "Split this source check into a smaller manifest.")
+        }
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        let fingerprint = SHA256.hash(data: try encoder.encode(manifest)).map { String(format: "%02x", $0) }.joined()
+        let previous = sourceCheckResult(session.id)
+        if let previous, previous.complete {
+            guard previous.fingerprint == fingerprint else { throw Failure(status: 409, message: "This check already finished. Start a new check for more findings.") }
+            return previous
+        }
+        let beforeTasks = tasks, beforeChecks = sourceChecks, beforeSilences = silences
+        let beforeRevision = revision, beforeShown = shown
+        ingesting = true
+        defer { ingesting = false }
+        do {
+            var added = Set(previous?.added ?? []), updated = Set(previous?.updated ?? [])
+            for var item in manifest.items {
+                guard item.confidence != nil else { throw Failure(status: 400, message: "Give each request preparation confidence and its reason.") }
+                item.source = session.record.backend.rawValue
+                let ids = Set(tasks.map(\.id))
+                let result = try add(item)
+                if !ids.contains(result.id) {
+                    guard session.record.deskSourceCheckIncludeNew != false else {
+                        throw Failure(status: 409, message: "This check updates existing tasks only; it cannot add new ones.")
+                    }
+                    added.insert(result.id)
+                }
+            }
+            for update in manifest.updates {
+                try reportOrigin(update)
+                let origin = update.ref.flatMap(DeskOriginRules.parse)
+                let matches = tasks.filter { task in
+                    if let id = update.task { return task.id == id }
+                    return origin.map { wanted in task.origin.map { DeskOriginRules.sameSource($0, wanted) } ?? false } ?? false
+                }
+                updated.formUnion(matches.map(\.id))
+            }
+            updated.subtract(added)
+            let unavailable = Array(Set(manifest.unavailable.compactMap(Self.clean).map { String($0.prefix(300)) })).sorted()
+            guard unavailable.count == Set(manifest.unavailable.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }).count else {
+                throw Failure(status: 400, message: "Name each unavailable source clearly.")
+            }
+            let result = Companion.DeskIngestResult(finishedAt: Self.wholeSeconds(),
+                added: added.sorted { $0.uuidString < $1.uuidString }, updated: updated.sorted { $0.uuidString < $1.uuidString },
+                unavailable: unavailable, fingerprint: fingerprint)
+            sourceChecks[session.id.uuidString] = result
+            revision += 1
+            let content = current()
+            try persist()
+            shown = content
+            ingesting = false
+            onChange?(Self.desk(content, revision: revision))
+            // Only persisted findings can start preparation, under the normal confidence rules.
+            autoStartWaiting()
+            return result
+        } catch {
+            tasks = beforeTasks; sourceChecks = beforeChecks; silences = beforeSilences
+            revision = beforeRevision; shown = beforeShown
+            throw error
+        }
     }
 
     // MARK: - Confidence and auto-start (plans/desk-confidence.md)
@@ -1081,9 +1159,15 @@ final class DeskStore {
         let state = ProjectAutomations.loadState()
         let latest = routine.compactMap { state[$0.id.uuidString] }.max { ($0.lastRun ?? .distantPast) < ($1.lastRun ?? .distantPast) }
         let thread = latest?.threadID.flatMap { id in model?.sessions.first { $0.id == id } }
+        let result = thread.flatMap { sourceCheckResult($0.id) }
+        let running = thread.map { $0.record.archivedAt == nil && ($0.isRunning || $0.record.pressureHold != nil || $0.isWaitingOnYou) } ?? false
+        let problem: String?
+        if let result, !result.complete { problem = "Check incomplete · " + result.unavailable.joined(separator: "; ") }
+        else if !running, thread != nil, result == nil { problem = "Check incomplete · No saved Desk results. Check for updates to retry." }
+        else { problem = nil }
         return .init(routineID: routine.first?.id, lastRequestedAt: latest?.lastRun, threadID: thread?.id,
-                     isRunning: thread.map { $0.record.archivedAt == nil && ($0.isRunning || $0.isWaitingOnYou) } ?? false,
-                     needsYou: thread?.isWaitingOnYou ?? false)
+                     isRunning: running, needsYou: (thread?.isWaitingOnYou ?? false) || problem != nil,
+                     result: result, problem: problem)
     }
 
     /// A user tap reuses the configured intake, without a second scheduler or duplicate run.
@@ -1368,6 +1452,7 @@ final class DeskStore {
 
     /// The tasks or silences changed: saved now, and announced.
     private func changed() {
+        if ingesting { return }
         revision += 1
         let content = current()
         shown = content
@@ -1390,11 +1475,15 @@ final class DeskStore {
 
     private func save() {
         do {
-            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try Companion.encoder.encode(Saved(revision: revision, requests: requests, silences: silences, tasks: tasks)).write(to: file, options: .atomic)
+            try persist()
         } catch {
             RuntimeHooks.note("The Desk couldn't save: \(error.localizedDescription)")
         }
+    }
+
+    private func persist() throws {
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Companion.encoder.encode(Saved(revision: revision, requests: requests, silences: silences, tasks: tasks, sourceChecks: sourceChecks)).write(to: file, options: .atomic)
     }
 }
 

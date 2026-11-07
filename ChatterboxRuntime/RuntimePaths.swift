@@ -13,6 +13,8 @@ enum RuntimePaths {
 /// Runtime emits domain activity; each process supplies its own side effects.
 /// The conversation core never starts a UI or a scheduler.
 @MainActor enum RuntimeHooks {
+    /// The service owns durable Desk receipts; a lightweight engine fails closed.
+    static var sourceCheckComplete: (UUID) -> Bool = { _ in false }
     static var note: (String) -> Void = { _ in }
     static var clearSuggestions: (ChatSession) -> Void = { _ in }
     static var turnEnded: (ChatSession) -> Void = { $0.automaticTurn = false }
