@@ -8,6 +8,58 @@ struct ChatterboxWidgets: WidgetBundle {
     var body: some Widget {
         ChatterboxWidget()
         ChatterboxUsageWidget()
+        ChatterboxNewChatWidget()
+    }
+}
+
+/// Two links need a medium widget: a small widget has only one system tap destination.
+struct ChatterboxNewChatWidget: Widget {
+    var body: some WidgetConfiguration {
+        StaticConfiguration(kind: "ChatterboxNewChat", provider: SnapshotProvider()) { _ in
+            ChatterboxNewChatWidgetView()
+                .containerBackground(.fill.tertiary, for: .widget)
+        }
+        .configurationDisplayName("New Chat")
+        .description("Start a fresh Codex Sol or Claude Opus 5.5 chat at Medium effort.")
+        .supportedFamilies([.systemMedium])
+    }
+}
+
+struct ChatterboxNewChatWidgetView: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    private func accent(_ shortcut: WidgetChatShortcut) -> Color {
+        if colorScheme == .dark { return shortcut == .codex ? .blue : .orange }
+        return shortcut == .codex ? Color(red: 0, green: 0.26, blue: 0.6) : Color(red: 0.53, green: 0.22, blue: 0.02)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("New Chat").font(.subheadline.weight(.semibold))
+            HStack(spacing: 12) {
+                ForEach(WidgetChatShortcut.allCases) { shortcut in
+                    Link(destination: shortcut.link) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack {
+                                Text(shortcut.title).font(.headline)
+                                Spacer(minLength: 0)
+                                Image(systemName: "square.and.pencil").font(.body)
+                                    .foregroundStyle(accent(shortcut))
+                            }
+                            Text(shortcut.modelTitle).font(.subheadline)
+                            Text("Medium").font(.caption)
+                        }
+                        .foregroundStyle(.primary)
+                        .padding(12)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 14))
+                        .contentShape(RoundedRectangle(cornerRadius: 14))
+                    }
+                    .accessibilityLabel("New \(shortcut.title) chat, \(shortcut.modelTitle), Medium effort")
+                    .accessibilityIdentifier("new-chat-widget-\(shortcut.rawValue)")
+                }
+            }
+        }
     }
 }
 

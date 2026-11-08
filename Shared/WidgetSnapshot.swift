@@ -1,5 +1,25 @@
 import Foundation
 
+/// Fixed quick starts shared by the widget and the phone. Links never supply arbitrary settings.
+enum WidgetChatShortcut: String, CaseIterable, Identifiable {
+    case codex, claude
+    var id: String { rawValue }
+    var title: String { self == .codex ? "Codex" : "Claude" }
+    var modelTitle: String { self == .codex ? "Sol" : "Opus 5.5" }
+    var model: String { self == .codex ? "gpt-6.1-sol" : "claude-opus-5-5" }
+    var effort: String { "medium" }
+    var link: URL { URL(string: "\(Flavor.current.urlScheme)://new-chat/\(rawValue)")! }
+
+    init?(url: URL) {
+        guard let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              parts.scheme == Flavor.current.urlScheme, parts.host == "new-chat",
+              parts.user == nil, parts.password == nil, parts.port == nil,
+              parts.query == nil, parts.fragment == nil,
+              let shortcut = Self(rawValue: String(parts.path.dropFirst())), parts.path == "/\(shortcut.rawValue)" else { return nil }
+        self = shortcut
+    }
+}
+
 /// What the iPhone widget shows: activity and the account limits last synced by the phone.
 /// The Chatterbox app writes it whenever its chat list changes or you open a chat; the
 /// widget reads it from their shared app group, since a widget can't hold a connection to the

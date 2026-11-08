@@ -1,5 +1,58 @@
 import SwiftUI
 
+/// A widget tap creates a blank ordinary chat, without sending a message or agent turn.
+struct MobileWidgetNewChat: View {
+    let shortcut: WidgetChatShortcut
+    let created: (UUID) -> Void
+    @Environment(MobileStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
+    @State private var starting = false
+    @State private var attempted = false
+    @State private var problem: String?
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 16) {
+                if let problem {
+                    MobileProblemCard(problem)
+                    Button("Try Again") { Task { await begin() } }
+                        .buttonStyle(.borderedProminent).accessibilityIdentifier("widget-chat-retry")
+                } else {
+                    ProgressView("Opening \(shortcut.title)…")
+                }
+            }
+            .padding(24)
+            .navigationTitle("\(shortcut.modelTitle) · Medium")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }.disabled(starting)
+                }
+            }
+            .interactiveDismissDisabled(starting)
+            .task {
+                guard !attempted else { return }
+                attempted = true
+                await begin()
+            }
+        }
+    }
+
+    @MainActor private func begin() async {
+        guard !starting else { return }
+        starting = true; problem = nil
+        do {
+            let detail = try await store.newChat(in: nil, backend: shortcut.rawValue,
+                settings: .init(model: shortcut.model, effort: shortcut.effort))
+            created(detail.summary.id)
+            dismiss()
+        } catch {
+            problem = error.localizedDescription
+        }
+        starting = false
+    }
+}
+
 /// New Chat: where it goes, then the agent, model, effort and permissions (or a preset),
 /// all chosen before it starts. The Mac works out each step's options, so what you see is
 /// what the chat gets.
