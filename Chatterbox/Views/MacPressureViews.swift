@@ -83,6 +83,7 @@ struct MacPressureDetails: View {
             if !pressure.isOK { Text(pressure.summary).font(.callout) }
             Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 4) {
                 row("Load", "\(Self.number(pressure.load1)) · \(Self.number(pressure.load5)) · \(Self.number(pressure.load15)) on \(pressure.cores) cores")
+                if let cpu = pressure.cpuPercent { row("CPU", "\(cpu)% in use") }
                 row("Memory", pressure.memory.capitalized + (pressure.compressedGB.map { ", \(Self.number($0)) GB compressed" } ?? ""))
                 row("Swap", "\(Self.number(pressure.swapUsedGB)) GB used" + (pressure.swapGrowthGB > 0 ? ", +\(Self.number(pressure.swapGrowthGB)) GB in 5 min" : ""))
                 row("Thermal", pressure.thermal.capitalized)

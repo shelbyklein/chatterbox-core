@@ -82,14 +82,17 @@ enum Companion {
         var holding: [String] = []
         /// Work threads waiting for the Mac (new ones not started, or next turns held).
         var waiting: Int = 0
+        /// How much of the CPU was in use since the service's last look, percent; nil from a Mac
+        /// that doesn't send it. Load counts toward Busy/Overloaded only while this is high too.
+        var cpuPercent: Int? = nil
 
         init(level: String, since: Date? = nil, updatedAt: Date, updated: Int, summary: String, reasons: [String] = [], memory: String,
              swapUsedGB: Double, swapGrowthGB: Double, compressedGB: Double? = nil, load1: Double, load5: Double, load15: Double, cores: Int,
-             thermal: String, holding: [String] = [], waiting: Int = 0) {
+             thermal: String, holding: [String] = [], waiting: Int = 0, cpuPercent: Int? = nil) {
             self.level = level; self.since = since; self.updatedAt = updatedAt; self.updated = updated; self.summary = summary
             self.reasons = reasons; self.memory = memory; self.swapUsedGB = swapUsedGB; self.swapGrowthGB = swapGrowthGB
             self.compressedGB = compressedGB; self.load1 = load1; self.load5 = load5; self.load15 = load15; self.cores = cores
-            self.thermal = thermal; self.holding = holding; self.waiting = waiting
+            self.thermal = thermal; self.holding = holding; self.waiting = waiting; self.cpuPercent = cpuPercent
         }
 
         /// Leniently: it rides on the chat list, which must never fail over a field here that a
@@ -113,6 +116,7 @@ enum Companion {
             thermal = (try? c.decodeIfPresent(String.self, forKey: .thermal)) ?? "nominal"
             holding = (try? c.decodeIfPresent([String].self, forKey: .holding)) ?? []
             waiting = (try? c.decodeIfPresent(Int.self, forKey: .waiting)) ?? 0
+            cpuPercent = try? c.decodeIfPresent(Int.self, forKey: .cpuPercent)
         }
 
         /// "Mac OK", "Mac busy", "Mac overloaded".
