@@ -1135,27 +1135,30 @@ struct ChatCard: View {
         Button(action: open) {
             if showsThumbnail { studioCard } else {
             VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 6) {
-                    if chat.worktreeBranch != nil {
-                        Image(systemName: "arrow.triangle.branch").font(.caption).foregroundStyle(.secondary)
-                    } else {
-                        Image((Backend(rawValue: chat.backend) ?? .claude).iconName)
-                            .resizable().scaledToFit().frame(width: 13, height: 13)
-                            .foregroundStyle(MobileConversationStyle.accent(for: chat.backend))
+                HStack(alignment: .top, spacing: 6) {
+                    Text(chat.worktreeBranch ?? chat.project ?? chat.title)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    HStack(spacing: 6) {
+                        if chat.isWaitingOnYou {
+                            Circle().fill(Color.attention).frame(width: 8, height: 8).accessibilityLabel("Waiting on you")
+                        } else if chat.isRunning {
+                            MobileWorkingMark(size: .mini)
+                        } else if isNew {
+                            Circle().fill(.blue).frame(width: 8, height: 8).accessibilityLabel("New reply")
+                        }
+                        if chat.worktreeBranch != nil {
+                            Image(systemName: "arrow.triangle.branch").font(.caption).foregroundStyle(.secondary)
+                        } else {
+                            Image((Backend(rawValue: chat.backend) ?? .claude).iconName)
+                                .resizable().scaledToFit().frame(width: 13, height: 13)
+                                .foregroundStyle(MobileConversationStyle.accent(for: chat.backend))
+                        }
                     }
-                    Spacer(minLength: 0)
-                    if chat.isWaitingOnYou {
-                        Circle().fill(Color.attention).frame(width: 8, height: 8).accessibilityLabel("Waiting on you")
-                    } else if chat.isRunning {
-                        MobileWorkingMark(size: .mini)
-                    } else if isNew {
-                        Circle().fill(.blue).frame(width: 8, height: 8).accessibilityLabel("New reply")
-                    }
+                    .padding(.top, 3)
                 }
-                Text(chat.worktreeBranch ?? chat.project ?? chat.title)
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
                 if let line = chat.subtitle ?? (chat.project != nil ? chat.title : nil) {
                     Text(line)
                         .font(.caption)
