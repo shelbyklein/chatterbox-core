@@ -17,7 +17,7 @@ struct ContentView: View {
     /// Pinned threads: "list" (compact rows), "cards1" or "cards2" (cards in one or two columns).
     @AppStorage("macPinnedLayout") private var pinnedLayout = "cards1"
     private var sidebarCards: Bool { model.showingStudiosSidebar ? studioCards : model.showingChatsSidebar ? chatsCards : projectsCards }
-    @AppStorage("showArchived") private var showArchived = false
+    @State private var archiveSearch = ""
     @AppStorage("sidebarSectionWeights") private var sectionWeights = "1,1,1"
     @AppStorage("sidebarStudiosCollapsed") private var studiosCollapsed = false
     @AppStorage("sidebarChatsCollapsed") private var chatsCollapsed = false
@@ -146,6 +146,8 @@ struct ContentView: View {
                 }
             } else if model.showingSettings {
                 SettingsPage()
+            } else if model.showingArchive {
+                ArchivedThreadsView(search: $archiveSearch) { AnyView(threadMenu($0)) }
             } else if let page = model.webPage {
                 // A website pin: the page takes the chat's place, and the chat floats over it.
                 ZStack(alignment: .bottomTrailing) {
@@ -188,7 +190,7 @@ struct ContentView: View {
     }
 
     private var mainChatID: UUID? {
-        guard !model.showingAutomations, !model.showingCommandCenter, !model.showingHome, !model.showingSettings, model.webPage == nil, let session = model.selected else { return nil }
+        guard !model.showingArchive, !model.showingAutomations, !model.showingCommandCenter, !model.showingHome, !model.showingSettings, model.webPage == nil, let session = model.selected else { return nil }
         return session.id
     }
 
@@ -1675,7 +1677,7 @@ extension ContentView {
     /// Archived, and any collapsed Studios or Chats, as buttons along the bottom. Full labels
     /// when they fit; icons and counts when the sidebar is narrow.
     private var sidebarDock: some View {
-        let archived = model.archivedSessions.filter(isShown)
+        let archived = model.archivedSessions
         let docked: [SidebarSection] = []
         return ViewThatFits(in: .horizontal) {
             dockRow(docked: docked, archived: archived, labels: true)
@@ -1714,19 +1716,17 @@ extension ContentView {
                 .transition(.scale(scale: 0.6).combined(with: .opacity))
             }
             Spacer(minLength: 0)
-            if !archived.isEmpty {
-                Button { showArchived.toggle() } label: {
-                    dockChip("Archived", count: archived.count, icon: "archivebox", label: labels, selected: showArchived)
+            if !archived.isEmpty || model.showingArchive {
+                Button { model.showingArchive = true } label: {
+                    dockChip("Archived", count: archived.count, icon: "archivebox", label: labels, selected: model.showingArchive)
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
                 .help("Archived sessions")
-                .popover(isPresented: $showArchived, arrowEdge: .top) {
-                    List {
-                        ForEach(archived) { session in row(session, number: nil) }
-                    }
-                    .frame(width: 300, height: min(420, CGFloat(archived.count) * 52 + 20))
-                }
+                .accessibilityIdentifier("open-archived-threads")
+                #if DEBUG
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { SidebarDebug.archive = $0 }
+                #endif
             }
         }
     }
@@ -1736,6 +1736,7 @@ extension ContentView {
 /// Where each divider is drawn, for interaction tests.
 @MainActor enum SidebarDebug {
     static var dividers: [String: CGRect] = [:]
+    static var archive: CGRect = .zero
     static var search: CGRect = .zero
     static var viewToggle: CGRect = .zero
     static var activity: CGRect = .zero

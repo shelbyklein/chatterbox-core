@@ -183,10 +183,10 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
     }
 
     private func apply() {
-        let overview = model.showingSettings || model.showingAutomations || model.showingCommandCenter || model.showingHome
+        let overview = model.showingArchive || model.showingSettings || model.showingAutomations || model.showingCommandCenter || model.showingHome
         let session = overview ? nil : bridge.session
         let desk = model.showingDesk
-        let title = model.showingSettings ? "Settings" : model.showingAutomations ? "Automations" : model.showingCommandCenter ? "Command Center"
+        let title = model.showingArchive ? "Archived" : model.showingSettings ? "Settings" : model.showingAutomations ? "Automations" : model.showingCommandCenter ? "Command Center"
             : model.showingHome ? (desk ? "Desk" : "Studios") : model.selected?.title ?? session?.title ?? Flavor.current.appName
         if window?.title != title { window?.title = title }
         if titleLabel.stringValue != title { titleLabel.stringValue = title }
@@ -196,7 +196,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
 
         // Which of the left-hand views is showing; none while Settings is.
         if let views = items[ID.views] as? NSToolbarItemGroup {
-            let index = model.showingSettings || model.showingAutomations || desk ? -1 : model.showingCommandCenter ? 3 : (model.showingHome || model.showingStudiosSidebar) ? 1 : model.showingChatsSidebar ? 2 : 0
+            let index = model.showingArchive || model.showingSettings || model.showingAutomations || desk ? -1 : model.showingCommandCenter ? 3 : (model.showingHome || model.showingStudiosSidebar) ? 1 : model.showingChatsSidebar ? 2 : 0
             // Set here, one or none (Settings, Automations): a select-one group always keeps one.
             viewIndex = index
             for i in views.subitems.indices where views.isSelected(at: i) != (i == index) { views.setSelected(i == index, at: i) }
@@ -362,8 +362,8 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         let wasChats = model.showingChatsSidebar || model.studioSidebarID != nil
         model.studioSidebarID = nil
         model.showingChatsSidebar = false
-        if model.showingAutomations || model.showingHome || model.showingCommandCenter || model.showingSettings {
-            model.showingAutomations = false
+        if model.showingArchive || model.showingAutomations || model.showingHome || model.showingCommandCenter || model.showingSettings {
+            model.showingArchive = false; model.showingAutomations = false
             model.showingHome = false; model.showingCommandCenter = false; model.showingSettings = false
         } else if !wasChats {
             model.sidebarToggleRequest += 1
