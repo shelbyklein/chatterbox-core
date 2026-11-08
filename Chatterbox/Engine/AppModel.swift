@@ -19,6 +19,7 @@ final class AppModel {
     var selectedID: UUID? {
         didSet {
             if selectedID != nil { selectionClearedByArchive = false }
+            showingArchive = false
             showingHome = false
             showingAutomations = false
             showingCommandCenter = false
@@ -69,6 +70,7 @@ final class AppModel {
     /// Section buttons always open the session columns, including when a remembered
     /// session was archived or moved. They never leave another section's chat selected.
     func showView(_ view: MainView) {
+        showingArchive = false
         showingSettings = false; showingCommandCenter = false; showingAutomations = false
         let candidates = activeSessions.filter { session in
             Self.view(of: session) == view &&
@@ -95,14 +97,23 @@ final class AppModel {
     var studioSidebarID: UUID?
     var sidebarStudio: Studio? { studio(studioSidebarID) }
     /// Settings, shown in the main window in place of the chat.
-    var showingHome = false { didSet { if showingHome { showingCommandCenter = false; showingAutomations = false } } }
-    var showingCommandCenter = false { didSet { if showingCommandCenter { showingHome = false; showingSettings = false; showingAutomations = false } } }
-    var showingAutomations = false { didSet { if showingAutomations { showingHome = false; showingCommandCenter = false; showingSettings = false } } }
+    var showingHome = false { didSet { if showingHome { showingArchive = false; showingCommandCenter = false; showingAutomations = false } } }
+    var showingCommandCenter = false { didSet { if showingCommandCenter { showingArchive = false; showingHome = false; showingSettings = false; showingAutomations = false } } }
+    var showingAutomations = false { didSet { if showingAutomations { showingArchive = false; showingHome = false; showingCommandCenter = false; showingSettings = false } } }
+    /// Archived threads are browsed in the center pane, independently of sidebar filters.
+    var showingArchive = false {
+        didSet {
+            if showingArchive {
+                showingHome = false; showingSettings = false
+                showingCommandCenter = false; showingAutomations = false; webPage = nil
+            }
+        }
+    }
     /// Feedback (toolbar): the window's screenshot being annotated, then what goes into the
     /// Chatterbox session's message box.
     var feedbackShot: Attachment?
     var composerInsertion: ComposerInsertion?
-    var showingSettings = false { didSet { if showingSettings { showingHome = false; showingCommandCenter = false; showingAutomations = false } } }
+    var showingSettings = false { didSet { if showingSettings { showingArchive = false; showingHome = false; showingCommandCenter = false; showingAutomations = false } } }
     @ObservationIgnored weak var mainChatWindow: NSWindow?
     @ObservationIgnored var revealMainChatWindow: (() -> Void)?
     /// Sidebar toolbar/keyboard requests, consumed by the single column container.
@@ -131,6 +142,7 @@ final class AppModel {
 
     /// Shows a page in place of the chat; another page replaces the one that's open.
     func openPage(_ url: URL) {
+        showingArchive = false
         webPage = WebPage(url: url)
     }
 
@@ -415,6 +427,17 @@ final class AppModel {
             .sorted { ($0.record.archivedAt ?? .distantPast) > ($1.record.archivedAt ?? .distantPast) }
     }
 
+    func archivedSessions(matching query: String) -> [ChatSession] {
+        let words = query.split(whereSeparator: \.isWhitespace)
+        guard !words.isEmpty else { return archivedSessions }
+        return archivedSessions.filter { session in
+            let preview = session.listSummary?.preview
+                ?? session.items.last(where: { $0.kind == .assistant || $0.kind == .user })?.text ?? ""
+            let text = ([session.title, session.projectName, studio(for: session)?.name ?? "", preview] + session.tags).joined(separator: " ")
+            return words.allSatisfy { text.localizedStandardContains($0) }
+        }
+    }
+
     @ObservationIgnored private let directory: URL
     @ObservationIgnored private var legacyOwnership: RuntimeOwnership?
     @ObservationIgnored private var projecting = false
@@ -614,10 +637,10 @@ final class AppModel {
     func archive(_ session: ChatSession) {
         let discardEmpty = !session.hasMessages && session.record.projectFolder == nil && session.record.sidechatOf == nil
         if selectedID == session.id {
-            let home = showingHome, automations = showingAutomations, commandCenter = showingCommandCenter
+            let home = showingHome, automations = showingAutomations, commandCenter = showingCommandCenter, archive = showingArchive
             selectedID = nil
             selectionClearedByArchive = true
-            showingHome = home; showingAutomations = automations; showingCommandCenter = commandCenter
+            showingHome = home; showingAutomations = automations; showingCommandCenter = commandCenter; showingArchive = archive
         }
         if discardEmpty { return delete(session, selectingReplacement: false) }
         session.shutdown()
