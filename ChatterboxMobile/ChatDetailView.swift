@@ -941,6 +941,13 @@ struct ChatDetailView: View {
                 .accessibilityIdentifier("messageComposer")
                 .lineLimit(1...6)
                 .focused($composing)
+                .task(id: "\(store.pendingComposerFocus?.uuidString ?? "")|\(scenePhase)") {
+                    guard scenePhase == .active, store.pendingComposerFocus == chat.id else { return }
+                    await Task.yield()
+                    guard !Task.isCancelled, store.pendingComposerFocus == chat.id else { return }
+                    composing = true
+                    store.pendingComposerFocus = nil
+                }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 9)
                 .background(RoundedRectangle(cornerRadius: 20).fill(Color(uiColor: .secondarySystemBackground)))

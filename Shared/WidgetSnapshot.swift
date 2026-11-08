@@ -9,13 +9,28 @@ enum WidgetChatShortcut: String, CaseIterable, Identifiable {
     var model: String { self == .codex ? "gpt-6.1-sol" : "claude-opus-5-5" }
     var effort: String { "medium" }
     var link: URL { URL(string: "\(Flavor.current.urlScheme)://new-chat/\(rawValue)")! }
+    static let widgetKind = "ChatterboxNewChat"
+    static let selectionKey = "newChatWidgetProvider"
+    static var preferences: UserDefaults {
+        Flavor.current.appGroup.flatMap { UserDefaults(suiteName: $0) } ?? .standard
+    }
+    static var fieldLink: URL { URL(string: "\(Flavor.current.urlScheme)://new-chat")! }
 
-    init?(url: URL) {
+    static func selected(in preferences: UserDefaults = Self.preferences) -> Self {
+        preferences.string(forKey: selectionKey).flatMap(Self.init(rawValue:)) ?? .codex
+    }
+
+    static func select(_ provider: Self, in preferences: UserDefaults = Self.preferences) {
+        preferences.set(provider.rawValue, forKey: selectionKey)
+    }
+
+    init?(url: URL, preferences: UserDefaults = Self.preferences) {
         guard let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
               parts.scheme == Flavor.current.urlScheme, parts.host == "new-chat",
               parts.user == nil, parts.password == nil, parts.port == nil,
-              parts.query == nil, parts.fragment == nil,
-              let shortcut = Self(rawValue: String(parts.path.dropFirst())), parts.path == "/\(shortcut.rawValue)" else { return nil }
+              parts.query == nil, parts.fragment == nil else { return nil }
+        if parts.path.isEmpty { self = Self.selected(in: preferences); return }
+        guard let shortcut = Self(rawValue: String(parts.path.dropFirst())), parts.path == "/\(shortcut.rawValue)" else { return nil }
         self = shortcut
     }
 }

@@ -1,5 +1,6 @@
 import SwiftUI
 import WidgetKit
+import AppIntents
 
 /// The Chatterbox widget: chats waiting on you, new replies and chats working now, from the
 /// snapshot the app saves (see WidgetSnapshot). Each row opens its chat.
@@ -12,20 +13,36 @@ struct ChatterboxWidgets: WidgetBundle {
     }
 }
 
-/// Two links need a medium widget: a small widget has only one system tap destination.
+struct NewChatEntry: TimelineEntry {
+    var date: Date
+    var provider: WidgetChatShortcut
+}
+
+struct NewChatProvider: TimelineProvider {
+    func placeholder(in context: Context) -> NewChatEntry { .init(date: .now, provider: .codex) }
+    func getSnapshot(in context: Context, completion: @escaping (NewChatEntry) -> Void) {
+        completion(.init(date: .now, provider: WidgetChatShortcut.selected()))
+    }
+    func getTimeline(in context: Context, completion: @escaping (Timeline<NewChatEntry>) -> Void) {
+        completion(Timeline(entries: [.init(date: .now, provider: WidgetChatShortcut.selected())], policy: .never))
+    }
+}
+
 struct ChatterboxNewChatWidget: Widget {
     var body: some WidgetConfiguration {
-        StaticConfiguration(kind: "ChatterboxNewChat", provider: SnapshotProvider()) { _ in
-            ChatterboxNewChatWidgetView()
+        StaticConfiguration(kind: WidgetChatShortcut.widgetKind, provider: NewChatProvider()) { entry in
+            ChatterboxNewChatWidgetView(selection: entry.provider)
                 .containerBackground(.fill.tertiary, for: .widget)
         }
         .configurationDisplayName("New Chat")
-        .description("Start a fresh Codex Sol or Claude Opus 5.5 chat at Medium effort.")
-        .supportedFamilies([.systemMedium])
+        .description("Choose Claude or Codex, then tap New chat to start typing.")
+        .supportedFamilies([.systemSmall, .systemMedium])
     }
 }
 
 struct ChatterboxNewChatWidgetView: View {
+    let selection: WidgetChatShortcut
+    @Environment(\.widgetFamily) private var family
     @Environment(\.colorScheme) private var colorScheme
 
     private func accent(_ shortcut: WidgetChatShortcut) -> Color {
@@ -34,32 +51,51 @@ struct ChatterboxNewChatWidgetView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("New Chat").font(.subheadline.weight(.semibold))
-            HStack(spacing: 12) {
-                ForEach(WidgetChatShortcut.allCases) { shortcut in
-                    Link(destination: shortcut.link) {
-                        VStack(alignment: .leading, spacing: 3) {
-                            HStack {
-                                Text(shortcut.title).font(.headline)
-                                Spacer(minLength: 0)
-                                Image(systemName: "square.and.pencil").font(.body)
-                                    .foregroundStyle(accent(shortcut))
-                            }
-                            Text(shortcut.modelTitle).font(.subheadline)
-                            Text("Medium").font(.caption)
-                        }
-                        .foregroundStyle(.primary)
-                        .padding(12)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 14))
-                        .contentShape(RoundedRectangle(cornerRadius: 14))
+        VStack(alignment: .leading, spacing: 10) {
+            Link(destination: WidgetChatShortcut.fieldLink) {
+                HStack(spacing: 10) {
+                    if family != .systemSmall {
+                        Image(systemName: "square.and.pencil").foregroundStyle(accent(selection))
                     }
-                    .accessibilityLabel("New \(shortcut.title) chat, \(shortcut.modelTitle), Medium effort")
-                    .accessibilityIdentifier("new-chat-widget-\(shortcut.rawValue)")
+                    Text("New chat…").foregroundStyle(.primary).lineLimit(1).minimumScaleFactor(0.8)
+                    Spacer(minLength: 0)
+                }
+                .font(.subheadline)
+                .padding(.horizontal, family == .systemSmall ? 10 : 16)
+                .frame(maxWidth: .infinity, minHeight: 48)
+                .background(.quaternary, in: Capsule())
+                .contentShape(Capsule())
+            }
+            .accessibilityLabel("New chat with \(selection.title), \(selection.modelTitle), Medium effort")
+            .accessibilityIdentifier("widget-new-chat-field")
+
+            HStack(spacing: 8) {
+                ForEach([WidgetChatShortcut.claude, .codex]) { provider in
+                    Button(intent: SelectWidgetProviderIntent(provider: provider)) {
+                        Text(provider.title)
+                            .font(family == .systemSmall ? .caption.weight(.semibold) : .subheadline.weight(.semibold))
+                            .lineLimit(1).minimumScaleFactor(0.8)
+                            .foregroundStyle(.primary)
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                            .background(selection == provider ? accent(provider).opacity(0.18) : Color.clear, in: Capsule())
+                            .overlay(Capsule().strokeBorder(selection == provider ? accent(provider) : Color.primary.opacity(0.5), lineWidth: selection == provider ? 1.5 : 1))
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Select \(provider.title)")
+                    .accessibilityValue(selection == provider ? "Selected" : "Not selected")
+                    .accessibilityAddTraits(selection == provider ? .isSelected : [])
+                    .accessibilityIdentifier("widget-provider-\(provider.rawValue)")
                 }
             }
+            Text(family == .systemSmall ? selection.modelTitle : "\(selection.modelTitle) · Medium")
+                .font(.caption2).foregroundStyle(.primary).lineLimit(1)
+                .accessibilityLabel("\(selection.modelTitle) · Medium")
+                .accessibilityIdentifier("widget-selected-model")
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        // Small widgets have one default URL; intent buttons take precedence over it.
+        .widgetURL(family == .systemSmall ? WidgetChatShortcut.fieldLink : nil)
     }
 }
 

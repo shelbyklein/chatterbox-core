@@ -54,6 +54,8 @@ final class MobileStore {
     /// Mac Screen (the ⋯ menu): the Mac's screen, to see and control.
     var showingMacScreen = false
     var showingUsage = false
+    /// One widget-created chat may request the keyboard after its composer mounts.
+    var pendingComposerFocus: UUID?
     /// Feedback (top bar): the app's screenshot open in Mark Up.
     var feedbackSketch: SketchRequest?
     var feedbackProblem: String?
@@ -154,6 +156,7 @@ final class MobileStore {
     }
 
     func forget() {
+        pendingComposerFocus = nil
         resetWidgetUsage()
         listRefresh?.cancel()
         listRefresh = nil
