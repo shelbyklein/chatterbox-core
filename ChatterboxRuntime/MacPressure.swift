@@ -143,7 +143,6 @@ enum MacPressure {
         mutating func update(_ r: Readings, now: Date) -> Change? {
             last = r
             let t = thresholds
-            let cores = Double(max(1, r.cores))
             swap.append((now, r.swapUsed))
             // Swap growth over 5 minutes, for showing only.
             swap.removeAll { now.timeIntervalSince($0.at) > 300 }
