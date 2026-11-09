@@ -11,7 +11,7 @@ import SwiftUI
 
 /// What the About panel asks its session to do.
 enum MobileAboutAction: Equatable {
-    case settings, brief, sidequest, startWork, linkTask, makeTask, terminal, macScreen
+    case settings, brief, sidequest, startWork, linkTask, makeTask, terminal
     case unlinkTask(UUID)
     case change(Companion.SettingsRequest)
     /// Scroll the transcript to a message (a file or draft it holds).
@@ -170,9 +170,6 @@ struct MobileAboutPanel: View {
             if detail?.folder != nil, detail?.isArchived != true {
                 headerButton("Terminal", "terminal", "about-terminal") { perform(.terminal) }
             }
-            #if canImport(RoyalVNCKit)
-            headerButton("Mac Screen", "display", "about-mac-screen") { perform(.macScreen) }
-            #endif
         }
     }
 

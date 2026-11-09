@@ -51,8 +51,6 @@ final class MobileStore {
     @ObservationIgnored var pendingImages: [UUID: [PendingImage]] = [:]
 
     @ObservationIgnored private var composers: [UUID: MobileComposerDraft<PendingImage>] = [:]
-    /// Mac Screen (the ⋯ menu): the Mac's screen, to see and control.
-    var showingMacScreen = false
     var showingUsage = false
     /// One widget-created chat may request the keyboard after its composer mounts.
     var pendingComposerFocus: UUID?
@@ -328,11 +326,6 @@ final class MobileStore {
 
     func rename(_ chat: UUID, to title: String) async throws -> Companion.ChatDetail {
         try await call("/v1/chats/\(chat.uuidString)/rename", method: "POST", body: try JSONEncoder().encode(Companion.RenameRequest(title: title)))
-    }
-
-    /// The Mac's display layout, for Mac Screen; empty from a Mac that doesn't report it.
-    func macDisplays() async -> [Companion.MacDisplay] {
-        (try? await call("/v1/displays") as [Companion.MacDisplay]) ?? []
     }
 
     /// Pin to Top (on the Mac too), or unpin; the list reloads with the new order.

@@ -26,9 +26,28 @@ struct MobileAppearanceSettings: View {
     @State private var scheme = AppPreferences.defaults.string(forKey: MobileAppearance.schemeKey) ?? "system"
     @State private var claude = MobileAppearance.claudeColor
     @State private var codex = MobileAppearance.codexColor
+    /// Pushed inside Settings: no stack or Cancel/Done of its own; each choice is kept as made.
+    var embedded = false
 
     var body: some View {
-        NavigationStack {
+        if embedded {
+            form
+                .onChange(of: scheme) { save() }
+                .onChange(of: claude) { save() }
+                .onChange(of: codex) { save() }
+        } else {
+            NavigationStack {
+                form
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                        ToolbarItem(placement: .confirmationAction) { Button("Done") { save(); dismiss() } }
+                    }
+            }
+            .preferredColorScheme(MobileAppearance.colorScheme(scheme))
+        }
+    }
+
+    private var form: some View {
             Form {
                 Section("Theme") {
                     Picker("Theme", selection: $scheme) {
@@ -50,12 +69,6 @@ struct MobileAppearanceSettings: View {
             }
             .navigationTitle("Appearance")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) { Button("Done") { save(); dismiss() } }
-            }
-        }
-        .preferredColorScheme(MobileAppearance.colorScheme(scheme))
     }
 
     private func swatches(_ selection: Binding<String>, icon: String) -> some View {

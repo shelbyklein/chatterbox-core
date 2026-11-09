@@ -583,7 +583,6 @@ struct ChatDetailView: View {
             // A `!` command runs in the session's folder on the Mac.
             if draft.isEmpty { draft = "!" }
             composing = true
-        case .macScreen: store.showingMacScreen = true
         case .reveal(let item): revealRequest = item
         case .open(let other):
             // Wide, a work thread or sidechat of this session peeks in the right-hand column

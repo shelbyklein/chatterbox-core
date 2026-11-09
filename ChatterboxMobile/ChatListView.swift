@@ -48,16 +48,13 @@ struct ChatListView: View {
     private var page: Page { fixedPage ?? Page(rawValue: pageName) ?? .projects }
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.horizontalSizeClass) private var sizeClass
-    @State private var savedPDFs = false
-    @State private var appearance = false
-    @State private var notificationSettings = false
-    @State private var showingActivity = false
+    /// Settings: Notifications, Appearance and Unpair, in one sheet.
+    @State private var showingSettings = false
     @State private var showingAutomations = false
     /// A run's session picked in Automations: opened once the sheet has closed.
     @State private var automationPick: UUID?
     @State private var startingNewChat = false
     @State private var newChatStudio: UUID?
-    @State private var activityPick: UUID?
     @State private var selection: UUID?
     /// The chat that's open, kept if it drops out of the list (archived on the Mac).
     @State private var opened: Companion.ChatSummary?
@@ -112,22 +109,13 @@ struct ChatListView: View {
             }
         }
         .background { SessionDivisionProbe(division: $division).allowsHitTesting(false) }
-        .sheet(isPresented: $showingActivity, onDismiss: {
-            // Opening a chat while the sheet is still closing is dropped; wait until it's gone.
-            if let id = activityPick { activityPick = nil; MobilePushNotifications.shared.pendingChat = id }
-        }) { MobileActivityView { activityPick = $0 }.environment(store) }
         .sheet(isPresented: $showingAutomations, onDismiss: {
             if let id = automationPick { automationPick = nil; MobilePushNotifications.shared.pendingChat = id }
         }) { MobileAutomationsView { automationPick = $0 }.environment(store) }
         .sheet(isPresented: $startingNewChat) {
             MobileNewChatSheet(studios: newChatStudios, start: { open($0.summary) }, studio: newChatStudio).environment(store)
         }
-        .sheet(isPresented: $notificationSettings) {
-            NavigationStack {
-                MobileNotificationSettings().environment(store)
-                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { notificationSettings = false } } }
-            }
-        }
+        .sheet(isPresented: $showingSettings) { MobileSettingsSheet().environment(store) }
         .task(id: "\(MobilePushNotifications.shared.pendingChat?.uuidString ?? "")|\(scenePhase)|\(fixedPage?.rawValue ?? "")|\(isSelected)") {
             guard let id = MobilePushNotifications.shared.pendingChat, fixedPage == nil || isSelected else { return }
             await store.loadChats()
@@ -144,8 +132,6 @@ struct ChatListView: View {
                 open(detail.summary); MobilePushNotifications.shared.pendingChat = nil
             }
         }
-        .sheet(isPresented: $savedPDFs) { SavedPDFsView() }
-        .sheet(isPresented: $appearance) { MobileAppearanceSettings() }
         .sheet(item: $promoting) { target in
             ChatPromotionSheet(target: target) { result in open(result.summary); history?.apply(result) }
         }
@@ -812,16 +798,8 @@ struct ChatListView: View {
     @ViewBuilder
     private var connectionItems: some View {
         if let connection = store.connection { Text("Connected to \(connection.macName)") }
-        Button { showingActivity = true } label: { Label("Activity History", systemImage: "clock") }
         Button { showingAutomations = true } label: { Label("Automations", systemImage: "clock.arrow.circlepath") }
-        #if canImport(RoyalVNCKit)
-        Button { store.showingMacScreen = true } label: { Label("Mac Screen", systemImage: "display") }
-        #endif
-        Button { store.showingUsage = true } label: { Label("Usage", systemImage: "chart.bar.xaxis") }
-        Button { notificationSettings = true } label: { Label("Notifications", systemImage: "bell") }
-        Button { appearance = true } label: { Label("Appearance", systemImage: "paintbrush") }
-        Button { savedPDFs = true } label: { Label("Saved PDFs", systemImage: "doc.richtext") }
-        Button("Unpair This \(UIDevice.current.model)", role: .destructive) { store.forget() }
+        Button { showingSettings = true } label: { Label("Settings", systemImage: "gearshape") }
     }
 
     /// About the open session, as a column on its right: its sections, and Close.
@@ -1460,6 +1438,41 @@ private struct SafeAreaToOwnFrame: UIViewControllerRepresentable {
             let inherited = (left: host.view.safeAreaInsets.left - added.left, right: host.view.safeAreaInsets.right - added.right)
             let wanted = UIEdgeInsets(top: added.top, left: left - inherited.left, bottom: added.bottom, right: right - inherited.right)
             if abs(wanted.left - added.left) > 0.5 || abs(wanted.right - added.right) > 0.5 { host.additionalSafeAreaInsets = wanted }
+        }
+    }
+}
+
+/// Settings, from the ⋯ menu: Notifications, Appearance and Unpair in one place (Shelby,
+/// 2026-11-09; Mac Screen, Activity History, Usage and Saved PDFs left the menu).
+struct MobileSettingsSheet: View {
+    @Environment(MobileStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
+    @State private var confirmingUnpair = false
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if let connection = store.connection {
+                    Section { LabeledContent("Connected to", value: connection.macName) }
+                }
+                Section {
+                    NavigationLink { MobileNotificationSettings().environment(store) } label: { Label("Notifications", systemImage: "bell") }
+                    NavigationLink { MobileAppearanceSettings(embedded: true) } label: { Label("Appearance", systemImage: "paintbrush") }
+                }
+                Section {
+                    Button("Unpair This \(UIDevice.current.model)", role: .destructive) { confirmingUnpair = true }
+                        .accessibilityIdentifier("settings-unpair")
+                } footer: {
+                    Text("Unpairing forgets this Mac on this \(UIDevice.current.model). Pair again with a new code from the Mac.")
+                }
+            }
+            .navigationTitle("Settings")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .confirmationDialog("Unpair this \(UIDevice.current.model)?", isPresented: $confirmingUnpair, titleVisibility: .visible) {
+                Button("Unpair", role: .destructive) { dismiss(); store.forget() }
+                Button("Cancel", role: .cancel) {}
+            }
         }
     }
 }
