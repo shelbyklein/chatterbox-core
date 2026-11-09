@@ -59,6 +59,30 @@ final class ClaudeModels {
             ?? .unknown(value)
     }
 
+    /// Models out before Claude Code's picker lists them, each placed just above the one it
+    /// follows: the full id works with `--model` already (Fable 5.2, 2026-11-09). An entry
+    /// steps aside once Claude Code lists that model itself.
+    static let newerThanClaudeCode: [(follows: String, id: String, oldName: String, newName: String)] = [
+        ("claude-fable-5-1", "claude-fable-5-2", "Fable 5.1", "Fable 5.2"),
+    ]
+
+    /// Claude Code's models, with `newerThanClaudeCode` added above the model each follows
+    /// (keeping its 1M-context suffix, efforts and description, renamed).
+    static func addingNewer(_ models: [ClaudeCodeModel]) -> [ClaudeCodeModel] {
+        var result = models
+        for newer in newerThanClaudeCode {
+            let listed = result.contains { $0.value.hasPrefix(newer.id) || $0.resolvedModel.hasPrefix(newer.id) }
+            guard !listed, let index = result.firstIndex(where: { $0.value.hasPrefix(newer.follows) || $0.resolvedModel.hasPrefix(newer.follows) }) else { continue }
+            let old = result[index]
+            var added = old
+            added.value = old.value.replacingOccurrences(of: newer.follows, with: newer.id)
+            added.resolvedModel = old.resolvedModel.replacingOccurrences(of: newer.follows, with: newer.id)
+            added.detail = old.detail.replacingOccurrences(of: newer.oldName, with: newer.newName)
+            result.insert(added, at: index)
+        }
+        return result
+    }
+
     /// Whether two `--model` values currently mean the same model ("opus" and "claude-opus-5-5").
     func sameModel(_ a: String, _ b: String) -> Bool {
         a == b || info(a).resolvedModel == info(b).resolvedModel
@@ -70,7 +94,7 @@ final class ClaudeModels {
         defer { loading = false }
         do {
             let info = try await ClaudeCodeInfo.probe()
-            models = info.models
+            models = Self.addingNewer(info.models)
             loadedAt = Date()
             commands = info.commands
             accountEmail = info.accountEmail
