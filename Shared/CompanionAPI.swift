@@ -83,16 +83,20 @@ enum Companion {
         /// Work threads waiting for the Mac (new ones not started, or next turns held).
         var waiting: Int = 0
         /// How much of the CPU was in use since the service's last look, percent; nil from a Mac
-        /// that doesn't send it. Load counts toward Busy/Overloaded only while this is high too.
+        /// that doesn't send it. Overloaded once this or `memoryPercent` stays over 95%.
         var cpuPercent: Int? = nil
+        /// How much of the Mac's memory is used, percent (as Activity Monitor counts it); nil from
+        /// a Mac that doesn't send it.
+        var memoryPercent: Int? = nil
 
         init(level: String, since: Date? = nil, updatedAt: Date, updated: Int, summary: String, reasons: [String] = [], memory: String,
              swapUsedGB: Double, swapGrowthGB: Double, compressedGB: Double? = nil, load1: Double, load5: Double, load15: Double, cores: Int,
-             thermal: String, holding: [String] = [], waiting: Int = 0, cpuPercent: Int? = nil) {
+             thermal: String, holding: [String] = [], waiting: Int = 0, cpuPercent: Int? = nil, memoryPercent: Int? = nil) {
             self.level = level; self.since = since; self.updatedAt = updatedAt; self.updated = updated; self.summary = summary
             self.reasons = reasons; self.memory = memory; self.swapUsedGB = swapUsedGB; self.swapGrowthGB = swapGrowthGB
             self.compressedGB = compressedGB; self.load1 = load1; self.load5 = load5; self.load15 = load15; self.cores = cores
             self.thermal = thermal; self.holding = holding; self.waiting = waiting; self.cpuPercent = cpuPercent
+            self.memoryPercent = memoryPercent
         }
 
         /// Leniently: it rides on the chat list, which must never fail over a field here that a
@@ -117,13 +121,16 @@ enum Companion {
             holding = (try? c.decodeIfPresent([String].self, forKey: .holding)) ?? []
             waiting = (try? c.decodeIfPresent(Int.self, forKey: .waiting)) ?? 0
             cpuPercent = try? c.decodeIfPresent(Int.self, forKey: .cpuPercent)
+            memoryPercent = try? c.decodeIfPresent(Int.self, forKey: .memoryPercent)
         }
 
         /// "Mac OK", "Mac busy", "Mac overloaded".
         var label: String { level == "overloaded" ? "Mac overloaded" : level == "busy" ? "Mac busy" : "Mac OK" }
         var isOK: Bool { level != "busy" && level != "overloaded" }
-        /// The always-on reading beside the dot: "Load 10/16", plus memory when it isn't normal.
+        /// The always-on reading beside the dot: "CPU 23% · Memory 61%" (what decides the level);
+        /// from an older Mac without them, "Load 10/16", plus memory when it isn't normal.
         var reading: String {
+            if let cpuPercent, let memoryPercent { return "CPU \(cpuPercent)% \u{00B7} Memory \(memoryPercent)%" }
             guard cores > 0 else { return label }
             let load = "Load \(Int(load1.rounded()))/\(cores)"
             return memory == "normal" || memory.isEmpty ? load : "\(load) · memory \(memory)"

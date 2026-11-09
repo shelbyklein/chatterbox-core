@@ -51,7 +51,9 @@ struct MobilePressureSheet: View {
                 }
                 Section("Readings") {
                     LabeledContent("Load", value: "\(Self.number(pressure.load1)) · \(Self.number(pressure.load5)) · \(Self.number(pressure.load15)) on \(pressure.cores) cores")
-                    LabeledContent("Memory", value: pressure.memory.capitalized + (pressure.compressedGB.map { ", \(Self.number($0)) GB compressed" } ?? ""))
+                    if let cpu = pressure.cpuPercent { LabeledContent("CPU", value: "\(cpu)% in use") }
+                    LabeledContent("Memory", value: (pressure.memoryPercent.map { "\($0)% used, pressure " + pressure.memory } ?? pressure.memory.capitalized)
+                                   + (pressure.compressedGB.map { ", \(Self.number($0)) GB compressed" } ?? ""))
                     LabeledContent("Swap", value: "\(Self.number(pressure.swapUsedGB)) GB" + (pressure.swapGrowthGB > 0 ? ", +\(Self.number(pressure.swapGrowthGB)) GB in 5 min" : ""))
                     LabeledContent("Thermal", value: pressure.thermal.capitalized)
                 }

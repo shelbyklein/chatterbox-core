@@ -11,8 +11,8 @@ enum RuntimePreferences {
         "mobilePushEnabled","mobilePushLastStatus","modelPresetsJSON","lastModel.chats","lastModel.studios","lastModel.projects","macPinnedThreads"
         ,"mobilePushConfigured","mobilePushPreviews","mobilePushSound","idleSimulatorShutdown","openModelsEnabled"
         // The Mac's pressure (MacPressure.Thresholds, PressureMonitor).
-        ,"pressureHoldsWork","pressure.busyLoad","pressure.busyLoadSeconds","pressure.overloadedLoad","pressure.overloadedLoadSeconds"
-        ,"pressure.swapGrowthGB","pressure.swapGrowthMinutes","pressure.stepDownMinutes","mobilePush_pressure"
+        ,"pressureHoldsWork","pressure.criticalCPUPercent","pressure.criticalMemoryPercent","pressure.criticalSeconds"
+        ,"pressure.stepDownMinutes","mobilePush_pressure"
     ]
     static var file:URL{RuntimePaths.data.appendingPathComponent("runtime-preferences.plist")}
     static func load() throws {

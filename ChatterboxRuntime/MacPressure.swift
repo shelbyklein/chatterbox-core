@@ -9,6 +9,12 @@ import Foundation
 /// start; at Overloaded new builds wait, unused simulators go at once and work threads don't
 /// start their next turn.
 ///
+/// Since 2026-11-09 (Shelby: "only report if truly critical"), the levels come from CPU and
+/// memory use alone: Overloaded once either has been over 95% for 2 minutes; Busy is off by
+/// default (`busyCPU`/`busyMemory`, for tests). Load averages, swap growth and thermal state
+/// are still read and shown, but no longer decide anything: the load average spiked to 100+
+/// with most of the CPU idle, and flagged the Mac far too often.
+///
 /// This is the decision alone, with the readings handed in, so it can be tested with recorded
 /// readings (tests/pressure). Foundation only.
 enum MacPressure {
@@ -47,33 +53,31 @@ enum MacPressure {
         var cores: Int = 16
         var thermal: Thermal = .nominal
         /// How much of all the cores' time was in use since the last reading, 0...1
-        /// (HOST_CPU_LOAD_INFO ticks). nil when not known (the first reading): load then counts alone.
+        /// (HOST_CPU_LOAD_INFO ticks). nil when not known (the first reading).
         var cpuBusy: Double? = nil
+        /// How much of the Mac's memory is used, 0...1, as Activity Monitor counts it (app memory,
+        /// wired and compressed, of all of it). nil when not known: the kernel's critical memory
+        /// pressure then counts instead.
+        var memoryUsed: Double? = nil
     }
 
     /// When each level starts and ends. Preferences (Settings → Background service), with these
     /// defaults; the keys are `pressure.<name>` (see `init(preferences:)`).
     struct Thresholds: Codable, Equatable {
-        /// Busy: the 1-minute load above this many times the cores, for `busyLoadFor`.
-        var busyLoad: Double = 1.5
-        var busyLoadFor: TimeInterval = 120
-        /// Overloaded: above this many times the cores, for `overloadedLoadFor`.
-        var overloadedLoad: Double = 3
-        var overloadedLoadFor: TimeInterval = 60
-        /// Load counts (for Busy and Overloaded) only while at least this much of the CPU is in
-        /// use, 0...1; 0 turns the check off. macOS's load average counts threads ready to run, so
-        /// a burst of threads waking at once can read 100+ on 16 cores with 80% of them idle
-        /// (seen 2026-11-08: load 113, CPU 18% in use). A real crunch keeps the CPU busy too.
-        var loadNeedsCPU: Double = 0.6
-        /// Overloaded: swap in use grew by this much within `swapGrowthWindow`.
-        var swapGrowth: Int64 = 1 << 30
-        var swapGrowthWindow: TimeInterval = 300
+        /// Overloaded: CPU in use, or memory used, at or over this (0...1) for `criticalFor`.
+        var criticalCPU: Double = 0.95
+        var criticalMemory: Double = 0.95
+        var criticalFor: TimeInterval = 120
+        /// Busy: the same for these, when set; off by default (nil), so the Mac reads OK until
+        /// it's truly critical.
+        var busyCPU: Double? = nil
+        var busyMemory: Double? = nil
+        var busyFor: TimeInterval = 120
         /// A level steps down only once the lower one's conditions have held this long.
         var stepDownAfter: TimeInterval = 180
 
         static let defaults = Thresholds()
-        static let keys = ["pressure.busyLoad", "pressure.busyLoadSeconds", "pressure.overloadedLoad", "pressure.overloadedLoadSeconds",
-                           "pressure.swapGrowthGB", "pressure.swapGrowthMinutes", "pressure.stepDownMinutes", "pressure.loadCPUPercent"]
+        static let keys = ["pressure.criticalCPUPercent", "pressure.criticalMemoryPercent", "pressure.criticalSeconds", "pressure.stepDownMinutes"]
 
         init() {}
         /// From the preferences (`lookup` answers a key's value), defaults for anything unset or
@@ -88,16 +92,12 @@ enum MacPressure {
                 default: return nil
                 }
             }
+            func percent(_ key: String) -> Double? { number(key).flatMap { $0 >= 50 && $0 <= 100 ? $0 / 100 : nil } }
             func positive(_ key: String) -> Double? { number(key).flatMap { $0 > 0 && $0.isFinite ? $0 : nil } }
-            if let x = positive("pressure.busyLoad") { busyLoad = x }
-            if let x = positive("pressure.busyLoadSeconds") { busyLoadFor = x }
-            if let x = positive("pressure.overloadedLoad") { overloadedLoad = max(x, busyLoad) }
-            if let x = positive("pressure.overloadedLoadSeconds") { overloadedLoadFor = x }
-            if let x = positive("pressure.swapGrowthGB") { swapGrowth = Int64(x * Double(1 << 30)) }
-            if let x = positive("pressure.swapGrowthMinutes") { swapGrowthWindow = x * 60 }
+            if let x = percent("pressure.criticalCPUPercent") { criticalCPU = x }
+            if let x = percent("pressure.criticalMemoryPercent") { criticalMemory = x }
+            if let x = positive("pressure.criticalSeconds") { criticalFor = x }
             if let x = positive("pressure.stepDownMinutes") { stepDownAfter = x * 60 }
-            // A percentage; 0 is allowed (load alone, as before the check).
-            if let x = number("pressure.loadCPUPercent"), x.isFinite, x >= 0, x <= 100 { loadNeedsCPU = x / 100 }
         }
     }
 
@@ -121,9 +121,11 @@ enum MacPressure {
         private(set) var last: Readings?
         /// Recent swap readings, for growth.
         private var swap: [(at: Date, used: Int64)] = []
-        /// Since when the load has been above each threshold, continuously.
-        private var busyLoadSince: Date?
-        private var overloadedLoadSince: Date?
+        /// Since when CPU and memory have been over each level's line, continuously.
+        private var criticalCPUSince: Date?
+        private var criticalMemorySince: Date?
+        private var busyCPUSince: Date?
+        private var busyMemorySince: Date?
         /// Since when the conditions for at most Busy, and for OK, have held continuously.
         private var calmForBusySince: Date?
         private var calmForOKSince: Date?
@@ -143,36 +145,38 @@ enum MacPressure {
             let t = thresholds
             let cores = Double(max(1, r.cores))
             swap.append((now, r.swapUsed))
-            swap.removeAll { now.timeIntervalSince($0.at) > t.swapGrowthWindow }
-            let growth = swapGrowth
-
-            // Load counts only while the CPU is busy too (or when its use isn't known).
-            let cpuBusy = r.cpuBusy.map { $0 >= t.loadNeedsCPU } ?? true
-            let loadOverBusy = cpuBusy && r.load1 > t.busyLoad * cores
-            let loadOverOverloaded = cpuBusy && r.load1 > t.overloadedLoad * cores
-            busyLoadSince = loadOverBusy ? (busyLoadSince ?? now) : nil
-            overloadedLoadSince = loadOverOverloaded ? (overloadedLoadSince ?? now) : nil
+            // Swap growth over 5 minutes, for showing only.
+            swap.removeAll { now.timeIntervalSince($0.at) > 300 }
             func held(_ since: Date?, _ seconds: TimeInterval) -> Bool { since.map { now.timeIntervalSince($0) >= seconds } ?? false }
-            let cpuNote = r.cpuBusy.map { ", CPU \(Self.percent($0)) in use" } ?? ""
 
-            // What each level's conditions say now.
+            // CPU and memory against each line; memory falls back to the kernel's critical
+            // pressure when its use isn't known.
+            let cpu = r.cpuBusy
+            let memoryOver = { (line: Double) -> Bool in r.memoryUsed.map { $0 >= line } ?? (r.memory == .critical) }
+            let cpuCritical = cpu.map { $0 >= t.criticalCPU } ?? false
+            let memoryCritical = memoryOver(t.criticalMemory)
+            let cpuBusyNow = t.busyCPU.map { line in cpu.map { $0 >= line } ?? false } ?? false
+            let memoryBusyNow = t.busyMemory.map(memoryOver) ?? false
+            criticalCPUSince = cpuCritical ? (criticalCPUSince ?? now) : nil
+            criticalMemorySince = memoryCritical ? (criticalMemorySince ?? now) : nil
+            busyCPUSince = cpuBusyNow ? (busyCPUSince ?? now) : nil
+            busyMemorySince = memoryBusyNow ? (busyMemorySince ?? now) : nil
+            let memoryText = r.memoryUsed.map { "memory \(Self.percent($0)) used" } ?? "memory pressure critical"
+
             var overloaded: [String] = []
-            if r.memory == .critical { overloaded.append("memory pressure critical") }
-            if growth >= t.swapGrowth { overloaded.append("swap grew \(Self.gigabytes(growth)) in \(Self.minutes(t.swapGrowthWindow))") }
-            if held(overloadedLoadSince, t.overloadedLoadFor) {
-                overloaded.append("load \(Self.load(r.load1)) on \(r.cores) cores (over \(Self.factor(t.overloadedLoad))) for \(Self.minutes(now.timeIntervalSince(overloadedLoadSince!)))\(cpuNote)")
+            if held(criticalCPUSince, t.criticalFor) {
+                overloaded.append("CPU \(Self.percent(cpu ?? 1)) in use for \(Self.minutes(now.timeIntervalSince(criticalCPUSince!)))")
             }
-            if r.thermal == .critical { overloaded.append("thermal state critical") }
+            if held(criticalMemorySince, t.criticalFor) {
+                overloaded.append("\(memoryText) for \(Self.minutes(now.timeIntervalSince(criticalMemorySince!)))")
+            }
             var busy: [String] = []
-            if r.memory == .warning { busy.append("memory pressure warning") }
-            if held(busyLoadSince, t.busyLoadFor) {
-                busy.append("load \(Self.load(r.load1)) on \(r.cores) cores (over \(Self.factor(t.busyLoad))) for \(Self.minutes(now.timeIntervalSince(busyLoadSince!)))\(cpuNote)")
-            }
-            if r.thermal == .serious { busy.append("thermal state serious") }
+            if held(busyCPUSince, t.busyFor) { busy.append("CPU \(Self.percent(cpu ?? 1)) in use for \(Self.minutes(now.timeIntervalSince(busyCPUSince!)))") }
+            if held(busyMemorySince, t.busyFor) { busy.append("\(memoryText) for \(Self.minutes(now.timeIntervalSince(busyMemorySince!)))") }
 
             // The calm side, instantly: at most Busy, and OK.
-            let atMostBusy = r.memory != .critical && growth < t.swapGrowth && !loadOverOverloaded && r.thermal != .critical
-            let atMostOK = atMostBusy && r.memory == .normal && !loadOverBusy && r.thermal < .serious
+            let atMostBusy = !cpuCritical && !memoryCritical
+            let atMostOK = atMostBusy && !cpuBusyNow && !memoryBusyNow
             calmForBusySince = atMostBusy ? (calmForBusySince ?? now) : nil
             calmForOKSince = atMostOK ? (calmForOKSince ?? now) : nil
 
@@ -208,7 +212,7 @@ enum MacPressure {
         }
 
         static func readingsLine(_ r: Readings) -> String {
-            "load \(load(r.load1)) on \(r.cores) cores\(r.cpuBusy.map { ", CPU \(percent($0)) in use" } ?? ""), memory \(r.memory.rawValue), swap \(gigabytes(r.swapUsed)), thermal \(r.thermal.rawValue)"
+            "CPU \(r.cpuBusy.map(percent) ?? "?") in use, memory \(r.memoryUsed.map { percent($0) + " used" } ?? r.memory.rawValue), load \(load(r.load1)) on \(r.cores) cores, swap \(gigabytes(r.swapUsed)), thermal \(r.thermal.rawValue)"
         }
         static func percent(_ fraction: Double) -> String { "\(Int((fraction * 100).rounded()))%" }
         static func gigabytes(_ bytes: Int64) -> String { String(format: "%.1f GB", Double(bytes) / Double(1 << 30)) }
