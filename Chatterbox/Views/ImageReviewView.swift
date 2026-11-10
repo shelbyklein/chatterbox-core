@@ -111,6 +111,14 @@ struct ImageReviewView: View {
     @State private var overall = ""
     @State private var error: String?
     @FocusState private var focusedMark: UUID?
+    /// Zoom (1 = fitted to the window, up to 8×) and where the zoomed picture is moved to.
+    /// Marks and strokes are kept in the picture's own 0–1 coordinates, so they zoom with it.
+    @State private var zoom: CGFloat = 1
+    @State private var pan: CGSize = .zero
+    /// The canvas in its window's coordinates, for two-finger scrolling over it.
+    @State private var canvasFrame: CGRect = .zero
+    @State private var canvasSize: CGSize = .zero
+    @State private var scrollMonitor: Any?
 
     private let markColor = Color.orange
 
@@ -125,6 +133,10 @@ struct ImageReviewView: View {
         }
         .frame(minWidth: 900, minHeight: 600)
         .task(id: draftKey) { await load() }
+        // Another image or page starts fitted.
+        .onChange(of: draftKey) { zoom = 1; pan = .zero }
+        .onAppear { startScrollPanning() }
+        .onDisappear { if let scrollMonitor { NSEvent.removeMonitor(scrollMonitor) }; scrollMonitor = nil }
     }
 
     /// The picture to mark up: the image file, or the PDF page drawn as one.
@@ -230,7 +242,7 @@ struct ImageReviewView: View {
     private var canvas: some View {
         GeometryReader { geo in
             if let image {
-                let fitted = fittedRect(image.size, in: geo.size)
+                let fitted = zoomed(fittedRect(image.size, in: geo.size), in: geo.size)
                 ZStack(alignment: .topLeading) {
                     Image(nsImage: image)
                         .resizable()
@@ -263,7 +275,16 @@ struct ImageReviewView: View {
                 // which don't move a view's frame: sized to the picture alone, the clickable
                 // area stayed at the left and missed the picture's right side.
                 .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
+                .clipped()
                 .contentShape(Rectangle())
+                .overlay(alignment: .bottomTrailing) { zoomControls.padding(12) }
+                .onAppear { canvasSize = geo.size }
+                .onChange(of: geo.size) { _, size in canvasSize = size; clampPan() }
+                .background(GeometryReader { inner in
+                    Color.clear
+                        .onAppear { canvasFrame = inner.frame(in: .global) }
+                        .onChange(of: inner.frame(in: .global)) { _, frame in canvasFrame = frame }
+                })
                 .gesture(
                     DragGesture(minimumDistance: 0)
                         .onChanged { value in
@@ -582,5 +603,84 @@ struct ImageReviewView: View {
     private func normalized(_ point: CGPoint, in fitted: CGRect) -> CGPoint {
         CGPoint(x: min(max((point.x - fitted.minX) / fitted.width, 0), 1),
                 y: min(max((point.y - fitted.minY) / fitted.height, 0), 1))
+    }
+}
+
+// MARK: - Zoom
+
+extension ImageReviewView {
+    static let zoomRange: ClosedRange<CGFloat> = 1...8
+
+    /// The fitted picture at the current zoom, centered and moved by `pan`.
+    fileprivate func zoomed(_ fitted: CGRect, in size: CGSize) -> CGRect {
+        guard zoom != 1 || pan != .zero else { return fitted }
+        let width = fitted.width * zoom, height = fitted.height * zoom
+        return CGRect(x: (size.width - width) / 2 + pan.width, y: (size.height - height) / 2 + pan.height,
+                      width: width, height: height)
+    }
+
+    fileprivate func setZoom(_ value: CGFloat) {
+        let old = zoom
+        zoom = min(Self.zoomRange.upperBound, max(Self.zoomRange.lowerBound, value))
+        // Keep the middle of what's showing in the middle.
+        if old > 0 { pan = CGSize(width: pan.width * zoom / old, height: pan.height * zoom / old) }
+        if zoom == 1 { pan = .zero }
+        clampPan()
+    }
+
+    /// The picture never slides off: zoomed past the window, its edges stay at or beyond the
+    /// window's; smaller than it, it stays centered.
+    fileprivate func clampPan() {
+        guard let image, canvasSize.width > 0 else { return }
+        let fitted = fittedRect(image.size, in: canvasSize)
+        let spareX = max(0, (fitted.width * zoom - canvasSize.width) / 2)
+        let spareY = max(0, (fitted.height * zoom - canvasSize.height) / 2)
+        pan = CGSize(width: min(spareX, max(-spareX, pan.width)), height: min(spareY, max(-spareY, pan.height)))
+    }
+
+    /// −, the zoom (click: fit), +; ⌘−, ⌘0 and ⌘+ (⌘= too) do the same.
+    @ViewBuilder fileprivate var zoomControls: some View {
+        HStack(spacing: 2) {
+            Button { setZoom(zoom / 1.5) } label: { Image(systemName: "minus.magnifyingglass").frame(width: 26, height: 24) }
+                .keyboardShortcut("-", modifiers: .command)
+                .disabled(zoom <= Self.zoomRange.lowerBound)
+                .help("Zoom out (⌘−)")
+            Button { setZoom(1) } label: { Text("\(Int((zoom * 100).rounded()))%").monospacedDigit().frame(minWidth: 44, minHeight: 24) }
+                .keyboardShortcut("0", modifiers: .command)
+                .help("Fit to the window (⌘0)")
+            Button { setZoom(zoom * 1.5) } label: { Image(systemName: "plus.magnifyingglass").frame(width: 26, height: 24) }
+                .keyboardShortcut("=", modifiers: .command)
+                .disabled(zoom >= Self.zoomRange.upperBound)
+                .help("Zoom in (⌘+). Pinch on the trackpad to zoom; scroll with two fingers to move around.")
+            // ⌘+ typed with Shift.
+            Button("") { setZoom(zoom * 1.5) }.keyboardShortcut("+", modifiers: .command).frame(width: 0, height: 0).opacity(0)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.white)
+        .padding(.horizontal, 4)
+        .background(.black.opacity(0.55), in: Capsule())
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Zoom")
+    }
+
+    /// Over the picture: pinching on the trackpad zooms, and two-finger scrolling moves the
+    /// zoomed picture (the sidebar still scrolls). Watched as events, not gestures, so the
+    /// canvas's click-and-drag for drawing and marking is left alone.
+    fileprivate func startScrollPanning() {
+        guard scrollMonitor == nil else { return }
+        scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .magnify]) { event in
+            guard let content = event.window?.contentView else { return event }
+            // SwiftUI's global frame is top-left in the window; the event's is bottom-left.
+            let point = CGPoint(x: event.locationInWindow.x, y: content.bounds.height - event.locationInWindow.y)
+            guard canvasFrame.contains(point) else { return event }
+            if event.type == .magnify {
+                setZoom(zoom * (1 + event.magnification))
+                return nil
+            }
+            guard zoom > 1 else { return event }
+            pan = CGSize(width: pan.width + event.scrollingDeltaX, height: pan.height + event.scrollingDeltaY)
+            clampPan()
+            return nil
+        }
     }
 }
