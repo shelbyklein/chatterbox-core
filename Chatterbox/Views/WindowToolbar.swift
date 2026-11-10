@@ -32,7 +32,6 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         static let terminal = NSToolbarItem.Identifier("chatterbox.terminal")
         /// Shows or hides the thread sidebar (ThreadSidebar.swift), at the far right.
         static let threadSidebar = NSToolbarItem.Identifier("chatterbox.threadSidebar")
-        static let finished = NSToolbarItem.Identifier("chatterbox.finished")
         static let automations = NSToolbarItem.Identifier("chatterbox.automations")
         static let feedback = NSToolbarItem.Identifier("chatterbox.feedback")
         /// Home's Desk (DeskView.swift): what needs you, work to place, what's working.
@@ -42,7 +41,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         /// The views on the left (chat, Studios, Command Center), then the Desk; usage and the
         /// terminal; Settings last. New chats start from the sidebar, the Studios page and Cmd-N.
         static let all: [NSToolbarItem.Identifier] = [title, views, desk, .flexibleSpace,
-                                                       pressure, automations, usage, terminal, finished, feedback, .space, settings, newChat, threadSidebar]
+                                                       pressure, automations, usage, terminal, feedback, .space, settings, newChat, threadSidebar]
         static let chat: [NSToolbarItem.Identifier] = [usage, images, terminal]
     }
 
@@ -285,8 +284,6 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         case ID.threadSidebar:
             item = button(id, "sidebar.right", "About this Thread", "About this thread: status, place, work, outputs, notes and tools (\u{2325}\u{2318}0)", #selector(toggleThreadSidebar))
             item.autovalidates = false
-        case ID.finished:
-            item = hosted(id, "Finished sessions", FinishedChatsBell())
         case ID.pressure:
             item = hosted(id, "Mac load", MacPressureBadge())
             item.isBordered = false
