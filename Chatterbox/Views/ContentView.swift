@@ -148,6 +148,8 @@ struct ContentView: View {
                 SettingsPage()
             } else if model.showingArchive {
                 ArchivedThreadsView(search: $archiveSearch) { AnyView(threadMenu($0)) }
+            } else if let folder = model.issueBoardFolder {
+                IssueBoardView(folder: folder)
             } else if let page = model.webPage {
                 // A website pin: the page takes the chat's place, and the chat floats over it.
                 ZStack(alignment: .bottomTrailing) {

@@ -186,6 +186,15 @@ final class ProjectIssueStore {
         changed(folder)
     }
 
+    /// More files on an issue (copied in, as when it was filed).
+    func attach(_ paths: [String], to id: UUID, in folder: String) throws {
+        guard let index = projects[folder]?.firstIndex(where: { $0.id == id }) else { throw Failure(status: 404, message: "That issue is gone.") }
+        let added = try paths.map { try copyIn($0, for: id) }
+        projects[folder]![index].attachments += added
+        projects[folder]![index].updatedAt = Self.wholeSeconds()
+        changed(folder)
+    }
+
     func delete(_ id: UUID, in folder: String) throws {
         guard let index = projects[folder]?.firstIndex(where: { $0.id == id }) else { throw Failure(status: 404, message: "That issue is gone.") }
         projects[folder]!.remove(at: index)
@@ -239,7 +248,7 @@ final class ProjectIssueStore {
 
     // MARK: - The service socket's "issues" operation
 
-    /// `action` list (the default), add, update, delete, link, unlink or start, on the project
+    /// `action` list (the default), add, update, attach, delete, link, unlink or start, on the project
     /// of `chatID`'s session (or `project`, a folder). Agents may list and add; the app does all.
     func operation(_ body: JSON, agent: String?) throws -> JSON {
         let action = body["action"]?.string ?? "list"
@@ -254,6 +263,8 @@ final class ProjectIssueStore {
         case "update":
             let request = (try? body.decode(Companion.IssueUpdateRequest.self)) ?? .init()
             try update(try Self.issueID(body), in: folder, request)
+        case "attach":
+            try attach(body["attachments"]?.array?.compactMap(\.string) ?? [], to: try Self.issueID(body), in: folder)
         case "delete":
             try delete(try Self.issueID(body), in: folder)
         case "link":

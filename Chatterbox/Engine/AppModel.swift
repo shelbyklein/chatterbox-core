@@ -20,6 +20,7 @@ final class AppModel {
         didSet {
             if selectedID != nil { selectionClearedByArchive = false }
             showingArchive = false
+            issueBoardFolder = nil
             showingHome = false
             showingAutomations = false
             showingCommandCenter = false
@@ -71,6 +72,7 @@ final class AppModel {
     /// session was archived or moved. They never leave another section's chat selected.
     func showView(_ view: MainView) {
         showingArchive = false
+        issueBoardFolder = nil
         showingSettings = false; showingCommandCenter = false; showingAutomations = false
         let candidates = activeSessions.filter { session in
             Self.view(of: session) == view &&
@@ -97,13 +99,24 @@ final class AppModel {
     var studioSidebarID: UUID?
     var sidebarStudio: Studio? { studio(studioSidebarID) }
     /// Settings, shown in the main window in place of the chat.
-    var showingHome = false { didSet { if showingHome { showingArchive = false; showingCommandCenter = false; showingAutomations = false } } }
-    var showingCommandCenter = false { didSet { if showingCommandCenter { showingArchive = false; showingHome = false; showingSettings = false; showingAutomations = false } } }
-    var showingAutomations = false { didSet { if showingAutomations { showingArchive = false; showingHome = false; showingCommandCenter = false; showingSettings = false } } }
+    var showingHome = false { didSet { if showingHome { showingArchive = false; showingCommandCenter = false; showingAutomations = false; issueBoardFolder = nil } } }
+    var showingCommandCenter = false { didSet { if showingCommandCenter { showingArchive = false; showingHome = false; showingSettings = false; showingAutomations = false; issueBoardFolder = nil } } }
+    var showingAutomations = false { didSet { if showingAutomations { showingArchive = false; showingHome = false; showingCommandCenter = false; showingSettings = false; issueBoardFolder = nil } } }
+    /// A project's issue board in the center pane (IssueBoardView, plans/project-issues.md): the
+    /// project's folder; nil when it's closed.
+    var issueBoardFolder: String? {
+        didSet {
+            if issueBoardFolder != nil {
+                showingArchive = false; showingHome = false; showingSettings = false
+                showingCommandCenter = false; showingAutomations = false; webPage = nil
+            }
+        }
+    }
     /// Archived threads are browsed in the center pane, independently of sidebar filters.
     var showingArchive = false {
         didSet {
             if showingArchive {
+                issueBoardFolder = nil
                 showingHome = false; showingSettings = false
                 showingCommandCenter = false; showingAutomations = false; webPage = nil
             }
@@ -1370,6 +1383,9 @@ final class AppModel {
         // The Desk (DeskView.swift) follows "desk.changed", reconnects and changed sessions.
         DeskModel.shared.runtimeEvent(event)
         if event.kind=="desk.changed" {return}
+        // A project's issue board (IssueBoardView.swift) follows "issues.changed".
+        IssueBoardModel.shared.runtimeEvent(event)
+        if event.kind=="issues.changed" {return}
         // How hard the Mac is working (MacPressureViews.swift).
         MacPressureModel.shared.runtimeEvent(event)
         if event.kind=="pressure.changed" {return}

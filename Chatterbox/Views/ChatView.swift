@@ -1114,6 +1114,13 @@ struct ChatView: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 0)
+            // A project's internal issue board (plans/project-issues.md).
+            if let folder = model.projectFolder(of: session) {
+                Button { model.issueBoardFolder = folder } label: { Label("Issues", systemImage: "checklist") }
+                    .buttonStyle(.borderless)
+                    .help("This project's issue board")
+                    .accessibilityIdentifier("open-issue-board")
+            }
         }
         .padding(.horizontal, 24)
         .padding(.top, 12)

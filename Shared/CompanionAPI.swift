@@ -573,9 +573,10 @@ enum Companion {
         var mediaType: String
     }
 
-    /// Socket op "issues" (and /v1/issues): a new issue on the project of `chatID`'s session.
+    /// Socket op "issues" (and /v1/issues): a new issue on the project of `chatID`'s session
+    /// (or the body's `project`, a folder).
     struct IssueAddRequest: Codable {
-        var chatID: UUID
+        var chatID: UUID? = nil
         var title: String
         var notes: String? = nil
         var game: String? = nil
