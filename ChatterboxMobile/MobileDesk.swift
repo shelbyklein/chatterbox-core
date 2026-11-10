@@ -1090,6 +1090,12 @@ private struct DeskReadyCard: View {
                 Button("Open", action: taps(open))
                     .buttonStyle(.bordered)
                     .accessibilityIdentifier("desk-ready-open-\(item.id.uuidString)")
+                // Waiting on someone's reply: off Review until resumed.
+                if let hold {
+                    Button(action: taps(hold)) { Label("On Hold", systemImage: "pause.circle") }
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("desk-ready-hold-\(item.id.uuidString)")
+                }
                 Spacer(minLength: 0)
             }
         }

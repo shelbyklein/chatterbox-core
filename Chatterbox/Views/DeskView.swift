@@ -1833,6 +1833,12 @@ private struct DeskReadyRow: View {
                     .deskFrame("complete:\(item.id)")
                 Button("Open") { desk.open(item.id, in: model) }
                     .deskFrame("readyOpen:\(item.id)")
+                // Waiting on someone's reply: off Review until resumed (Shelby, 2026-11-10).
+                if desk.canHold, let task = item.task {
+                    Button { Task { await desk.hold(task) } } label: { Label("On hold", systemImage: "pause.circle") }
+                        .help("Waiting on a response: move it to On hold. Resume brings it back to Review.")
+                        .deskFrame("readyHold:\(item.id)")
+                }
                 Spacer(minLength: 0)
             }
             .padding(.top, 4)
