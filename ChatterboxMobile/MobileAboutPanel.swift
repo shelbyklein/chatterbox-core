@@ -133,6 +133,8 @@ struct MobileAboutPanel: View {
     @State private var reviewingPDF: Companion.File?
     @State private var page: PageRequest?
     @State private var showingImages = false
+    /// The project's issue board (MobileIssueBoard.swift).
+    @State private var showingIssues = false
 
     private struct ViewedImage: Identifiable { let id = UUID(); var image: UIImage; var name: String }
     private var outputs: [MobileAboutOutputs.Output] { MobileAboutOutputs.collect(detail?.items ?? []) }
@@ -157,6 +159,7 @@ struct MobileAboutPanel: View {
         }
         .fullScreenCover(item: $reviewingPDF) { file in MobilePDFViewer(file: file, chat: summary.id) }
         .sheet(item: $page) { SafariView(url: $0.url).ignoresSafeArea() }
+        .sheet(isPresented: $showingIssues) { MobileIssueBoardView(chat: summary.id).environment(store) }
         .sheet(isPresented: $showingImages) {
             MobileAboutImages(chat: summary.id, files: images) { file, image in showingImages = false; viewing = .init(image: image, name: file.name) }
         }
@@ -167,6 +170,10 @@ struct MobileAboutPanel: View {
     private var header: some View {
         HStack(spacing: 8) {
             if !images.isEmpty { headerButton("Images", "photo.on.rectangle", "about-images") { showingImages = true } }
+            // A project's issue board (plans/project-issues.md).
+            if summary.project != nil, detail?.isArchived != true {
+                headerButton("Issues", "checklist", "about-issues") { showingIssues = true }
+            }
             if detail?.folder != nil, detail?.isArchived != true {
                 headerButton("Terminal", "terminal", "about-terminal") { perform(.terminal) }
             }

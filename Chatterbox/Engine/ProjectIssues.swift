@@ -258,13 +258,18 @@ final class ProjectIssueStore {
         case "list":
             return try .value(board(for: folder))
         case "add":
-            guard let request = try? body.decode(Companion.IssueAddRequest.self) else { throw Failure(status: 400, message: "Give the issue a title.") }
+            guard var request = try? body.decode(Companion.IssueAddRequest.self) else { throw Failure(status: 400, message: "Give the issue a title.") }
+            let uploads = try Self.uploads(body)
+            defer { Self.discard(uploads) }
+            request.attachments = (request.attachments ?? []) + uploads
             return try .value(add(request, in: folder, by: agent ?? "you"))
         case "update":
             let request = (try? body.decode(Companion.IssueUpdateRequest.self)) ?? .init()
             try update(try Self.issueID(body), in: folder, request)
         case "attach":
-            try attach(body["attachments"]?.array?.compactMap(\.string) ?? [], to: try Self.issueID(body), in: folder)
+            let uploads = try Self.uploads(body)
+            defer { Self.discard(uploads) }
+            try attach((body["attachments"]?.array?.compactMap(\.string) ?? []) + uploads, to: try Self.issueID(body), in: folder)
         case "delete":
             try delete(try Self.issueID(body), in: folder)
         case "link":
@@ -292,6 +297,30 @@ final class ProjectIssueStore {
     }
 
     // MARK: - Helpers
+
+    /// Files sent along (the phone's photos): `uploads`, each {name, data (base64)}, written to a
+    /// temporary folder to be copied in like any other attachment. At most 10, 20 MB each.
+    static func uploads(_ body: JSON) throws -> [String] {
+        guard let list = body["uploads"]?.array, !list.isEmpty else { return [] }
+        guard list.count <= 10 else { throw Failure(status: 400, message: "At most 10 files at a time.") }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("chatterbox-issue-uploads-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return try list.enumerated().map { index, upload in
+            guard let encoded = upload["data"]?.string, let data = Data(base64Encoded: encoded) else { throw Failure(status: 400, message: "A file didn't arrive whole.") }
+            guard data.count <= 20 << 20 else { throw Failure(status: 400, message: "Files over 20 MB can't be attached.") }
+            // Only the name's last part, so nothing lands outside the folder.
+            let raw = (upload["name"]?.string ?? "Photo \(index + 1).jpg") as NSString
+            let name = raw.lastPathComponent.isEmpty || raw.lastPathComponent.hasPrefix(".") ? "Photo \(index + 1).jpg" : raw.lastPathComponent
+            let url = folder.appendingPathComponent(name)
+            try data.write(to: url)
+            return url.path
+        }
+    }
+
+    static func discard(_ uploads: [String]) {
+        guard let first = uploads.first else { return }
+        try? FileManager.default.removeItem(at: URL(fileURLWithPath: first).deletingLastPathComponent())
+    }
 
     /// Copies a file into the issue's own folder, so the issue keeps it whatever happens to the original.
     private func copyIn(_ path: String, for id: UUID) throws -> Companion.IssueAttachment {

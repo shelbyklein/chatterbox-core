@@ -447,6 +447,28 @@ final class MobileStore {
         return MobileImageCache.shared.store(data, as: key)
     }
 
+    // MARK: Project issue boards (plans/project-issues.md, I3)
+
+    /// The board of the project `chat` belongs to.
+    func issueBoard(chat: UUID) async throws -> Companion.IssueBoard {
+        try await call("/v1/issues?chat=\(chat.uuidString)")
+    }
+
+    /// An action on the board (add, update, attach, delete, unlink, start), with the socket's
+    /// body; answers the raw reply (the board, the new issue, or a started thread's detail).
+    @discardableResult
+    func issueAction(_ body: [String: Any]) async throws -> Data {
+        try await raw("/v1/issues", method: "POST", body: try JSONSerialization.data(withJSONObject: body))
+    }
+
+    /// An issue's attached picture, from the Mac.
+    func issueImage(_ attachment: Companion.IssueAttachment) async throws -> UIImage? {
+        let key = "issue|" + attachment.path
+        if let image = MobileImageCache.shared.image(key) { return image }
+        let path = attachment.path.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed.subtracting(CharacterSet(charactersIn: "&=+"))) ?? attachment.path
+        return MobileImageCache.shared.store(try await raw("/v1/issues/attachment?path=" + path), as: key)
+    }
+
     func file(_ file: Companion.File, in chat: UUID) async throws -> Data {
         try await raw("/v1/chats/\(chat.uuidString)/files/\(file.id.uuidString)")
     }
