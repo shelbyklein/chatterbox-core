@@ -42,6 +42,8 @@ struct ContentView: View {
     @State private var worktreeError: String?
     @State private var projectNickname = ""
     @State private var renamingChat: ChatSession?
+    /// Why Make Project didn't work, for its alert.
+    @State private var promotionProblem: String?
     @State private var chatTitle = ""
     /// True while ⌘ is held on its own: the sidebar shows each chat's ⌘-number.
     @State private var taggingSession: ChatSession?
@@ -276,6 +278,9 @@ struct ContentView: View {
             }
         }
         .modifier(WorktreeAlerts(parent: $worktreeParent, name: $worktreeName, removing: $removingWorktree, error: $worktreeError))
+        .alert("Couldn't make it a project", isPresented: Binding(get: { promotionProblem != nil }, set: { if !$0 { promotionProblem = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: { Text(promotionProblem ?? "") }
         .alert("Rename Session", isPresented: Binding(get: { renamingChat != nil }, set: { if !$0 { renamingChat = nil } })) {
             TextField("Title", text: $chatTitle)
             Button("Rename") {
@@ -589,6 +594,23 @@ extension ContentView {
     }
 
     /// A thread's right-click menu: the sidebar's, and the Studios page's cards and rows.
+    /// Make Project: choose (or create) the folder; the service moves the chat into it, keeping
+    /// its history, as the phone's Make Project does.
+    func makeProject(_ session: ChatSession) {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Make Project"
+        panel.message = "Choose the folder for \u{201C}\(session.title)\u{201D} to work in, or create a new one."
+        guard panel.runModal() == .OK, let folder = panel.url?.path else { return }
+        Task {
+            do { try await model.promote(session, toProjectAt: folder) }
+            catch { promotionProblem = error.localizedDescription }
+        }
+    }
+
     @ViewBuilder func threadMenu(_ session: ChatSession) -> some View {
         if model.canPinThread(session), session.record.archivedAt == nil {
             Button(model.isPinnedThread(session) ? "Unpin" : "Pin to Top") { model.togglePinnedThread(session) }
@@ -600,6 +622,10 @@ extension ContentView {
             renamingChat = session
         }
         RestartThreadControl(session: session)
+        // A plain chat becomes a project: same conversation, now working in a folder you choose.
+        if ChatPromotion.eligible(session) {
+            Button("Make Project\u{2026}") { makeProject(session) }
+        }
         if session.record.projectFolder == nil, session.hasMessages {
             Button("Fork Session") { model.fork(session) }
                 .disabled(!model.canFork(session))

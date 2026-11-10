@@ -478,3 +478,14 @@ extension AppModel {
         return projectFolder(of: parent, depth: depth + 1)
     }
 }
+
+extension AppModel {
+    /// Make Project from the Mac: the service turns the chat into a project working in `folder`
+    /// (ConversationRuntime.promote), keeping its history.
+    func promote(_ session: ChatSession, toProjectAt folder: String) async throws {
+        let request = Companion.PromotionRequest(kind: .project, folder: folder)
+        guard RuntimeClient.usesDaemon else { throw RuntimeFailure("Making a project needs Chatterbox's background service.") }
+        _ = try await RuntimeClient.shared.request("promote", body: ["chatID": .string(session.id.uuidString), "request": try JSON.value(request)],
+                                                   timeout: .seconds(20))
+    }
+}
