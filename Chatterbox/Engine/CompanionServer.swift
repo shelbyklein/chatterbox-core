@@ -375,6 +375,22 @@ final class CompanionServer {
                 catch { RuntimeHooks.note("The new chat couldn't go on the Desk: \(error.localizedDescription)") }
             }
             return .json(CompanionMapper.detail(session, model: model))
+        case ("GET", 2) where parts[1] == "issues":
+            // A project's issue board (plans/project-issues.md): ?chat=<any session in the project>.
+            guard let chat = request.query["chat"] else { return .error(400, "Say which project's session.") }
+            do { return .json(try ProjectIssueStore.shared.board(for: ProjectIssueStore.shared.project(of: .object(["chatID": .string(chat)])))) }
+            catch { return failure(error) }
+        case ("POST", 2) where parts[1] == "issues":
+            // The board's actions, with the socket's bodies: add, update, delete, link, unlink, start.
+            guard let body = try? Companion.decoder.decode(JSON.self, from: request.body) else { return .error(400, "Bad request.") }
+            do { return .json(try ProjectIssueStore.shared.operation(body, agent: nil)) } catch { return failure(error) }
+        case ("GET", 3) where parts[1] == "issues" && parts[2] == "attachment":
+            // An issue's attached file, only from where issues keep them.
+            guard let path = request.query["path"] else { return .error(400, "Say which file.") }
+            let url = URL(fileURLWithPath: path).standardizedFileURL
+            let kept = RuntimePaths.data.appendingPathComponent("IssueAttachments", isDirectory: true).standardizedFileURL.path + "/"
+            guard url.path.hasPrefix(kept), FileManager.default.fileExists(atPath: url.path) else { return .error(404, "That file is gone.") }
+            return HTTPResponse(status: 200, contentType: ProjectIssueStore.mediaType(url.pathExtension), body: Data(), fileURL: url)
         case ("GET", 2) where parts[1] == "desk":
             return .json(DeskStore.shared.snapshot())
         case ("POST", 2) where parts[1] == "desk":

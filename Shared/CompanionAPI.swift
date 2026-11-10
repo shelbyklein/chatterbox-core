@@ -518,6 +518,84 @@ enum Companion {
         var summary: String { "\(added.count) added · \(updated.count) updated" }
     }
 
+    // MARK: Project issue boards (plans/project-issues.md)
+
+    /// A project's internal issue board: its issues, grouped by game when the project has a
+    /// game catalog (catalog/games.json, as PlayCase Arcade does), else under General.
+    struct IssueBoard: Codable {
+        /// The project's folder, which keys the board.
+        var project: String
+        var projectName: String
+        /// The project's games, catalog order; empty for a project without a catalog.
+        var games: [IssueGame]
+        var issues: [ProjectIssue]
+        var revision: Int
+    }
+
+    struct IssueGame: Codable, Hashable, Identifiable {
+        var id: String
+        var title: String
+        /// The game's preview picture on the Mac, when the catalog names one.
+        var image: String? = nil
+    }
+
+    struct ProjectIssue: Codable, Hashable, Identifiable {
+        var id: UUID
+        /// #1, #2… within the project.
+        var number: Int
+        var title: String
+        var notes: String? = nil
+        /// A catalog game's id; nil is General.
+        var game: String? = nil
+        /// "bug", "feature" or "polish".
+        var type: String
+        /// "low", "normal" or "high".
+        var priority: String
+        /// "open", "inProgress", "review" or "done". Linked to a thread, it follows the thread:
+        /// working or waiting on you is In progress, finished is Review, archived is Done.
+        var status: String
+        /// The linked thread is waiting on Shelby (shown on the card).
+        var needsYou: Bool? = nil
+        var attachments: [IssueAttachment] = []
+        /// The thread working on it.
+        var chatID: UUID? = nil
+        var chatTitle: String? = nil
+        /// Who filed it: "you", "claude", "codex".
+        var createdBy: String
+        var createdAt: Date
+        var updatedAt: Date
+    }
+
+    struct IssueAttachment: Codable, Hashable {
+        var name: String
+        /// The copy kept with the issue, on the Mac.
+        var path: String
+        var mediaType: String
+    }
+
+    /// Socket op "issues" (and /v1/issues): a new issue on the project of `chatID`'s session.
+    struct IssueAddRequest: Codable {
+        var chatID: UUID
+        var title: String
+        var notes: String? = nil
+        var game: String? = nil
+        var type: String? = nil
+        var priority: String? = nil
+        /// Files on the Mac to attach (copied in).
+        var attachments: [String]? = nil
+    }
+
+    /// Changes to an issue; nil fields stay as they are. `status` moves an issue that isn't
+    /// linked to a thread; "" for `game` files it under General.
+    struct IssueUpdateRequest: Codable {
+        var title: String? = nil
+        var notes: String? = nil
+        var game: String? = nil
+        var type: String? = nil
+        var priority: String? = nil
+        var status: String? = nil
+    }
+
     /// A task linked to its thread (plans/work-threads.md). One task per thread, one thread per task.
     struct DeskTask: Codable, Identifiable, Hashable {
         var id: UUID
