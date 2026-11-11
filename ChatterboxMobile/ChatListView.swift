@@ -13,7 +13,7 @@ struct ChatListView: View {
             switch self {
             case .all: "tray.full"
             case .activity: "waveform.path"
-            case .projects: "folder"
+            case .projects: "apps.iphone"
             case .studios: "paintpalette"
             case .chats: "bubble.left.and.bubble.right"
             }
@@ -731,7 +731,7 @@ struct ChatListView: View {
 
     private func header(_ group: Companion.ChatGroup) -> some View {
         HStack {
-            Label(group.title, systemImage: group.id.contains("-tag-") ? "tag" : group.kind == .studio ? "paintpalette" : group.kind == .projects ? "folder" : "bubble.left.and.bubble.right")
+            Label(group.title, systemImage: group.id.contains("-tag-") ? "tag" : group.kind == .studio ? "paintpalette" : group.kind == .projects ? "apps.iphone" : "bubble.left.and.bubble.right")
             Spacer()
             if group.kind == .studio, group.studioID != nil {
                 Button { editingStudio = group } label: { Image(systemName: "text.book.closed") }
@@ -780,7 +780,7 @@ struct ChatListView: View {
                     } header: {
                         if family.first, showsHeader(group) {
                             HStack {
-                                Label(group.title, systemImage: group.kind == .studio ? "paintpalette" : group.kind == .projects ? "folder" : "bubble.left.and.bubble.right")
+                                Label(group.title, systemImage: group.kind == .studio ? "paintpalette" : group.kind == .projects ? "apps.iphone" : "bubble.left.and.bubble.right")
                                 Spacer()
                                 if group.kind == .studio {
                                     Button { editingStudio = group } label: { Image(systemName: "text.book.closed") }
