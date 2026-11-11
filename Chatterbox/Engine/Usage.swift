@@ -83,3 +83,34 @@ final class UsageLimits {
 extension JSON {
     var double: Double? { if case .number(let n) = self { return n }; return nil }
 }
+
+/// Durable usage metadata. Telemetry errors never interrupt an agent turn.
+enum TokenLedgerReporter {
+    static func record(eventID: String, app: String, session: String, task: String?, provider: String,
+                       model: String?, input: Int?, output: Int?, cached: Int?, written: Int?, reasoning: Int? = nil,
+                       includesCache: Bool, cumulative: Bool = false) {
+        guard input != nil || output != nil else { return }
+        let env = ProcessInfo.processInfo.environment
+        let root = env["TOKENLEDGER_EVENTS_DIR"].map { URL(fileURLWithPath: $0) }
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/TokenLedger/events")
+        var event: [String: Any] = ["version": 1, "event_id": eventID, "app": app,
+            "machine": ProcessInfo.processInfo.hostName, "session_id": session, "provider": provider,
+            "timestamp": ISO8601DateFormatter().string(from: Date()), "source": "native",
+            "input_includes_cache": includesCache, "counter_kind": cumulative ? "cumulative" : "request"]
+        event["task_id"] = task; event["model"] = model
+        event["input_tokens"] = input; event["output_tokens"] = output
+        event["cached_input_tokens"] = cached; event["cache_write_tokens"] = written; event["reasoning_tokens"] = reasoning
+        do {
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            // One file per process avoids cross-process append races; importer deduplicates replayed IDs.
+            let file = root.appendingPathComponent("\(app)-\(ProcessInfo.processInfo.processIdentifier).jsonl")
+            if !FileManager.default.fileExists(atPath: file.path) {
+                guard FileManager.default.createFile(atPath: file.path, contents: nil, attributes: [.posixPermissions: 0o600]) else { return }
+            }
+            let handle = try FileHandle(forWritingTo: file); defer { try? handle.close() }
+            try handle.seekToEnd()
+            var data = try JSONSerialization.data(withJSONObject: event); data.append(10)
+            try handle.write(contentsOf: data)
+        } catch { /* Collection must never affect chat execution. */ }
+    }
+}
