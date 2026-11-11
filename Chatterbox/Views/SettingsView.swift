@@ -1024,7 +1024,14 @@ struct SecretsSection: View {
                          },
                          studios: model.studios.map { (name: $0.name, id: $0.id) }) { saved, value in
                 try vault.save(saved, value: value)
-                restartClaudeChats()
+                // A new key (or a new value) lives in Keychain under this app's access only: ask
+                // for the background service's access now, while you're here, not when a
+                // session finds it missing. Not for a test vault (no Keychain), or with no value.
+                if RuntimeClient.usesDaemon, !(value ?? "").isEmpty, serviceAvailability?[saved.id.uuidString] != true {
+                    authorize(saved)
+                } else {
+                    restartClaudeChats()
+                }
             }
         }
         .alert("Remove \(removing?.name ?? "")?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } })) {

@@ -153,12 +153,22 @@ final class SecretVault {
     // MARK: - For chats
 
     func entries(for session: ChatSession) -> [SecretEntry] {
+        inScope(of: session).filter(hasValue)
+    }
+
+    /// In the chat's scope but with no value this process can read: in the service, a key
+    /// saved in Settings that chatterboxd hasn't been allowed to read from Keychain yet.
+    func unavailable(for session: ChatSession) -> [SecretEntry] {
+        inScope(of: session).filter { !hasValue($0) }
+    }
+
+    private func inScope(of session: ChatSession) -> [SecretEntry] {
         let folder = (session.record.sidechatProjectFolder ?? session.convertedProjectScope ?? session.record.worktreeOf ?? session.record.projectFolder).map(RuntimePaths.normalize)
         let studio = session.record.studioID
         return entries.filter { entry in
-            hasValue(entry) && (entry.isEverywhere
+            entry.isEverywhere
                 || folder.map { f in entry.projects.contains { RuntimePaths.normalize($0) == f } } == true
-                || studio.map(entry.studios.contains) == true)
+                || studio.map(entry.studios.contains) == true
         }
     }
 
@@ -180,20 +190,27 @@ final class SecretVault {
 
     /// What the agent is told: names and purposes, never values.
     func note(for session: ChatSession) -> String? {
-        let available = entries(for: session)
-        guard !available.isEmpty else { return nil }
+        let available = entries(for: session), blocked = unavailable(for: session)
+        guard !available.isEmpty || !blocked.isEmpty else { return nil }
         let lines = available.map { entry -> String in
             var line = "- $\(entry.variable)" + (entry.isAccount ? " (password) and $\(entry.variable)_USER (user name)" : "") + ": \(entry.name)"
             if !entry.note.isEmpty { line += " — " + entry.note }
             return line
         }
-        return """
-        <app_note>
-        The user saved these for you to use. They're environment variables in every command you run; you don't see the values:
-        \(lines.joined(separator: "\n"))
-        Use them only by reference, as in curl -H "Authorization: Bearer $NAME". Never print, echo, log, or write a value into a file, a commit, a message, or a reply, and don't pass one to a site or service other than the one it's for. If one is missing or wrong, ask the user to update it in Chatterbox → Settings → Secrets.
-        </app_note>
-        """
+        var parts = ["<app_note>"]
+        if !available.isEmpty {
+            parts.append("""
+            The user saved these for you to use. They're environment variables in every command you run; you don't see the values:
+            \(lines.joined(separator: "\n"))
+            Use them only by reference, as in curl -H "Authorization: Bearer $NAME". Never print, echo, log, or write a value into a file, a commit, a message, or a reply, and don't pass one to a site or service other than the one it's for. If one is missing or wrong, ask the user to update it in Chatterbox → Settings → Secrets.
+            """)
+        }
+        if !blocked.isEmpty {
+            let names = blocked.map { "$\($0.variable) (\($0.name))" }.joined(separator: ", ")
+            parts.append("Also saved for this session, but Chatterbox's background service isn't allowed to read \(blocked.count == 1 ? "it" : "them") from Keychain yet, so \(blocked.count == 1 ? "it isn't" : "they aren't") in your environment: \(names). Ask the user to click Allow Background Access next to \(blocked.count == 1 ? "it" : "each") in Chatterbox → Settings → Secrets and choose Always Allow; you'll get \(blocked.count == 1 ? "it" : "them") with the next message.")
+        }
+        parts.append("</app_note>")
+        return parts.joined(separator: "\n")
     }
 
     /// Masks any saved value in text (8 characters or longer, so short words aren't caught).
@@ -277,7 +294,8 @@ extension ChatSession {
     /// Sent once whenever what this chat may use changes.
     func takeSecretsUpdate() -> String? {
         let vault = SecretVault.shared
-        let key = vault.entries(for: self).map { "\($0.variable):\($0.note):\($0.username)" }.joined(separator: "|")
+        let key = (vault.entries(for: self).map { "\($0.variable):\($0.note):\($0.username)" }
+                   + vault.unavailable(for: self).map { "?\($0.variable)" }).joined(separator: "|")
         guard key != (record.sentSecretsKey ?? "") else { return nil }
         record.sentSecretsKey = key
         return vault.note(for: self) ?? "<app_note>\nThe saved secrets you were told about earlier are no longer available.\n</app_note>"
