@@ -1,32 +1,48 @@
 import AppKit
 import SwiftUI
 
-/// Settings → Tools: what agents can use at a level (ToolScopes). Chatterbox-wide and Studios
-/// here; a project's own from its right-click menu (Tools…). Each level lists what it adds,
-/// what it inherits, and what the agents load on their own, each with a switch.
+/// Settings → Tools: what agents can use at a level (ToolScopes). Chatterbox-wide and each
+/// Studio here; a project's own from its right-click menu (Tools…), a Studio's from its menu
+/// too. Each level lists what it adds, what it inherits, and what the agents load on their
+/// own, each with a switch.
 struct ToolsSettingsView: View {
     @AppStorage("toolsSettingsScope") private var scopeName = "chatterbox"
+    @Environment(AppModel.self) private var model
+
+    private var studios: [Studio] { model.studios.filter { $0.archivedAt == nil }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending } }
+    /// The chosen level; "studios" (the old shared one) or a Studio that's gone is Chatterbox.
+    private var scope: (ToolScope, Studio?) {
+        if let studio = studios.first(where: { ToolScope.studio($0.id).key == scopeName }) { return (.studio(studio.id), studio) }
+        return (.chatterbox, nil)
+    }
 
     var body: some View {
+        let (scope, studio) = scope
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Picker("Level", selection: $scopeName) {
-                    Text("Chatterbox").tag("chatterbox")
-                    Text("Studios").tag("studios")
+                Picker("Level", selection: Binding(get: { scope.key }, set: { scopeName = $0 })) {
+                    Text("Chatterbox").tag(ToolScope.chatterbox.key)
+                    if !studios.isEmpty {
+                        Section("Studios") {
+                            ForEach(studios) { Text($0.name).tag(ToolScope.studio($0.id).key) }
+                        }
+                    }
                 }
-                .pickerStyle(.segmented).labelsHidden().fixedSize()
+                .pickerStyle(.menu).labelsHidden().fixedSize()
+                .accessibilityIdentifier("tools-level")
                 Text("Projects: right-click a project \u{2192} Tools\u{2026}").font(.caption).foregroundStyle(.secondary)
                 Spacer()
             }
             .padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 4)
-            ToolsPanel(scope: scopeName == "studios" ? .studios : .chatterbox)
-                .id(scopeName)
+            ToolsPanel(scope: scope, projectFolder: studio?.folder)
+                .id(scope.key)
         }
     }
 }
 
-/// A project's Tools… sheet.
-struct ProjectToolsSheet: View {
+/// A project's or Studio's Tools… sheet.
+struct ToolsSheet: View {
+    let scope: ToolScope
     let folder: String
     let name: String
     @Environment(\.dismiss) private var dismiss
@@ -43,10 +59,15 @@ struct ProjectToolsSheet: View {
             }
             .padding(20)
             Divider()
-            ToolsPanel(scope: .project(folder), projectFolder: folder)
+            ToolsPanel(scope: scope, projectFolder: folder)
         }
         .frame(width: 680, height: 680)
     }
+}
+
+extension ToolsSheet {
+    static func project(_ folder: String, name: String) -> ToolsSheet { ToolsSheet(scope: .project(folder), folder: folder, name: name) }
+    static func studio(_ studio: Studio) -> ToolsSheet { ToolsSheet(scope: .studio(studio.id), folder: studio.folder, name: studio.name) }
 }
 
 /// One level's tools, editable.
@@ -59,10 +80,10 @@ struct ToolsPanel: View {
     @State private var editing: ToolServer?
     @State private var problem: String?
 
-    private var set: ToolSet { sets[scope.key] ?? ToolSet() }
+    private var set: ToolSet { ToolScopes.set(scope, in: sets) ?? ToolSet() }
     private var inherited: ToolSet? { scope == .chatterbox ? nil : sets[ToolScope.chatterbox.key] }
     private var levelName: String {
-        switch scope { case .chatterbox: "every session"; case .studios: "every Studio session"; case .project: "this project's sessions" }
+        switch scope { case .chatterbox: "every session"; case .studios, .studio: "this Studio's sessions"; case .project: "this project's sessions" }
     }
 
     var body: some View {
@@ -283,6 +304,10 @@ struct ToolsPanel: View {
     // MARK: Changes
 
     private func reload() {
+        // Each Studio has its own set now: the old shared one is copied into each, once.
+        if case .studio = scope {
+            do { try ToolScopes.migrateStudios(model.studios.map(\.id)) } catch { problem = "Couldn't save: \(error.localizedDescription)" }
+        }
         sets = ToolScopes.load()
         let folder = projectFolder
         Task.detached(priority: .userInitiated) {
@@ -292,7 +317,7 @@ struct ToolsPanel: View {
     }
 
     private func change(_ edit: (inout ToolSet) -> Void) {
-        var next = sets[scope.key] ?? ToolSet()
+        var next = ToolScopes.set(scope, in: sets) ?? ToolSet()
         edit(&next)
         sets[scope.key] = next
         do {
@@ -414,6 +439,7 @@ struct SessionToolsSummary: View {
     let session: ChatSession
     @Environment(AppModel.self) private var model
     @State private var editingProject = false
+    @State private var editingStudio: Studio?
     @State private var servers: [ToolDiscovery.LoadedServer]?
 
     var body: some View {
@@ -452,12 +478,16 @@ struct SessionToolsSummary: View {
                 if let folder = ToolScopes.projectFolder(of: session) {
                     Button("Edit for \(session.projectName)\u{2026}") { editingProject = true }
                         .sheet(isPresented: $editingProject) {
-                            ProjectToolsSheet(folder: folder, name: session.projectName).environment(model)
+                            ToolsSheet.project(folder, name: session.projectName).environment(model)
                         }
                 }
-                Button(session.record.studioID != nil ? "Edit for Studios\u{2026}" : "Edit\u{2026}") {
+                if let studio = model.studio(session.record.studioID) {
+                    Button("Edit for \(studio.name)\u{2026}") { editingStudio = studio }
+                        .sheet(item: $editingStudio) { ToolsSheet.studio($0).environment(model) }
+                }
+                Button(ToolScopes.projectFolder(of: session) != nil || session.record.studioID != nil ? "Edit for All Sessions\u{2026}" : "Edit\u{2026}") {
                     AppPreferences.defaults.set("tools", forKey: "settingsPage")
-                    AppPreferences.defaults.set(session.record.studioID != nil ? "studios" : "chatterbox", forKey: "toolsSettingsScope")
+                    AppPreferences.defaults.set(ToolScope.chatterbox.key, forKey: "toolsSettingsScope")
                     model.showingSettings = true
                 }
             }

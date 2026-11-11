@@ -218,6 +218,7 @@ struct PlaceSlot: View {
     private func studioButton(_ studio: Studio, _ session: ChatSession) -> some View {
         Menu {
             Button("Studio Instructions\u{2026}") { model.editingStudioInstructions = studio.id }
+            Button("Tools\u{2026}") { model.editingStudioTools = studio.id }
             Button("Fork This Session") { model.fork(session) }
                 .disabled(!model.canFork(session))
             Divider()

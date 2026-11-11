@@ -154,6 +154,8 @@ struct ChatHomeView: View {
                 if let studio = selectedStudio {
                     Button("Instructions", systemImage: "doc.text") { model.editingStudioInstructions = studio.id }
                         .help("Edit \(studio.name)'s instructions")
+                    Button("Tools", systemImage: "wrench.and.screwdriver") { model.editingStudioTools = studio.id }
+                        .help("What \(studio.name)'s sessions can use: MCP servers, connectors and skills")
                     Button("New Session", systemImage: "plus") {
                         model.askNewChat(in: studio)
                         model.showingHome = false

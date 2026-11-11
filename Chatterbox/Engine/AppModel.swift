@@ -16,6 +16,8 @@ final class AppModel {
     var studios: [Studio] = []
     /// The Studio whose instructions are open for editing.
     var editingStudioInstructions: UUID?
+    /// A Studio whose Tools sheet is open.
+    var editingStudioTools: UUID?
     var selectedID: UUID? {
         didSet {
             if selectedID != nil { selectionClearedByArchive = false }

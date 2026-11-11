@@ -1,8 +1,8 @@
 import CryptoKit
 import Foundation
 
-/// What agents can use, set at three levels: Chatterbox-wide, Studios (one set for every
-/// Studio chat) and each project. A chat gets Chatterbox-wide plus its Studio's or project's
+/// What agents can use, set at three levels: Chatterbox-wide, each Studio and each project.
+/// A chat gets Chatterbox-wide plus its Studio's or project's
 /// set; a Studio or project can turn off what it inherits, including what the agents load
 /// from their own config (see ToolDiscovery). Stored in ToolScopes.json; the app writes it,
 /// the app and the background service read it when an agent starts.
@@ -70,11 +70,14 @@ enum ToolKey {
 }
 
 enum ToolScope: Hashable, Identifiable {
-    case chatterbox, studios, project(String)
+    /// `studios` is the one set every Studio shared before each had its own: a Studio without
+    /// a set of its own still gets it until `ToolScopes.migrateStudios` copies it into each.
+    case chatterbox, studios, studio(UUID), project(String)
     var key: String {
         switch self {
         case .chatterbox: "chatterbox"
         case .studios: "studios"
+        case .studio(let id): "studio:" + id.uuidString
         case .project(let folder): "project:" + RuntimePaths.normalize(folder)
         }
     }
@@ -112,7 +115,7 @@ enum ToolScopes {
 
     /// The levels a chat draws from, Chatterbox-wide first.
     @MainActor static func scopes(for session: ChatSession) -> [ToolScope] {
-        if session.record.studioID != nil { return [.chatterbox, .studios] }
+        if let studio = session.record.studioID { return [.chatterbox, .studio(studio)] }
         if let folder = projectFolder(of: session) { return [.chatterbox, .project(folder)] }
         return [.chatterbox]
     }
@@ -126,7 +129,7 @@ enum ToolScopes {
     static func effective(_ scopes: [ToolScope], sets: [String: ToolSet]) -> EffectiveTools {
         var result = EffectiveTools()
         for scope in scopes {
-            guard let set = sets[scope.key] else { continue }
+            guard let set = set(scope, in: sets) else { continue }
             result.off.formUnion(set.off)
             for server in set.servers where server.enabled {
                 result.servers.removeAll { $0.name == server.name }
@@ -137,6 +140,22 @@ enum ToolScopes {
         }
         result.servers.removeAll { result.off.contains(ToolKey.server($0.name)) }
         return result
+    }
+
+    /// A level's set; a Studio without its own still has the old shared one.
+    static func set(_ scope: ToolScope, in sets: [String: ToolSet]) -> ToolSet? {
+        if case .studio = scope, sets[scope.key] == nil { return sets[ToolScope.studios.key] }
+        return sets[scope.key]
+    }
+
+    /// Gives each Studio its own copy of the old shared Studios set, then drops the shared one.
+    /// Needs every Studio's id (archived ones too): one missing would lose its tools.
+    @discardableResult static func migrateStudios(_ ids: [UUID]) throws -> Bool {
+        var sets = load()
+        guard !ids.isEmpty, let shared = sets.removeValue(forKey: ToolScope.studios.key) else { return false }
+        for id in ids where sets[ToolScope.studio(id).key] == nil { sets[ToolScope.studio(id).key] = shared }
+        try save(sets)
+        return true
     }
 
     @MainActor static func effective(for session: ChatSession) -> EffectiveTools {

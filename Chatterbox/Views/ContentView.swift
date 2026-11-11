@@ -263,7 +263,7 @@ struct ContentView: View {
         }
         .sheet(item: $toolsFor) { project in
             if let folder = project.record.projectFolder {
-                ProjectToolsSheet(folder: folder, name: project.projectName).environment(model)
+                ToolsSheet.project(folder, name: project.projectName).environment(model)
             }
         }
         .sheet(item: $automationsFor) { project in
@@ -275,6 +275,12 @@ struct ContentView: View {
                                     set: { if !$0 { model.editingStudioInstructions = nil } })) {
             if let studio = model.studio(model.editingStudioInstructions) {
                 StudioInstructionsSheet(studio: studio).environment(model)
+            }
+        }
+        .sheet(isPresented: Binding(get: { model.editingStudioTools != nil },
+                                    set: { if !$0 { model.editingStudioTools = nil } })) {
+            if let studio = model.studio(model.editingStudioTools) {
+                ToolsSheet.studio(studio).environment(model)
             }
         }
         .modifier(WorktreeAlerts(parent: $worktreeParent, name: $worktreeName, removing: $removingWorktree, error: $worktreeError))
@@ -499,6 +505,7 @@ extension ContentView {
                     Button("New Codex Session") { model.askNewChat(in: studio, backend: .codex) }
                     Divider()
                     Button("Studio Instructions\u{2026}") { model.editingStudioInstructions = studio.id }
+                    Button("Tools\u{2026}") { model.editingStudioTools = studio.id }
                     Button("Edit design.md") { studio.ensureDesignFile(); openForEditing(studio.designFile) }
                     Button("Rename Studio\u{2026}") {
                         studioName = studio.name
@@ -1973,6 +1980,7 @@ private struct StudioRail: View {
             Button("New Codex Session") { model.askNewChat(in: studio, backend: .codex) }
             Divider()
             Button("Studio Instructions\u{2026}") { model.editingStudioInstructions = studio.id }
+            Button("Tools\u{2026}") { model.editingStudioTools = studio.id }
             Button("Edit design.md") { studio.ensureDesignFile(); openForEditing(studio.designFile) }
             Button("Rename Studio\u{2026}") { rename(studio) }
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: studio.folder)]) }
