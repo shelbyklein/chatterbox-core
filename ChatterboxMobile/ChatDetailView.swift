@@ -270,7 +270,12 @@ struct ChatDetailView: View {
     private var transcript: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 14) {
+                // Not lazy: scrolling up into older rows while a chat opened (and was still being
+                // pinned to its newest message) sent SwiftUI's LazyVStack into a layout loop that
+                // froze the app at 100% CPU, with or without anchors, scroll tracking, selection
+                // or row ids (tests/mobile-scroll testFreezeOnEarlyScroll). A plain stack lays out
+                // the at most Companion.itemLimit (300) rows once and never froze.
+                VStack(alignment: .leading, spacing: 14) {
                     if let detail {
                         if detail.earlierCount > 0 {
                             Text("\(detail.earlierCount) earlier messages are on the Mac.")
