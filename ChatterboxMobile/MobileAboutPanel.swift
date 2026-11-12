@@ -17,6 +17,8 @@ enum MobileAboutAction: Equatable {
     /// Scroll the transcript to a message (a file or draft it holds).
     case reveal(UUID)
     case open(Companion.ChatSummary)
+    /// The session's own actions, from About's Actions menu (wide, where the chat has no ⋯).
+    case refresh, stopReply, restart, togglePin, rename, moveToStudio, makeProject, fork, archive, unarchive
 
     static func == (a: Self, b: Self) -> Bool { String(describing: a) == String(describing: b) }
 }
@@ -127,6 +129,9 @@ struct MobileAboutPanel: View {
     let detail: Companion.ChatDetail?
     let chats: [Companion.ChatSummary]
     let perform: (MobileAboutAction) -> Void
+    /// Wide, About carries the session's actions (Refresh, Restart, Rename…): the chat's own ⋯
+    /// toolbar would only fold into a floating pill there.
+    var sessionActions = false
     @Environment(MobileStore.self) private var store
     @State private var browsing: String?
     @State private var viewing: ViewedImage?
@@ -169,6 +174,7 @@ struct MobileAboutPanel: View {
 
     private var header: some View {
         HStack(spacing: 8) {
+            if sessionActions { actionsMenu }
             if !images.isEmpty { headerButton("Images", "photo.on.rectangle", "about-images") { showingImages = true } }
             // A project's issue board (plans/project-issues.md).
             if summary.project != nil, detail?.isArchived != true {
@@ -178,6 +184,50 @@ struct MobileAboutPanel: View {
                 headerButton("Terminal", "terminal", "about-terminal") { perform(.terminal) }
             }
         }
+    }
+
+    /// The session's actions, as the narrow layout's ⋯ Session Menu has them.
+    private var actionsMenu: some View {
+        Menu {
+            Button { perform(.refresh) } label: { Label("Refresh Session", systemImage: "arrow.clockwise") }
+            if summary.isRunning {
+                Button { perform(.stopReply) } label: { Label("Stop Reply", systemImage: "stop.circle") }
+            }
+            Button { perform(.restart) } label: { Label("Restart Thread", systemImage: "arrow.triangle.2.circlepath") }
+                .disabled(detail == nil)
+            if summary.worktreeBranch == nil, summary.sidechatOf == nil {
+                Button { perform(.togglePin) } label: {
+                    Label(summary.pinnedRank == nil ? "Pin to Top" : "Unpin", systemImage: summary.pinnedRank == nil ? "pin" : "pin.slash")
+                }
+            }
+            Button { perform(.rename) } label: { Label("Rename", systemImage: "pencil") }
+            if summary.canPromote == true, detail?.isArchived != true {
+                Button { perform(.moveToStudio) } label: { Label("Move to Studio\u{2026}", systemImage: "paintpalette") }
+                    .disabled(summary.isRunning)
+                Button { perform(.makeProject) } label: { Label("Make Project\u{2026}", systemImage: "folder.badge.plus") }
+                    .disabled(summary.isRunning)
+            }
+            if detail?.canFork == true {
+                Button { perform(.fork) } label: { Label("Fork", systemImage: "arrow.triangle.branch") }
+            }
+            Divider()
+            if detail?.isArchived == true {
+                Button { perform(.unarchive) } label: { Label("Unarchive", systemImage: "tray.and.arrow.up") }
+            } else {
+                Button(role: .destructive) { perform(.archive) } label: { Label("Archive", systemImage: "archivebox") }
+            }
+        } label: {
+            VStack(spacing: 3) {
+                Image(systemName: "ellipsis.circle").font(.body)
+                Text("Actions").font(.caption2)
+            }
+            .frame(maxWidth: .infinity, minHeight: 48)
+            .background(Color(uiColor: .tertiarySystemFill), in: RoundedRectangle(cornerRadius: 10))
+            .contentShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Session Actions")
+        .accessibilityIdentifier("about-actions")
     }
 
     private func headerButton(_ title: String, _ icon: String, _ id: String, action: @escaping () -> Void) -> some View {

@@ -457,34 +457,15 @@ struct ChatDetailView: View {
                 .accessibilityHint(workingCount > 0 ? "\(workingCount) work threads working" : "")
                 .accessibilityIdentifier("chat-title")
             }
-            // The session's tools, top to bottom on a Duo's rail: About (wide), Session Settings,
-            // its actions, Feedback. The list's own (New Chat and the rest) are on the list's bar.
-            if let aboutColumn { ToolbarItem(placement: .topBarTrailing) { aboutButton(aboutColumn) } }
-            ToolbarItem(placement: .topBarTrailing) { settingsButton }
-            ToolbarItem(placement: .topBarTrailing) { chatMenu }
-            ToolbarItem(placement: .topBarTrailing) { FeedbackButton() }
-    }
-
-    /// Opens and closes the About column, highlighted while it's open like a selected tab; a dot
-    /// says something's happening behind it: work threads running, or the session needs you.
-    private func aboutButton(_ column: MobileAboutColumn) -> some View {
-        let open = column.isOpen
-        let dot: Color? = summary.isWaitingOnYou ? .attention : workingCount > 0 ? .blue : nil
-        return Button { withAnimation(.snappy(duration: 0.25)) { column.isOpen.toggle() } } label: {
-            Image(systemName: "sidebar.right")
-                .symbolVariant(open ? .fill : .none)
-                .foregroundStyle(open ? Color.white : Color.primary)
-                .frame(width: 30, height: 30)
-                .background(Circle().fill(open ? Color.accentColor : Color.clear))
-                .overlay(alignment: .topTrailing) {
-                    if let dot { Circle().fill(dot).frame(width: 8, height: 8).offset(x: 1, y: -1) }
-                }
-        }
-        .accessibilityLabel("About this thread")
-        .accessibilityValue([open ? "Open" : "Closed", summary.isWaitingOnYou ? "needs you" : nil,
-                             workingCount > 0 ? "\(workingCount) working" : nil].compactMap { $0 }.joined(separator: ", "))
-        .accessibilityAddTraits(open ? .isSelected : [])
-        .accessibilityIdentifier("about-rail-button")
+            // Narrow (a closed Duo's rail): Session Settings, its ⋯ actions, Feedback. Wide there's
+            // nothing here: iOS folded these into a floating pill over the chat, and each is
+            // elsewhere (the title opens About, which has the actions; the model is under the
+            // title; Feedback is on the list's bar).
+            if aboutColumn == nil {
+                ToolbarItem(placement: .topBarTrailing) { settingsButton }
+                ToolbarItem(placement: .topBarTrailing) { chatMenu }
+                ToolbarItem(placement: .topBarTrailing) { FeedbackButton() }
+            }
     }
 
     /// Session Settings (model, effort, permissions), one tap from the session: its agent's glyph.
@@ -589,6 +570,22 @@ struct ChatDetailView: View {
             if draft.isEmpty { draft = "!" }
             composing = true
         case .reveal(let item): revealRequest = item
+        case .refresh: Task { await refresh(force: true) }
+        case .stopReply: controlSession(restart: false)
+        case .restart: confirmingRestart = true
+        case .togglePin:
+            let pin = summary.pinnedRank == nil
+            Task { try? await store.setPinned(chat.id, pin); history.refresh(in: store, force: true) }
+        case .rename: newTitle = summary.title; renaming = true
+        case .moveToStudio: promoting = .init(chat: summary, kind: .studio)
+        case .makeProject: promoting = .init(chat: summary, kind: .project)
+        case .fork: forkChat()
+        case .unarchive: perform { try await store.setArchived(false, chat: chat.id) }
+        case .archive:
+            Task {
+                do { _ = try await store.setArchived(true, chat: chat.id); closeChat(); await store.loadChats() }
+                catch { self.error = error.localizedDescription }
+            }
         case .open(let other):
             // Wide, a work thread or sidechat of this session peeks in the right-hand column
             // (as on the Mac); anything else, or on a narrow phone, opens in its place.

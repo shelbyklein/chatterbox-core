@@ -806,9 +806,8 @@ struct ChatListView: View {
     private func aboutColumnContent(_ chat: Companion.ChatSummary) -> some View {
         let shown = history?.id == chat.id ? history?.detail : nil
         return ScrollView {
-            MobileAboutPanel(summary: shown?.summary ?? chat, detail: shown, chats: store.chatList?.groups.flatMap(\.chats) ?? []) { action in
-                aboutColumn.send(action)
-            }
+            MobileAboutPanel(summary: shown?.summary ?? chat, detail: shown, chats: store.chatList?.groups.flatMap(\.chats) ?? [],
+                             perform: { aboutColumn.send($0) }, sessionActions: true)
         }
         .background(Color(uiColor: .systemGroupedBackground))
         .navigationTitle("About")
