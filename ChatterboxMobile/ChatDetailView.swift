@@ -446,7 +446,10 @@ struct ChatDetailView: View {
             if let column {
                 content
                     .safeAreaInset(edge: .top, spacing: 0) {
-                        HStack(spacing: 10) {
+                        // The title centered on the bar; the shelf's button at its left edge.
+                        ZStack {
+                            title
+                            HStack {
                             if column.listShelf {
                                 Button { withAnimation(.snappy(duration: 0.25)) { column.listShown.toggle() } } label: {
                                     Image(systemName: "sidebar.left").font(.system(size: 18, weight: .medium))
@@ -456,8 +459,8 @@ struct ChatDetailView: View {
                                 .accessibilityLabel("Sessions")
                                 .accessibilityIdentifier("list-shelf-button")
                             }
-                            title
                             Spacer(minLength: 0)
+                            }
                         }
                         .padding(.horizontal, 12)
                         .frame(height: ChatListView.conversationBarHeight)
@@ -475,7 +478,7 @@ struct ChatDetailView: View {
             // Tap the title for About this thread: its status and model, where it works,
             // its task and work threads, what it made, its notes and tools.
             Button { toggleAbout() } label: {
-                VStack(alignment: aboutColumn == nil ? .center : .leading, spacing: 0) {
+                VStack(spacing: 0) {
                     Text(summary.project ?? summary.title).font(.headline).lineLimit(1).foregroundStyle(.primary)
                     HStack(spacing: 4) {
                         // The model and effort, as the Mac's chip says them; its agent's color marks whose.

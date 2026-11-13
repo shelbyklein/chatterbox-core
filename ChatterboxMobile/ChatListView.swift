@@ -196,8 +196,7 @@ struct ChatListView: View {
     /// Upright and wide: the conversation across the whole width, and the session list as a
     /// shelf that slides in from the left over it (the button at the chat's top left, or a
     /// swipe in from the left edge). Picking a session, a tap outside it or a swipe left there
-    /// puts it away, with or without a session open. Kept in place when hidden, so its scroll
-    /// and search stay.
+    /// puts it away, with or without a session open.
     private func listShelf(_ size: CGSize) -> some View {
         let listWidth = min(380, max(300, size.width * 0.6))
         let shown = aboutColumn.listShown
@@ -218,14 +217,16 @@ struct ChatListView: View {
                     .transition(.opacity)
                     .accessibilityIdentifier("list-shelf-dismiss")
             }
-            NavigationStack { configuredSidebar.background(SafeAreaToOwnFrame().allowsHitTesting(false)) }
-                .accessibilityIdentifier("session-sidebar-pane")
-                .frame(width: listWidth)
-                .background(Color(uiColor: .systemBackground))
-                .shadow(color: .black.opacity(shown ? 0.3 : 0), radius: 14)
-                .offset(x: shown ? 0 : -listWidth - 30)
-                .allowsHitTesting(shown)
-                .accessibilityHidden(!shown)
+            // Made when it comes out, not slid in from off screen: a list laid out off screen
+            // (Activity's) came in blank. Its search is kept; its scroll starts at the top.
+            if shown {
+                NavigationStack { configuredSidebar.background(SafeAreaToOwnFrame().allowsHitTesting(false)) }
+                    .accessibilityIdentifier("session-sidebar-pane")
+                    .frame(width: listWidth)
+                    .background(Color(uiColor: .systemBackground))
+                    .shadow(color: .black.opacity(0.3), radius: 14)
+                    .transition(.move(edge: .leading))
+            }
         }
         .animation(.snappy(duration: 0.25), value: shown)
     }
