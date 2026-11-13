@@ -1553,6 +1553,12 @@ struct MobileSettingsSheet: View {
                     NavigationLink { MobileAppearanceSettings(embedded: true) } label: { Label("Appearance", systemImage: "paintbrush") }
                 }
                 Section {
+                    NavigationLink {
+                        ChangelogList().navigationTitle("What's New").navigationBarTitleDisplayMode(.inline)
+                    } label: { Label("What's New", systemImage: "sparkles") }
+                        .accessibilityIdentifier("settings-whats-new")
+                }
+                Section {
                     Button("Unpair This \(UIDevice.current.model)", role: .destructive) { confirmingUnpair = true }
                         .accessibilityIdentifier("settings-unpair")
                 } footer: {

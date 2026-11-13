@@ -237,6 +237,11 @@ struct ContentView: View {
         })
         .onChange(of: themeBackground) { windowToolbarOwner?.applyTheme() }
         .onAppear { model.revealMainChatWindow = { openWindow(id: "main") } }
+        // What changed, once after an update brings new lines (Shared/Changelog.swift).
+        .whatsNewNote(seeAll: {
+            AppPreferences.defaults.set(SettingsView.Page.whatsNew.rawValue, forKey: "settingsPage")
+            model.showingSettings = true
+        })
         .sheet(isPresented: $model.showingCloneFromGitHub) { CloneFromGitHubView() }
         .sheet(isPresented: $model.showingNewProject) { NewProjectSheet().environment(model) }
         .sheet(item: $model.namingNewSession) { request in NewSessionSheet(request: request).environment(model) }

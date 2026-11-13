@@ -28,7 +28,7 @@ struct SettingsView: View {
 
     /// Settings' pages, listed down the left of the window.
     enum Page: String, CaseIterable, Identifiable {
-        case notifications, pins, models, newChats, behavior, appearance, instructions, secrets, tools, plugins, iPhone, proxy, diagnostics, agents
+        case notifications, pins, models, newChats, behavior, appearance, instructions, secrets, tools, plugins, iPhone, proxy, diagnostics, agents, whatsNew
         var id: String { rawValue }
         var title: String {
             switch self {
@@ -46,6 +46,7 @@ struct SettingsView: View {
             case .proxy: "Proxy"
             case .diagnostics: "Diagnostics"
             case .agents: "Claude Code & Codex"
+            case .whatsNew: "What's New"
             }
         }
         var icon: String {
@@ -64,12 +65,13 @@ struct SettingsView: View {
             case .proxy: "network"
             case .diagnostics: "stethoscope"
             case .agents: "terminal"
+            case .whatsNew: "sparkles"
             }
         }
         /// Grouped in the list: everyday settings, then integrations, then the technical ones.
         static var groups: [(String?, [Page])] {
             let everyday: [Page] = [.notifications, .models, .newChats, .behavior, .appearance, .instructions]
-            return [(nil, everyday), ("Connections", [.secrets, .tools, .plugins, .iPhone]), ("Advanced", [.proxy, .agents, .diagnostics])]
+            return [(nil, everyday), ("Connections", [.secrets, .tools, .plugins, .iPhone]), ("Advanced", [.proxy, .agents, .diagnostics]), (nil, [.whatsNew])]
         }
     }
     @AppStorage("settingsPage") private var pageName = Page.notifications.rawValue
@@ -120,6 +122,7 @@ struct SettingsView: View {
         switch page {
         case .pins: PinsSettingsView()
         case .tools: ToolsSettingsView()
+        case .whatsNew: ChangelogList()
         case .notifications: notificationsPane
         case .models: modelsPane
         case .newChats: newChatsPane
