@@ -263,7 +263,7 @@ struct ChatListView: View {
             .navigationTitle(fixedPage?.title ?? store.connection?.macName ?? "Chatterbox")
             .navigationBarTitleDisplayMode(.inline)
             .refreshable { await store.loadChats() }
-            .searchable(text: $search, placement: .navigationBarDrawer(displayMode: page == .studios ? .always : .automatic), prompt: fixedPage.map { "Search \($0.title)" } ?? "Search sessions")
+            .searchable(text: $search, placement: .navigationBarDrawer(displayMode: .always), prompt: fixedPage.map { "Search \($0.title)" } ?? "Search sessions")
             .sheet(item: $editingStudio) { group in
                 if let id = group.studioID {
                     StudioInstructionsEditor(title: group.title, studio: id, initial: group.instructions ?? "")
@@ -303,7 +303,21 @@ struct ChatListView: View {
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) { FeedbackButton() }
-                ToolbarItem(placement: .topBarTrailing) { newChatMenu }
+                // New Chat beside the title, in the title's own place: on a closed iPhone Duo
+                // every bar button (leading or trailing) runs down the side rail, leaving the
+                // title row empty; this one stays up top, by the page's name.
+                // The name is a control of its own that does nothing: with New Chat the only
+                // control in the item, iOS made the whole item New Chat, name included.
+                ToolbarItem(placement: .principal) {
+                    HStack(spacing: 10) {
+                        Button {} label: {
+                            Text(fixedPage?.title ?? store.connection?.macName ?? "Chatterbox").font(.headline).lineLimit(1)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityRemoveTraits(.isButton).accessibilityAddTraits(.isHeader)
+                        newChatMenu
+                    }
+                }
             }
     }
 
