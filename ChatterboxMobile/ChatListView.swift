@@ -219,8 +219,11 @@ struct ChatListView: View {
             }
             // Made when it comes out, not slid in from off screen: a list laid out off screen
             // (Activity's) came in blank. Its search is kept; its scroll starts at the top.
+            // No SafeAreaToOwnFrame here: measured while sliding in from off screen, it trimmed
+            // the list's insets to that position and pushed its content out of sight. The
+            // shelf is always at the screen's left edge, where the window's insets fit as is.
             if shown {
-                NavigationStack { configuredSidebar.background(SafeAreaToOwnFrame().allowsHitTesting(false)) }
+                NavigationStack { configuredSidebar }
                     .accessibilityIdentifier("session-sidebar-pane")
                     .frame(width: listWidth)
                     .background(Color(uiColor: .systemBackground))
