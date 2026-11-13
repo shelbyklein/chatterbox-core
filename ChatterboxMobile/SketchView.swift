@@ -14,12 +14,14 @@ struct SketchView: View {
     let onDone: (UIImage) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var canvas = PKCanvasView()
+    /// Only the Pencil draws; a finger moves and zooms the page instead. Remembered.
+    @AppStorage("sketchPencilOnly") private var pencilOnly = false
 
     var body: some View {
         NavigationStack {
             GeometryReader { proxy in
                 let size = fittedSize(in: proxy.size)
-                CanvasHost(canvas: canvas, background: request.background)
+                CanvasHost(canvas: canvas, background: request.background, pencilOnly: pencilOnly)
                     .frame(width: size.width, height: size.height)
                     .background(Color.white)
                     .clipShape(RoundedRectangle(cornerRadius: request.background == nil ? 0 : 6))
@@ -33,12 +35,17 @@ struct SketchView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
+                // Undo and Redo are on PencilKit's own palette, so the bar keeps room for Done.
                 ToolbarItemGroup(placement: .primaryAction) {
-                    Button { canvas.undoManager?.undo() } label: { Image(systemName: "arrow.uturn.backward") }
-                        .accessibilityLabel("Undo")
-                    Button { canvas.undoManager?.redo() } label: { Image(systemName: "arrow.uturn.forward") }
-                        .accessibilityLabel("Redo")
+                    Button { pencilOnly.toggle() } label: {
+                        Image(systemName: pencilOnly ? "applepencil.tip" : "hand.draw")
+                    }
+                    .accessibilityLabel(pencilOnly ? "Pencil Only: on" : "Pencil Only: off")
+                    .accessibilityHint(pencilOnly ? "Fingers draw too" : "Only the Pencil draws; a finger moves the page")
+                    .accessibilityIdentifier("sketch-pencil-only")
                     Button("Clear") { canvas.drawing = PKDrawing() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
                         onDone(render())
                         dismiss()
@@ -59,7 +66,8 @@ struct SketchView: View {
 
     /// The drawing over its image at the image's own resolution, or over white at the screen's.
     private func render() -> UIImage {
-        let bounds = canvas.bounds
+        // The whole page at 1×, whatever's zoomed into: the canvas's own frame, from its origin.
+        let bounds = CGRect(origin: .zero, size: canvas.frame.size)
         guard bounds.width > 0 else { return UIImage() }
         let outputSize = request.background?.size ?? bounds.size
         let scale = outputSize.width / bounds.width
@@ -78,33 +86,64 @@ struct SketchView: View {
     }
 }
 
-/// PencilKit's canvas and tool palette, over the image being marked up.
+/// PencilKit's canvas and tool palette, with the image being marked up inside it: pinch to
+/// zoom, two fingers to pan (one finger or the Pencil draws), and the image zooms and pans with
+/// the marks.
 private struct CanvasHost: UIViewRepresentable {
     let canvas: PKCanvasView
     let background: UIImage?
+    var pencilOnly = false
 
-    final class Coordinator {
+    final class Coordinator: NSObject, PKCanvasViewDelegate {
         let toolPicker = PKToolPicker()
+        var imageView: UIImageView?
+
+        /// The image covers the zoomed page: the canvas's content, as it grows and moves.
+        func fit(_ canvas: PKCanvasView) {
+            imageView?.frame = CGRect(origin: .zero, size: canvas.contentSize)
+        }
+        func scrollViewDidZoom(_ scrollView: UIScrollView) { if let c = scrollView as? PKCanvasView { fit(c) } }
+        func scrollViewDidScroll(_ scrollView: UIScrollView) { if let c = scrollView as? PKCanvasView { fit(c) } }
+    }
+
+    /// Keeps the page the canvas's size at 1× when the view's size settles or changes.
+    final class Container: UIView {
+        var canvas: PKCanvasView?
+        var coordinator: Coordinator?
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            guard let canvas else { return }
+            canvas.frame = bounds
+            if canvas.zoomScale == 1 { canvas.contentSize = bounds.size }
+            coordinator?.fit(canvas)
+        }
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeUIView(context: Context) -> UIView {
-        let container = UIView()
-        if let background {
-            let imageView = UIImageView(image: background)
-            imageView.contentMode = .scaleToFill
-            imageView.frame = container.bounds
-            imageView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-            container.addSubview(imageView)
-        }
+        let container = Container()
         canvas.backgroundColor = .clear
         canvas.isOpaque = false
-        // The Pencil draws; a finger draws too, so it works without one (and on iPhone).
-        canvas.drawingPolicy = .anyInput
+        // The Pencil draws; a finger draws too unless Pencil Only is on (then it moves the page).
+        canvas.drawingPolicy = pencilOnly ? .pencilOnly : .anyInput
         canvas.tool = PKInkingTool(.pen, color: .systemRed, width: 6)
-        canvas.frame = container.bounds
-        canvas.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        // Pinch to zoom in close, two fingers to move around.
+        canvas.minimumZoomScale = 1
+        canvas.maximumZoomScale = 6
+        canvas.bouncesZoom = true
+        canvas.showsHorizontalScrollIndicator = false
+        canvas.showsVerticalScrollIndicator = false
+        canvas.delegate = context.coordinator
+        if let background {
+            // Inside the canvas, under the strokes, so it zooms and pans with them.
+            let imageView = UIImageView(image: background)
+            imageView.contentMode = .scaleToFill
+            canvas.insertSubview(imageView, at: 0)
+            context.coordinator.imageView = imageView
+        }
+        container.canvas = canvas
+        container.coordinator = context.coordinator
         container.addSubview(canvas)
 
         let picker = context.coordinator.toolPicker
@@ -114,7 +153,9 @@ private struct CanvasHost: UIViewRepresentable {
         return container
     }
 
-    func updateUIView(_ view: UIView, context: Context) {}
+    func updateUIView(_ view: UIView, context: Context) {
+        canvas.drawingPolicy = pencilOnly ? .pencilOnly : .anyInput
+    }
 }
 
 /// Top bar: screenshot the app, mark it up, then finish the note in the Chatterbox session.
