@@ -85,7 +85,11 @@ struct ChatListView: View {
             if sizeClass == .regular || split != nil {
               // Upright with no fold between two panes (an open Duo in portrait): the list is
               // a shelf over the conversation, which gets the whole width.
-              let shelf = split == nil && geometry.size.height > geometry.size.width
+              // The whole screen's shape, keyboard included: measured by the safe area alone, the
+              // keyboard coming up made an upright screen look wide, the layout switched under
+              // the message box, and the keyboard went away again.
+              let insets = geometry.safeAreaInsets
+              let shelf = split == nil && geometry.size.height + insets.top + insets.bottom > geometry.size.width + insets.leading + insets.trailing
               Group {
                if shelf {
                 listShelf(geometry.size)
@@ -107,7 +111,11 @@ struct ChatListView: View {
                 // or hide the sidebar when the user opens a conversation.
                }
               }
-              .onChange(of: shelf, initial: true) { aboutColumn.listShelf = shelf }
+              .onChange(of: shelf, initial: true) {
+                  aboutColumn.listShelf = shelf
+                  // With no session open the list starts out, so the screen isn't empty.
+                  if shelf, selectedChat == nil { aboutColumn.listShown = true }
+              }
             } else {
                 NavigationSplitView(columnVisibility: $columns, preferredCompactColumn: $compactColumn) {
                     configuredSidebar
@@ -187,11 +195,13 @@ struct ChatListView: View {
 
     /// Upright and wide: the conversation across the whole width, and the session list as a
     /// shelf that slides in from the left over it (the button at the chat's top left, or a
-    /// swipe in from the left edge). It's out while no session is open; picking one, or a tap
-    /// outside it, puts it away. Kept in place when hidden, so its scroll and search stay.
+    /// swipe in from the left edge). Picking a session, a tap outside it or a swipe left there
+    /// puts it away, with or without a session open. Kept in place when hidden, so its scroll
+    /// and search stay.
     private func listShelf(_ size: CGSize) -> some View {
         let listWidth = min(380, max(300, size.width * 0.6))
-        let shown = aboutColumn.listShown || selectedChat == nil
+        let shown = aboutColumn.listShown
+        func close() { withAnimation(.snappy(duration: 0.25)) { aboutColumn.listShown = false } }
         return ZStack(alignment: .leading) {
             conversationAndAbout(width: size.width)
             // A swipe in from the left edge brings the list out.
@@ -200,9 +210,11 @@ struct ChatListView: View {
                     if drag.translation.width > 30 { withAnimation(.snappy(duration: 0.25)) { aboutColumn.listShown = true } }
                 })
                 .accessibilityHidden(true)
-            if shown, selectedChat != nil {
+            if shown {
                 Color.black.opacity(0.35).ignoresSafeArea()
-                    .onTapGesture { withAnimation(.snappy(duration: 0.25)) { aboutColumn.listShown = false } }
+                    .contentShape(Rectangle())
+                    .onTapGesture { close() }
+                    .gesture(DragGesture(minimumDistance: 12).onEnded { if $0.translation.width < -30 { close() } })
                     .transition(.opacity)
                     .accessibilityIdentifier("list-shelf-dismiss")
             }
@@ -893,8 +905,17 @@ struct ChatListView: View {
                     if MobilePushNotifications.shared.readingChat == chat.id { MobilePushNotifications.shared.readingChat = nil }
                 }
         } else {
-            ContentUnavailableView("Choose a Session", systemImage: "bubble.left.and.bubble.right",
-                                   description: Text("Your sessions from \(store.connection?.macName ?? "your Mac") are in the sidebar."))
+            ContentUnavailableView {
+                Label("Choose a Session", systemImage: "bubble.left.and.bubble.right")
+            } description: {
+                Text("Your sessions from \(store.connection?.macName ?? "your Mac") are in the sidebar.")
+            } actions: {
+                // The list is a shelf here, and may be put away.
+                if aboutColumn.listShelf, !aboutColumn.listShown {
+                    Button("Show Sessions") { withAnimation(.snappy(duration: 0.25)) { aboutColumn.listShown = true } }
+                        .accessibilityIdentifier("list-shelf-show")
+                }
+            }
         }
     }
 
