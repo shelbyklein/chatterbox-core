@@ -83,6 +83,13 @@ struct ChatListView: View {
         GeometryReader { geometry in
             let split = verticalDivision(in: geometry.size)
             if sizeClass == .regular || split != nil {
+              // Upright with no fold between two panes (an open Duo in portrait): the list is
+              // a shelf over the conversation, which gets the whole width.
+              let shelf = split == nil && geometry.size.height > geometry.size.width
+              Group {
+               if shelf {
+                listShelf(geometry.size)
+               } else {
                 let listWidth = split?.minX ?? min(380, max(300, geometry.size.width * 0.38))
                 HStack(spacing: 0) {
                     NavigationStack { configuredSidebar.background(SafeAreaToOwnFrame().allowsHitTesting(false)) }
@@ -98,6 +105,9 @@ struct ChatListView: View {
                 }
                 // Unlike NavigationSplitView, these panes never offer a collapse button
                 // or hide the sidebar when the user opens a conversation.
+               }
+              }
+              .onChange(of: shelf, initial: true) { aboutColumn.listShelf = shelf }
             } else {
                 NavigationSplitView(columnVisibility: $columns, preferredCompactColumn: $compactColumn) {
                     configuredSidebar
@@ -173,6 +183,39 @@ struct ChatListView: View {
                 try? await Task.sleep(for: .seconds(4))
             }
         }
+    }
+
+    /// Upright and wide: the conversation across the whole width, and the session list as a
+    /// shelf that slides in from the left over it (the button at the chat's top left, or a
+    /// swipe in from the left edge). It's out while no session is open; picking one, or a tap
+    /// outside it, puts it away. Kept in place when hidden, so its scroll and search stay.
+    private func listShelf(_ size: CGSize) -> some View {
+        let listWidth = min(380, max(300, size.width * 0.6))
+        let shown = aboutColumn.listShown || selectedChat == nil
+        return ZStack(alignment: .leading) {
+            conversationAndAbout(width: size.width)
+            // A swipe in from the left edge brings the list out.
+            Color.clear.frame(width: 18).frame(maxHeight: .infinity).contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 12).onEnded { drag in
+                    if drag.translation.width > 30 { withAnimation(.snappy(duration: 0.25)) { aboutColumn.listShown = true } }
+                })
+                .accessibilityHidden(true)
+            if shown, selectedChat != nil {
+                Color.black.opacity(0.35).ignoresSafeArea()
+                    .onTapGesture { withAnimation(.snappy(duration: 0.25)) { aboutColumn.listShown = false } }
+                    .transition(.opacity)
+                    .accessibilityIdentifier("list-shelf-dismiss")
+            }
+            NavigationStack { configuredSidebar.background(SafeAreaToOwnFrame().allowsHitTesting(false)) }
+                .accessibilityIdentifier("session-sidebar-pane")
+                .frame(width: listWidth)
+                .background(Color(uiColor: .systemBackground))
+                .shadow(color: .black.opacity(shown ? 0.3 : 0), radius: 14)
+                .offset(x: shown ? 0 : -listWidth - 30)
+                .allowsHitTesting(shown)
+                .accessibilityHidden(!shown)
+        }
+        .animation(.snappy(duration: 0.25), value: shown)
     }
 
     /// The open session, with About (or a peek) sliding in on its right: beside it when there's
@@ -964,6 +1007,7 @@ struct ChatListView: View {
     }
 
     private func open(_ chat: Companion.ChatSummary) {
+        if aboutColumn.listShown { withAnimation(.snappy(duration: 0.25)) { aboutColumn.listShown = false } }
         opened = chat
         selection = chat.id
         if history?.id != chat.id {

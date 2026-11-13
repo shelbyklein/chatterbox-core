@@ -38,6 +38,10 @@ final class MobileAboutColumn {
     /// A work thread or sidechat of the open session, shown live in the column in About's place
     /// (the Mac's peek, PeekPanel.swift) until Back.
     var peek: Companion.ChatSummary?
+    /// Wide and upright (an open Duo in portrait): the session list is a shelf that slides in
+    /// over the conversation, which has the whole width. `listShown`: it's out now.
+    var listShelf = false
+    var listShown = false
     /// The newest request, numbered so the same action twice still arrives.
     private(set) var request: (number: Int, action: MobileAboutAction)?
     func send(_ action: MobileAboutAction) { request = ((request?.number ?? 0) + 1, action) }
