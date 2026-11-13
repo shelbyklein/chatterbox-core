@@ -245,12 +245,15 @@ final class MobileStore {
 
     private func refreshAddresses() async {
         addressesChecked = Date()
-        guard var connection, let reply: Companion.Addresses = try? await call("/v1/addresses") else { return }
-        let new = reply.addresses.filter { !connection.hosts.contains($0) }
-        guard !new.isEmpty else { return }
-        connection.hosts += new
-        self.connection = connection
+        guard let connection, let reply: Companion.Addresses = try? await call("/v1/addresses") else { return }
+        let hosts = Self.prunedHosts(connection.hosts, current: reply.addresses)
+        guard hosts != connection.hosts else { return }
+        self.connection?.hosts = hosts
         saveConnection()
+    }
+
+    static func prunedHosts(_ hosts: [String], current: [String]) -> [String] {
+        CompanionRetry.prunedHosts(hosts, current: current, isTailscale: isTailscale)
     }
 
     enum DetailResult {
@@ -705,6 +708,10 @@ final class MobileStore {
     /// Tries each known address until one answers, and remembers the one that did.
     private func raw(_ path: String, method: String = "GET", body: Data? = nil) async throws -> Data {
         guard let connection, let token else { throw MobileError(message: "This device isn't paired.") }
+        // Images and files wait up to a minute for an answer; check an address answers first,
+        // unless it just did.
+        let slow = Self.isSlowRead(path, method: method)
+        let fresh = lastAnswered.flatMap { Date().timeIntervalSince($0.at) < 20 ? $0.host : nil }
         do {
             let result = try await CompanionRetry.load(hosts: connection.hosts, method: method, request: { host, probe in
                 request(host: host, path: probe ? "/v1/addresses" : path,
@@ -715,7 +722,8 @@ final class MobileStore {
                     throw MobileError(message: "This device was removed from Chatterbox on the Mac. Pair it again.")
                 }
                 try checkStatus(data, response)
-            })
+            }, checkFirst: { slow && $0 != fresh })
+            lastAnswered = (result.host, Date())
             if result.host != connection.hosts.first { moveToFront(result.host) }
             if problem != nil { problem = nil }
             return result.data
@@ -732,6 +740,14 @@ final class MobileStore {
         }
     }
 
+    /// The address that last answered, and when: a slow read skips its quick check there.
+    @ObservationIgnored private var lastAnswered: (host: String, at: Date)?
+
+    /// Reads that may take a minute: images, thumbnails, files, an issue's picture.
+    static func isSlowRead(_ path: String, method: String) -> Bool {
+        method == "GET" && (path.contains("/files/") || path.contains("/thumbnail/") || path.hasPrefix("/v1/issues/attachment"))
+    }
+
     private func request(host: String, path: String, method: String, body: Data?, token: String?) -> URLRequest {
         let address = host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host
         var request = URLRequest(url: URL(string: "http://\(address):\(Self.port)\(path)")!)
@@ -742,7 +758,9 @@ final class MobileStore {
         request.httpBody = body
         // Images take longer to send than a message.
         // So do files coming back, such as an original image over a slow connection.
-        request.timeoutInterval = path.hasSuffix("/restart") || path.contains("/files/") ? 60 : (body?.count ?? 0) > 200_000 ? 60 : 6
+        // The quick check that an address answers at all: a dead one fails in seconds.
+        request.timeoutInterval = path == "/v1/addresses" ? 4
+            : path.hasSuffix("/restart") || path.contains("/files/") ? 60 : (body?.count ?? 0) > 200_000 ? 60 : 6
         if let token { request.setValue(token, forHTTPHeaderField: Companion.tokenHeader) }
         if body != nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
         return request

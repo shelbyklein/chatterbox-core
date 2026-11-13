@@ -1112,6 +1112,8 @@ private struct NestedChatRow: View {
 struct ChatCard: View {
     @Environment(MobileStore.self) private var store
     @State private var thumbnail: UIImage?
+    @State private var thumbnailShown: String?
+    private var thumbnailKey: String { "\(showsThumbnail)|\(chat.thumbnail?.id.uuidString ?? "")|\(chat.thumbnail?.revision ?? "")" }
     let chat: Companion.ChatSummary
     var showsThumbnail = false
     var selected = false
@@ -1180,9 +1182,16 @@ struct ChatCard: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("chat-\(chat.id.uuidString)")
-        .task(id: "\(showsThumbnail)|\(chat.thumbnail?.id.uuidString ?? "")|\(chat.thumbnail?.revision ?? "")") {
+        // Restarts on another address too, as a chat's images do (RemoteImage); a picture
+        // already showing stays.
+        .task(id: "\(thumbnailKey)|\(store.connection?.hosts.first ?? "")") {
+            let key = thumbnailKey
+            if thumbnail != nil, thumbnailShown == key { return }
             thumbnail = nil
-            if showsThumbnail, let file = chat.thumbnail { thumbnail = try? await store.thumbnail(file, in: chat.id) }
+            if showsThumbnail, let file = chat.thumbnail {
+                thumbnail = try? await store.thumbnail(file, in: chat.id)
+                thumbnailShown = thumbnail == nil ? nil : key
+            }
         }
     }
     /// The sidequests this chat started, in one line; open the chat to open one.

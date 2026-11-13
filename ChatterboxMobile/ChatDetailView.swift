@@ -1191,6 +1191,9 @@ private struct RemoteImage: View {
         let key: String
         let visible: Bool
         let retry: Int
+        /// The address the phone uses now: when another request finds a better one (the
+        /// home address is dead away from home), a load still waiting on the old one restarts.
+        let host: String?
     }
     /// 320 points wide on a 3x screen, with room to zoom a little.
     static let displayPixels = 1200
@@ -1248,7 +1251,7 @@ private struct RemoteImage: View {
         // The viewer opens on the shown copy and sharpens to the original when it arrives.
         .onChange(of: viewing) { _, open in if open { Task { _ = await full() } } }
         .modifier(ImageVisibility(report: { visible = $0 }))
-        .task(id: LoadRequest(key: imageKey, visible: visible && scenePhase == .active, retry: retry)) {
+        .task(id: LoadRequest(key: imageKey, visible: visible && scenePhase == .active, retry: retry, host: store.connection?.hosts.first)) {
             await load()
         }
     }
