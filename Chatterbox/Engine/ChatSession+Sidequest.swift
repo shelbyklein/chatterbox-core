@@ -184,3 +184,48 @@ extension ConversationRecord {
         return true
     }
 }
+
+/// Messages between sessions (`tell`, RuntimeServer "tell"): one session's agent hands
+/// another information. The receiving agent hears it as a <session_message> and picks it up.
+extension ChatSession {
+    static let tellLimitPerTurn = 3
+    /// How far a message may travel: 1 a message, 2 its reply. A reply can't be answered.
+    static let tellMaxHops = 2
+
+    /// The user row that started the current turn (one still queued behind it hasn't yet).
+    private var turnStart: DisplayItem? { record.items.last { $0.kind == .user && $0.queued != true } }
+
+    /// The hops of the message that started this session's current turn: 0 when the user (or
+    /// anything other than a session message) started it.
+    var turnMessageHops: Int {
+        guard let row = turnStart, row.automatic == true,
+              row.text.hasPrefix("<session_message "),
+              let range = row.text.range(of: #"hops="(\d+)""#, options: .regularExpression),
+              let hops = Int(row.text[range].filter(\.isNumber)) else { return 0 }
+        return hops
+    }
+
+    /// Hands `text` to `target`. Throws a readable reason when it can't: the same session,
+    /// archived, empty, too long, a reply to a reply, or too many this turn.
+    func tell(_ target: ChatSession, _ text: String) throws {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard target.id != id else { throw RuntimeFailure("That's this session.") }
+        guard target.record.archivedAt == nil else { throw RuntimeFailure("\u{201C}\(target.title)\u{201D} is archived.") }
+        guard !text.isEmpty else { throw RuntimeFailure("The message is empty.") }
+        guard text.count <= 20_000 else { throw RuntimeFailure("The message is too long (20,000 characters at most); put the rest in a file and name its path.") }
+        let hops = turnMessageHops + 1
+        guard hops <= Self.tellMaxHops else {
+            throw RuntimeFailure("This turn started from a reply another session sent; it can't be answered with another message. Tell the user instead.")
+        }
+        let turn = turnStart?.id
+        if tellsThisTurn.turn != turn { tellsThisTurn = (turn, 0) }
+        guard tellsThisTurn.count < Self.tellLimitPerTurn else {
+            throw RuntimeFailure("That's \(Self.tellLimitPerTurn) messages to other sessions this turn, the most one turn may send.")
+        }
+        tellsThisTurn.count += 1
+        target.sendAutomatic(.init(text: Prompts.sessionMessage(from: title, id: id, hops: hops, text: text),
+                                   automatic: true, detail: "From \u{201C}\(title)\u{201D}"))
+        target.onChange?(target)
+    }
+}
+

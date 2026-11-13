@@ -26,6 +26,9 @@ final class ChatSession: Identifiable {
     @ObservationIgnored private var lastPlace: ConversationRecord.Place
     /// Set by AppModel: called when the record's place changes.
     @ObservationIgnored var placeChanged: (() -> Void)?
+    /// Messages this session's current turn sent to other sessions (`tell`), by the user row
+    /// that started the turn: a turn may send a few, not a stream.
+    @ObservationIgnored var tellsThisTurn: (turn: UUID?, count: Int) = (nil, 0)
     var isRunning = false {
         didSet {
             guard isRunning != oldValue else { return }
