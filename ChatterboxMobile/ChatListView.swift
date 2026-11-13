@@ -263,7 +263,8 @@ struct ChatListView: View {
             .navigationTitle(fixedPage?.title ?? store.connection?.macName ?? "Chatterbox")
             .navigationBarTitleDisplayMode(.inline)
             .refreshable { await store.loadChats() }
-            .searchable(text: $search, placement: .navigationBarDrawer(displayMode: .always), prompt: fixedPage.map { "Search \($0.title)" } ?? "Search sessions")
+            // Wide, the sidebar's own search spans the column; the bar's drawer stopped short of it.
+            .searchable(text: $search, placement: sizeClass == .regular ? .sidebar : .navigationBarDrawer(displayMode: .always), prompt: fixedPage.map { "Search \($0.title)" } ?? "Search sessions")
             .sheet(item: $editingStudio) { group in
                 if let id = group.studioID {
                     StudioInstructionsEditor(title: group.title, studio: id, initial: group.instructions ?? "")
@@ -339,7 +340,8 @@ struct ChatListView: View {
         } else if showsCards {
             chatCards
         } else if sizeClass == .regular {
-            chatList.listStyle(.sidebar)
+            // Each family is a section of its own: compact spacing keeps them close.
+            chatList.listStyle(.sidebar).listSectionSpacing(.compact)
         } else {
             // As the card view: each family a 14 pt rounded block, 16 pt from the edges and 10 pt
             // apart. A plain list with the blocks drawn per row (rowShape), since a grouped
@@ -1026,7 +1028,7 @@ struct ChatRow: View {
                                 .lineLimit(2)
                         }
                         if let status { Text(status).font(.caption).foregroundStyle(.secondary) }
-                        if let activity { Label(activity, systemImage: "flame").font(.caption2).foregroundStyle(.orange) }
+                        if let activity { ActivityLine(text: activity) }
                     }
                     Spacer(minLength: 0)
                     if chat.isWaitingOnYou {
@@ -1169,7 +1171,7 @@ struct ChatCard: View {
                         .accessibilityLabel("Latest image in " + chat.title)
                 }
                 Spacer(minLength: 0)
-                if let activity { Label(activity, systemImage: "flame").font(.caption2).foregroundStyle(.orange) }
+                if let activity { ActivityLine(text: activity) }
             }
             .padding(12)
             .frame(maxWidth: .infinity, minHeight: embedded ? nil : 104, alignment: .topLeading)
@@ -1496,5 +1498,20 @@ struct MobileSettingsSheet: View {
                 Button("Cancel", role: .cancel) {}
             }
         }
+    }
+}
+
+/// "12 turns today", with the flame right beside it (a Label in a sidebar list puts the icon in
+/// a wide column of its own).
+struct ActivityLine: View {
+    let text: String
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "flame")
+            Text(text)
+        }
+        .font(.caption2)
+        .foregroundStyle(.orange)
+        .accessibilityElement(children: .combine)
     }
 }

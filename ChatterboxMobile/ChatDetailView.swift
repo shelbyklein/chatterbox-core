@@ -435,27 +435,35 @@ struct ChatDetailView: View {
         }
     }
 
+    private var chatTitle: some View {
+            // Tap the title for About this thread: its status and model, where it works,
+            // its task and work threads, what it made, its notes and tools.
+            Button { toggleAbout() } label: {
+                VStack(spacing: 0) {
+                    Text(summary.project ?? summary.title).font(.headline).lineLimit(1).foregroundStyle(.primary)
+                    HStack(spacing: 4) {
+                        // The model and effort, as the Mac's chip says them; its agent's color marks whose.
+                        if let line = ChatSettingsLabels.chip(detail?.options) ?? detail?.settings { Text(line).lineLimit(1) }
+                        Image(systemName: aboutShown ? "chevron.up" : "chevron.down").font(.system(size: 8, weight: .bold))
+                        MobileWorkingPill(count: workingCount)
+                    }
+                    .font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(summary.project ?? summary.title), About this session")
+            .accessibilityHint(workingCount > 0 ? "\(workingCount) work threads working" : "")
+            .accessibilityIdentifier("chat-title")
+    }
+
     @ToolbarContentBuilder
     private var chatToolbar: some ToolbarContent {
-            ToolbarItem(placement: .principal) {
-                // Tap the title for About this thread: its status and model, where it works,
-                // its task and work threads, what it made, its notes and tools.
-                Button { toggleAbout() } label: {
-                    VStack(spacing: 0) {
-                        Text(summary.project ?? summary.title).font(.headline).lineLimit(1).foregroundStyle(.primary)
-                        HStack(spacing: 4) {
-                            // The model and effort, as the Mac's chip says them; its agent's color marks whose.
-                            if let line = ChatSettingsLabels.chip(detail?.options) ?? detail?.settings { Text(line).lineLimit(1) }
-                            Image(systemName: aboutShown ? "chevron.up" : "chevron.down").font(.system(size: 8, weight: .bold))
-                            MobileWorkingPill(count: workingCount)
-                        }
-                        .font(.caption2).foregroundStyle(.secondary)
-                    }
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("\(summary.project ?? summary.title), About this session")
-                .accessibilityHint(workingCount > 0 ? "\(workingCount) work threads working" : "")
-                .accessibilityIdentifier("chat-title")
+            // The title on no glass of its own: in an open Duo's portrait split, text on the
+            // bar's glass came out blank (the button was there and tappable, with no text).
+            if #available(iOS 26, *) {
+                ToolbarItem(placement: .principal) { chatTitle }.sharedBackgroundVisibility(.hidden)
+            } else {
+                ToolbarItem(placement: .principal) { chatTitle }
             }
             // Narrow (a closed Duo's rail): Session Settings, its ⋯ actions, Feedback. Wide there's
             // nothing here: iOS folded these into a floating pill over the chat, and each is
