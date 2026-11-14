@@ -22,6 +22,7 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-14", changes: [
+            "Tapping Download on a phone image keeps the request running through visibility or address changes, and resumes it when you return to the app.",
             "Images on the phone have Download and Restart Download buttons, with a progress bar, percent and data transferred while they load.",
             "Projects on the phone show a solid rounded square with a star.",
             "A Studio's header on the phone has a New Session button for that Studio; its instructions moved to the ⋯ menu.",

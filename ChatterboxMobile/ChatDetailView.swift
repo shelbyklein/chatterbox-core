@@ -1234,6 +1234,19 @@ private struct ImageVisibility: ViewModifier {
     let report: (Bool) -> Void
 
     func body(content: Content) -> some View {
+        #if DEBUG
+        // Reproduce a missed viewport callback while exercising the real Download button.
+        if ProcessInfo.processInfo.environment["CHATTERBOX_TEST_IMAGE_VISIBILITY"] == "missing" {
+            content
+        } else {
+            tracked(content)
+        }
+        #else
+        tracked(content)
+        #endif
+    }
+
+    @ViewBuilder private func tracked(_ content: Content) -> some View {
         if #available(iOS 18, *) {
             // Lazy rows may exist before they enter the viewport. Start at the first sliver.
             content.onScrollVisibilityChange(threshold: 0.01, report)
@@ -1264,13 +1277,13 @@ private struct RemoteImage: View {
     @State private var received: Int64 = 0
     @State private var expected: Int64 = 0
     @State private var activeLoad: UUID?
-    /// Download was tapped: load now, whether or not the row was seen coming into view.
+    /// A tapped download remains requested until it finishes or this row goes away.
+    /// Viewport/address callbacks and a foreground return may replace the task meanwhile.
     @State private var requested = false
     @State private var loadedKey: String?
     private struct LoadRequest: Hashable {
         let key: String
-        let visible: Bool
-        let active: Bool
+        let eligible: Bool
         let retry: Int
         /// The address the phone uses now: when another request finds a better one (the
         /// home address is dead away from home), a load still waiting on the old one restarts.
@@ -1355,9 +1368,17 @@ private struct RemoteImage: View {
         // The viewer opens on the shown copy and sharpens to the original when it arrives.
         .onChange(of: viewing) { _, open in if open { Task { _ = await full() } } }
         .modifier(ImageVisibility(report: { visible = $0 }))
-        .task(id: LoadRequest(key: imageKey, visible: visible, active: scenePhase == .active, retry: retry, host: store.connection?.hosts.first)) {
+        .task(id: LoadRequest(key: imageKey, eligible: shouldLoad, retry: retry, host: store.connection?.hosts.first)) {
             await load()
         }
+        .onDisappear { requested = false }
+    }
+
+    /// Automatic work follows viewport visibility. A deliberate tap must not be cancelled
+    /// by that same unreliable callback; keep it through foreground transitions, but never
+    /// download in the background. A tap during an inactive foreground transition is valid.
+    private var shouldLoad: Bool {
+        scenePhase != .background && (requested || (visible && scenePhase == .active))
     }
 
     private var imageKey: String {
@@ -1383,16 +1404,16 @@ private struct RemoteImage: View {
             failed = false
             loadedKey = imageKey
         }
-        guard visible || requested, scenePhase == .active else { return }
-        requested = false
-        guard image == nil else { return }
+        guard shouldLoad else { return }
+        guard image == nil else { requested = false; return }
         failed = false
         loading = true; received = 0; expected = 0
         defer {
             if activeLoad == loadID { loading = false; activeLoad = nil }
         }
         // One attempt on entering view, then two short retries for transient failures.
-        // The view task cancels both the request and the backoff on leaving/backgrounding.
+        // The view task cancels on leaving/backgrounding. Automatic requests also stop
+        // offscreen; a deliberate Download stays requested through visibility changes.
         for delay in [0.0, 0.75, 2.0] {
             do {
                 try await Task.sleep(for: .seconds(delay))
@@ -1401,13 +1422,14 @@ private struct RemoteImage: View {
                     received = got; expected = total
                 }
                 try Task.checkCancellation()
-                if let fetched { image = fetched; return }
+                if let fetched { image = fetched; requested = false; return }
             } catch {
                 // Lazy-row cancellation is ordinary scrolling, not a broken image.
                 if Task.isCancelled { return }
             }
         }
         failed = true
+        requested = false
     }
 }
 
