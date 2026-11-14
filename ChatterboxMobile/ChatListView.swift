@@ -73,6 +73,9 @@ struct ChatListView: View {
     @State private var promoting: ChatPromotionTarget?
     @State private var newTitle = ""
     @State private var managementError: String?
+    @State private var showingArchived = false
+    /// The archived session picked in Archived, opened once its sheet closes.
+    @State private var archivedPick: Companion.ChatSummary?
     /// Wide (an iPad, an open iPhone Duo): About this thread is a column on the right, beside the
     /// conversation, opened from the About button on the session's bar (or its title).
     @State private var aboutColumn = MobileAboutColumn()
@@ -134,6 +137,9 @@ struct ChatListView: View {
             MobileNewChatSheet(studios: newChatStudios, start: { open($0.summary) }, studio: newChatStudio).environment(store)
         }
         .sheet(isPresented: $showingSettings) { MobileSettingsSheet().environment(store) }
+        .sheet(isPresented: $showingArchived, onDismiss: {
+            if let chat = archivedPick { archivedPick = nil; open(chat) }
+        }) { MobileArchivedSheet { archivedPick = $0 }.environment(store) }
         .task(id: "\(MobilePushNotifications.shared.pendingChat?.uuidString ?? "")|\(scenePhase)|\(fixedPage?.rawValue ?? "")|\(isSelected)") {
             guard let id = MobilePushNotifications.shared.pendingChat, fixedPage == nil || isSelected else { return }
             await store.loadChats()
@@ -874,6 +880,7 @@ struct ChatListView: View {
     private var connectionItems: some View {
         if let connection = store.connection { Text("Connected to \(connection.macName)") }
         Button { showingAutomations = true } label: { Label("Automations", systemImage: "clock.arrow.circlepath") }
+        Button { showingArchived = true } label: { Label("Archived", systemImage: "archivebox") }
         Button { showingSettings = true } label: { Label("Settings", systemImage: "gearshape") }
     }
 
@@ -1590,3 +1597,53 @@ struct ActivityLine: View {
         .accessibilityElement(children: .combine)
     }
 }
+
+/// Archived sessions, newest first, searchable: tap one to open it (its menu has Unarchive),
+/// or swipe to unarchive it here.
+struct MobileArchivedSheet: View {
+    let pick: (Companion.ChatSummary) -> Void
+    @Environment(MobileStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
+    @State private var search = ""
+    @State private var chats: [Companion.ChatSummary]?
+    @State private var problem: String?
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if let problem {
+                    Text(problem).font(.callout).foregroundStyle(.secondary)
+                } else if let chats, chats.isEmpty {
+                    Text(search.isEmpty ? "No archived sessions." : "No archived sessions match.").foregroundStyle(.secondary)
+                }
+                ForEach(chats ?? []) { chat in
+                    ChatRow(chat: chat) { pick(chat); dismiss() }
+                        .swipeActions(edge: .trailing) {
+                            Button { unarchive(chat) } label: { Label("Unarchive", systemImage: "tray.and.arrow.up") }.tint(.blue)
+                        }
+                }
+            }
+            .overlay { if chats == nil, problem == nil { ProgressView() } }
+            .searchable(text: $search, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search archived")
+            .navigationTitle("Archived")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .task(id: search) {
+                if !search.isEmpty { try? await Task.sleep(for: .milliseconds(300)) }
+                guard !Task.isCancelled else { return }
+                do { chats = try await store.archivedChats(matching: search); problem = nil }
+                catch { if !Task.isCancelled { problem = "Couldn't load archived sessions: \(error.localizedDescription)" } }
+            }
+        }
+        .accessibilityIdentifier("archived-sheet")
+    }
+
+    private func unarchive(_ chat: Companion.ChatSummary) {
+        Task {
+            _ = try? await store.setArchived(false, chat: chat.id)
+            chats?.removeAll { $0.id == chat.id }
+            await store.loadChats()
+        }
+    }
+}
+

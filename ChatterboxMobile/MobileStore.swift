@@ -396,6 +396,12 @@ final class MobileStore {
         return try await call("/v1/project-folders" + (query.percentEncodedQuery.map { "?" + $0 } ?? ""))
     }
 
+    /// Archived sessions, newest first, with `query`'s words in the title, project or latest line.
+    func archivedChats(matching query: String) async throws -> [Companion.ChatSummary] {
+        let q = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed.subtracting(CharacterSet(charactersIn: "&=+"))) ?? ""
+        return try await call("/v1/archived?q=" + q)
+    }
+
     func setArchived(_ archived: Bool, chat: UUID) async throws -> Companion.ChatDetail {
         try await call("/v1/chats/\(chat.uuidString)/\(archived ? "archive" : "unarchive")", method: "POST", body: Data("{}".utf8))
     }

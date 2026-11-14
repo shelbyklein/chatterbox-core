@@ -22,6 +22,7 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-13", changes: [
+            "Archived sessions on the phone: ⋯ → Archived lists them, newest first, with search; tap one to open it, or swipe to unarchive.",
             "An image still loading on the phone after a few seconds says so; tap it to start it over.",
             "Mark Up on the phone has a Comment mode: tap a spot to pin a numbered note. The picture goes with its pins, and the notes go in your message.",
             "What's New: this list, in Settings on the Mac and the phone, with a note after each update.",

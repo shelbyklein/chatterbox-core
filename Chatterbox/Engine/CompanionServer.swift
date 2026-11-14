@@ -325,6 +325,9 @@ final class CompanionServer {
         switch (request.method, parts.count) {
         case ("GET", 2) where parts[1] == "chats":
             return .json(CompanionMapper.chatList(model))
+        case ("GET", 2) where parts[1] == "archived":
+            // The phone's Archived list: newest archived first, with ?q= words to search by.
+            return .json(CompanionMapper.archived(model, query: request.query["q"] ?? ""))
         case ("GET", 3) where parts[1] == "chats":
             guard let session = session(parts[2]) else { return .error(404, "That session is gone.") }
             let since = request.query["since"].flatMap(Int.init)
@@ -934,6 +937,24 @@ final class CompanionServer {
 @MainActor
 enum CompanionMapper {
     private static var lastCodexModelsTry = Date.distantPast
+
+    /// Archived sessions, newest archived first; `query`'s words all in the title, project or
+    /// latest line. Sidequests and automation runs (archived as they report back) stay out.
+    static func archived(_ model: AppModel, query: String) -> [Companion.ChatSummary] {
+        let words = query.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
+        let archived = model.sessions
+            .filter { $0.record.archivedAt != nil && !$0.isSidequest && $0.record.automationID == nil }
+            .sorted { ($0.record.archivedAt ?? .distantPast) > ($1.record.archivedAt ?? .distantPast) }
+        var found: [Companion.ChatSummary] = []
+        for session in archived {
+            let summary = summary(session, revision: model.companionRevision(of: session.id))
+            let text = [summary.title, summary.project ?? "", summary.subtitle ?? ""].joined(separator: " ").lowercased()
+            guard words.allSatisfy(text.contains) else { continue }
+            found.append(summary)
+            if found.count >= 150 { break }
+        }
+        return found
+    }
 
     static func chatList(_ model: AppModel) -> Companion.ChatList {
         var groups: [Companion.ChatGroup] = []
