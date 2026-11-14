@@ -314,7 +314,7 @@ struct MobileAboutPanel: View {
         if placeName != nil || detail?.folder != nil || detail?.branch != nil {
             card(.place, "Where") {
                 if let placeName {
-                    row(icon: detail?.studio != nil ? "paintpalette" : "apps.iphone") { Text(placeName) }
+                    row(icon: detail?.studio != nil ? "paintpalette" : "star.square.fill") { Text(placeName) }
                 }
                 if let folder = detail?.folder {
                     row(icon: "folder") {

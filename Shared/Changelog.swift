@@ -21,6 +21,10 @@ enum Changelog {
     }
 
     static let days: [Day] = [
+        Day(id: "2026-11-14", changes: [
+            "Projects on the phone show a solid rounded square with a star.",
+            "A Studio's header on the phone has a New Session button for that Studio; its instructions moved to the ⋯ menu.",
+        ]),
         Day(id: "2026-11-13", changes: [
             "New Chat from inside a Studio on the phone starts the session in that Studio.",
             "A finished sidequest no longer archives itself: its answer still goes back, and it asks \"Archive this sidequest?\" with Archive and Keep Open.",

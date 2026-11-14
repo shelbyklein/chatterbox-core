@@ -13,7 +13,7 @@ struct ChatListView: View {
             switch self {
             case .all: "tray.full"
             case .activity: "waveform.path"
-            case .projects: "apps.iphone"
+            case .projects: "star.square.fill"
             case .studios: "paintpalette"
             case .chats: "bubble.left.and.bubble.right"
             }
@@ -340,6 +340,10 @@ struct ChatListView: View {
                     ToolbarItem(placement: .topBarTrailing) {
                         Menu {
                             connectionItems
+                            // The open Studio's instructions (its header has New Session instead).
+                            if search.isEmpty, let group = visibleStudios.first, group.studioID != nil {
+                                Button { editingStudio = group } label: { Label("Studio Instructions\u{2026}", systemImage: "text.book.closed") }
+                            }
                             Picker("Sort", selection: $sortName) {
                                 ForEach(Sort.allCases.filter { $0 != .tag }) { Text($0.title).tag($0.rawValue) }
                             }
@@ -773,9 +777,13 @@ struct ChatListView: View {
                                     Text("\(group.chats.count) session\(group.chats.count == 1 ? "" : "s")").font(.caption).foregroundStyle(.secondary)
                                 }
                                 Spacer()
-                                if group.studioID != nil {
-                                    Button { editingStudio = group } label: { Image(systemName: "text.book.closed").frame(width: 44, height: 44) }
-                                        .accessibilityLabel("\(group.title) instructions")
+                                // A new session in this Studio (its instructions are under ⋯).
+                                if let studio = group.studioID {
+                                    Button { newChatStudio = studio; startingNewChat = true } label: {
+                                        Image(systemName: "square.and.pencil").font(.title3).frame(width: 44, height: 44)
+                                    }
+                                    .accessibilityLabel("New session in \(group.title)")
+                                    .accessibilityIdentifier("studio-new-session")
                                 }
                             }
                             if search.isEmpty, let pins = group.pins, !pins.isEmpty { MobilePinPills(pins: pins) }
@@ -812,7 +820,7 @@ struct ChatListView: View {
 
     private func header(_ group: Companion.ChatGroup) -> some View {
         HStack {
-            Label(group.title, systemImage: group.id.contains("-tag-") ? "tag" : group.kind == .studio ? "paintpalette" : group.kind == .projects ? "apps.iphone" : "bubble.left.and.bubble.right")
+            Label(group.title, systemImage: group.id.contains("-tag-") ? "tag" : group.kind == .studio ? "paintpalette" : group.kind == .projects ? "star.square.fill" : "bubble.left.and.bubble.right")
             Spacer()
             if group.kind == .studio, group.studioID != nil {
                 Button { editingStudio = group } label: { Image(systemName: "text.book.closed") }
@@ -861,7 +869,7 @@ struct ChatListView: View {
                     } header: {
                         if family.first, showsHeader(group) {
                             HStack {
-                                Label(group.title, systemImage: group.kind == .studio ? "paintpalette" : group.kind == .projects ? "apps.iphone" : "bubble.left.and.bubble.right")
+                                Label(group.title, systemImage: group.kind == .studio ? "paintpalette" : group.kind == .projects ? "star.square.fill" : "bubble.left.and.bubble.right")
                                 Spacer()
                                 if group.kind == .studio {
                                     Button { editingStudio = group } label: { Image(systemName: "text.book.closed") }

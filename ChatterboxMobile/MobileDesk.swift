@@ -783,7 +783,7 @@ enum MobileDeskPlaces {
     static func icon(_ place: Companion.DeskPlace?) -> String {
         switch place?.kind {
         case "studio": "paintpalette"
-        case "project": "apps.iphone"
+        case "project": "star.square.fill"
         case "loose": "bubble.left"
         case nil: "questionmark.circle"
         default: "tray"
