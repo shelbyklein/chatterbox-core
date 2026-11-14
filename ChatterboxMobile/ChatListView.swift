@@ -934,7 +934,13 @@ struct ChatListView: View {
     /// Opens New Chat, where the agent, model, effort and permissions are picked first.
     /// On the Studios page it starts in the first Studio.
     private var newChatMenu: some View {
-        Button { newChatStudio = page == .studios ? newChatStudios.first?.id : nil; startingNewChat = true } label: {
+        Button {
+            // From inside a Studio, the new session starts there; from the Studios index, in
+            // the first one (it can be changed in the sheet).
+            let open = newChatStudios.first { "studio-" + $0.id.uuidString == selectedStudioID }
+            newChatStudio = page == .studios ? (open ?? newChatStudios.first)?.id : nil
+            startingNewChat = true
+        } label: {
             Image(systemName: "square.and.pencil")
         }
         .accessibilityLabel("New Chat")

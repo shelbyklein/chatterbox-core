@@ -159,6 +159,7 @@ struct ChatView: View {
                         }
                     }
                 }
+            if session.isSidequest { SidequestArchiveRequest(session: session) }
             if tileContext == nil { PlaceSuggestionCard(session: session).padding(.horizontal, 20) }
             ThreadRestartStatus(session: session).padding(.horizontal, 20)
             if let stopStatus { Text(stopStatus).font(.caption).foregroundStyle(.secondary).padding(.horizontal, 20) }

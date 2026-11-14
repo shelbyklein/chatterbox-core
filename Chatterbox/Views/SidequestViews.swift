@@ -167,6 +167,40 @@ struct SidequestBanner: View {
     }
 }
 
+/// Under a finished sidequest's transcript: its answer went back, so it asks to be archived.
+/// Archive ends it (back to the session it came from); Keep Open leaves it for more work.
+struct SidequestArchiveRequest: View {
+    let session: ChatSession
+    @Environment(AppModel.self) private var model
+    @State private var kept = false
+
+    var body: some View {
+        let parent = session.record.sidequestOf.flatMap { id in model.sessions.first { $0.id == id } }
+        if !kept, SidequestArchiveAsk.asks(isSidequest: session.isSidequest, returned: session.record.sidequestReturned != nil,
+                                           running: session.isRunning, archived: session.record.archivedAt != nil, id: session.id) {
+            HStack(spacing: 10) {
+                Image(systemName: "checkmark.circle").foregroundStyle(.green)
+                Text("Done: the answer went back to \u{201C}\(parent?.title ?? "its session")\u{201D}. Archive this sidequest?")
+                    .lineLimit(2)
+                Spacer(minLength: 8)
+                Button("Keep Open") { SidequestArchiveAsk.keep(session.id); kept = true }
+                Button("Archive") {
+                    if let parent { model.selectedID = parent.id }
+                    model.archive(session)
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+            }
+            .font(.callout)
+            .padding(.horizontal, 14).padding(.vertical, 10)
+            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.primary.opacity(0.1)))
+            .padding(.horizontal, 20).padding(.bottom, 8)
+            .accessibilityIdentifier("sidequest-archive-request")
+        }
+    }
+}
+
 /// Lets transcript rows open another chat (a sidequest, or where one came from).
 struct OpenChatAction {
     var open: (UUID) -> Void = { _ in }

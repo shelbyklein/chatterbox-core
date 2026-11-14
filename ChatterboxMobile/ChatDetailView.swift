@@ -68,6 +68,8 @@ struct ChatDetailView: View {
     /// The Next Steps set you opened; a new set arrives folded to one line.
     @State private var expandedSteps: [String]?
     @State private var confirmingRestart = false
+    /// Keep Open on this sidequest's archive request.
+    @State private var sidequestKept = false
     @State private var promoting: ChatPromotionTarget?
     @State private var controllingSession = false
     @State private var sessionControlStatus: String?
@@ -892,6 +894,28 @@ struct ChatDetailView: View {
                 ChatStatusBar(detail: detail).padding(.horizontal, 4)
             }
             MobilePlaceSuggestion(summary: summary, firstMessage: detail?.items.first { $0.kind == .user }?.text) { history.apply($0) }
+            // A finished sidequest asks to be archived (its answer already went back).
+            if !sidequestKept, SidequestArchiveAsk.asks(isSidequest: summary.isSidequest, returned: summary.sidequestReturned == true,
+                                                        running: summary.isRunning, archived: detail?.isArchived == true, id: chat.id) {
+                let parent = summary.sidequestOf.flatMap { id in store.chatList?.groups.flatMap(\.chats).first { $0.id == id } }
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Done: the answer went back to \u{201C}\(parent?.title ?? "its session")\u{201D}. Archive this sidequest?", systemImage: "checkmark.circle")
+                        .font(.callout)
+                    HStack {
+                        Button("Archive") {
+                            perform { try await store.setArchived(true, chat: chat.id) }
+                            if let parent { open(parent) }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        Button("Keep Open") { SidequestArchiveAsk.keep(chat.id); sidequestKept = true }
+                            .buttonStyle(.bordered)
+                    }
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 12).fill(Color(uiColor: .secondarySystemBackground)))
+                .accessibilityIdentifier("sidequest-archive-request")
+            }
             if !pendingImages.isEmpty { pendingTray }
             if let steps = detail?.nextSteps, !steps.isEmpty, !summary.isRunning, dismissedSteps != steps { nextStepsChips(steps) }
             if draft.hasPrefix("!") {

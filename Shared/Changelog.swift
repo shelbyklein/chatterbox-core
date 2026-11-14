@@ -22,6 +22,8 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-13", changes: [
+            "New Chat from inside a Studio on the phone starts the session in that Studio.",
+            "A finished sidequest no longer archives itself: its answer still goes back, and it asks \"Archive this sidequest?\" with Archive and Keep Open.",
             "Archived sessions on the phone: ⋯ → Archived lists them, newest first, with search; tap one to open it, or swipe to unarchive.",
             "An image still loading on the phone after a few seconds says so; tap it to start it over.",
             "Mark Up on the phone has a Comment mode: tap a spot to pin a numbered note. The picture goes with its pins, and the notes go in your message.",
