@@ -447,13 +447,14 @@ final class MobileStore {
     /// An image in a chat: at most `maxPixels` on its longer side for showing in the chat
     /// (the Mac sends it resized), or the original (nil) to view, mark up or copy. Kept on
     /// this phone, so it isn't fetched again.
-    func image(_ file: Companion.File, in chat: UUID, maxPixels: Int? = nil) async throws -> UIImage? {
+    func image(_ file: Companion.File, in chat: UUID, maxPixels: Int? = nil,
+               progress: (@MainActor @Sendable (_ received: Int64, _ expected: Int64) -> Void)? = nil) async throws -> UIImage? {
         let key = MobileImageCache.key(chat: chat, file: file, size: maxPixels.map(String.init) ?? "full")
         if let image = MobileImageCache.shared.image(key) { return image }
         // The original, if it's already here, serves any smaller size too.
         if maxPixels != nil, let original = MobileImageCache.shared.image(MobileImageCache.key(chat: chat, file: file, size: "full")) { return original }
         let query = maxPixels.map { "?max=\($0)" } ?? ""
-        let data = try await raw("/v1/chats/\(chat.uuidString)/files/\(file.id.uuidString)" + query)
+        let data = try await raw("/v1/chats/\(chat.uuidString)/files/\(file.id.uuidString)" + query, progress: progress)
         return MobileImageCache.shared.store(data, as: key)
     }
 
@@ -713,7 +714,8 @@ final class MobileStore {
     }
 
     /// Tries each known address until one answers, and remembers the one that did.
-    private func raw(_ path: String, method: String = "GET", body: Data? = nil) async throws -> Data {
+    private func raw(_ path: String, method: String = "GET", body: Data? = nil,
+                     progress: (@MainActor @Sendable (Int64, Int64) -> Void)? = nil) async throws -> Data {
         guard let connection, let token else { throw MobileError(message: "This device isn't paired.") }
         // Images and files wait up to a minute for an answer; check an address answers first,
         // unless it just did.
@@ -729,7 +731,11 @@ final class MobileStore {
                     throw MobileError(message: "This device was removed from Chatterbox on the Mac. Pair it again.")
                 }
                 try checkStatus(data, response)
-            }, checkFirst: { slow && $0 != fresh })
+            }, checkFirst: { slow && $0 != fresh }, send: { request in
+                // The quick address check is not part of the image's byte count.
+                guard let progress, request.url?.path != "/v1/addresses" else { return try await URLSession.shared.data(for: request) }
+                return try await URLSession.shared.data(for: request, delegate: DownloadProgress(report: progress))
+            })
             lastAnswered = (result.host, Date())
             if result.host != connection.hosts.first { moveToFront(result.host) }
             if problem != nil { problem = nil }
@@ -980,5 +986,21 @@ final class MobileChatHistory {
         }
         task = request
         return request
+    }
+}
+
+/// Reports a download's bytes as they arrive (an image's progress bar): received, and the
+/// total the Mac said to expect (0 when it didn't say).
+private final class DownloadProgress: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    let report: @MainActor @Sendable (Int64, Int64) -> Void
+    private var watching: NSKeyValueObservation?
+    init(report: @escaping @MainActor @Sendable (Int64, Int64) -> Void) { self.report = report }
+
+    func urlSession(_ session: URLSession, didCreateTask task: URLSessionTask) {
+        let report = report
+        watching = task.observe(\.countOfBytesReceived, options: [.initial, .new]) { task, _ in
+            let received = task.countOfBytesReceived, expected = max(task.countOfBytesExpectedToReceive, 0)
+            Task { @MainActor in report(received, expected) }
+        }
     }
 }

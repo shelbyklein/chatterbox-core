@@ -1259,12 +1259,18 @@ private struct RemoteImage: View {
     @State private var failed = false
     @State private var visible = false
     @State private var retry = 0
-    /// Still loading after a few seconds: says a tap starts it over.
-    @State private var slow = false
+    /// A download is under way, and how far it's got (bytes; `expected` 0 when not known yet).
+    @State private var loading = false
+    @State private var received: Int64 = 0
+    @State private var expected: Int64 = 0
+    @State private var activeLoad: UUID?
+    /// Download was tapped: load now, whether or not the row was seen coming into view.
+    @State private var requested = false
     @State private var loadedKey: String?
     private struct LoadRequest: Hashable {
         let key: String
         let visible: Bool
+        let active: Bool
         let retry: Int
         /// The address the phone uses now: when another request finds a better one (the
         /// home address is dead away from home), a load still waiting on the old one restarts.
@@ -1292,30 +1298,38 @@ private struct RemoteImage: View {
                     .frame(height: 160)
                     .overlay {
                         if failed {
-                            Button("Couldn't load \(file.name). Tap to retry.") { retry += 1 }
+                            Button("Couldn't load \(file.name). Tap to retry.") { requested = true; retry += 1 }
                                 .font(.caption).foregroundStyle(.secondary).padding(8)
                                 .accessibilityIdentifier("retry-image-\(file.id.uuidString.lowercased())")
-                        } else {
-                            VStack(spacing: 8) {
-                                ProgressView()
-                                // Stuck a while: a tap starts it over (a fresh request, on
-                                // whichever address answers now).
-                                if slow { Text("Taking a while. Tap to try again.").font(.caption).foregroundStyle(.secondary) }
+                        } else if loading {
+                            // How far the download has got: a bar, the percent and the data.
+                            VStack(spacing: 6) {
+                                if expected > 0 {
+                                    ProgressView(value: Double(min(received, expected)), total: Double(expected)).frame(maxWidth: 180)
+                                } else {
+                                    ProgressView()
+                                }
+                                Text(progressText).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                                    .accessibilityIdentifier("image-progress-\(file.id.uuidString.lowercased())")
+                                Button("Restart Download") { requested = true; retry += 1 }
+                                    .font(.caption)
+                                    .accessibilityIdentifier("restart-image-\(file.id.uuidString.lowercased())")
                             }
+                            .padding(8)
+                        } else {
+                            // Not started (it loads by itself on coming into view): ask for it.
+                            Button { requested = true; retry += 1 } label: {
+                                Label("Download \(file.name)", systemImage: "arrow.down.circle").font(.caption).lineLimit(2)
+                            }
+                            .buttonStyle(.bordered)
+                            .padding(8)
+                            .accessibilityIdentifier("download-image-\(file.id.uuidString.lowercased())")
                         }
                     }
             }
         }
         .frame(maxWidth: 320)
         .clipShape(RoundedRectangle(cornerRadius: 10))
-        // A tap on a loading image starts its load over.
-        .onTapGesture { if image == nil, !failed { slow = false; retry += 1 } }
-        .task(id: "\(retry)|\(image == nil)") {
-            slow = false
-            guard image == nil else { return }
-            try? await Task.sleep(for: .seconds(6))
-            if image == nil, !Task.isCancelled { slow = true }
-        }
         .fullScreenCover(isPresented: $viewing) {
             if let shown = original ?? image {
                 ImageViewer(image: shown, name: file.name, onMarkUp: onMarkUp,
@@ -1341,7 +1355,7 @@ private struct RemoteImage: View {
         // The viewer opens on the shown copy and sharpens to the original when it arrives.
         .onChange(of: viewing) { _, open in if open { Task { _ = await full() } } }
         .modifier(ImageVisibility(report: { visible = $0 }))
-        .task(id: LoadRequest(key: imageKey, visible: visible && scenePhase == .active, retry: retry, host: store.connection?.hosts.first)) {
+        .task(id: LoadRequest(key: imageKey, visible: visible, active: scenePhase == .active, retry: retry, host: store.connection?.hosts.first)) {
             await load()
         }
     }
@@ -1350,23 +1364,42 @@ private struct RemoteImage: View {
         MobileImageCache.key(chat: chat, file: file, size: String(Self.displayPixels))
     }
 
+    /// "42% · 120 KB of 290 KB", or just the data so far while the total isn't known.
+    private var progressText: String {
+        let size = ByteCountFormatter(); size.countStyle = .file
+        guard expected > 0 else { return received > 0 ? "\(size.string(fromByteCount: received)) downloaded" : "Starting\u{2026}" }
+        let percent = Int((Double(min(received, expected)) / Double(expected) * 100).rounded())
+        return "\(percent)% \u{00B7} \(size.string(fromByteCount: received)) of \(size.string(fromByteCount: expected))"
+    }
+
     private func load() async {
         guard !Task.isCancelled else { return }
+        let loadID = UUID()
+        activeLoad = loadID
+        loading = false
         if loadedKey != imageKey {
             image = nil
             original = nil
             failed = false
             loadedKey = imageKey
         }
-        guard visible, scenePhase == .active else { return }
+        guard visible || requested, scenePhase == .active else { return }
+        requested = false
         guard image == nil else { return }
         failed = false
+        loading = true; received = 0; expected = 0
+        defer {
+            if activeLoad == loadID { loading = false; activeLoad = nil }
+        }
         // One attempt on entering view, then two short retries for transient failures.
         // The view task cancels both the request and the backoff on leaving/backgrounding.
         for delay in [0.0, 0.75, 2.0] {
             do {
                 try await Task.sleep(for: .seconds(delay))
-                let fetched = try await store.image(file, in: chat, maxPixels: Self.displayPixels)
+                let fetched = try await store.image(file, in: chat, maxPixels: Self.displayPixels) { got, total in
+                    guard activeLoad == loadID else { return }
+                    received = got; expected = total
+                }
                 try Task.checkCancellation()
                 if let fetched { image = fetched; return }
             } catch {
