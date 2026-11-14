@@ -76,12 +76,13 @@ final class MobileStore {
 
     /// Feedback, step 2: the marked-up screenshot waits in the Chatterbox session's message
     /// box, which opens, for you to type what's wrong and send.
-    func placeFeedback(_ image: UIImage) {
+    func placeFeedback(_ image: UIImage, notes: String = "") {
         guard let chat = feedbackChat, let data = image.pngData() else {
             feedbackProblem = "Feedback goes to the Chatterbox project's session. Open Chatterbox's folder as a project on the Mac."
             return
         }
         composer(for: chat.id).images.append(PendingImage(preview: image, upload: .init(name: "Feedback", data: data)))
+        if !notes.isEmpty { composer(for: chat.id).add(MobileReviewResult(text: notes, images: [])) }
         MobilePushNotifications.shared.pendingChat = chat.id
     }
 

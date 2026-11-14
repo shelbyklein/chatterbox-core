@@ -172,10 +172,12 @@ struct ChatDetailView: View {
         })
         .fullScreenCover(item: $reviewingPDF) { file in MobilePDFViewer(file: file, chat: chat.id) }
         .fullScreenCover(item: $sketch) { request in
-            SketchView(request: request) { image in
+            SketchView(request: request) { image, notes in
                 if let data = image.pngData() {
                     pendingImages.append(PendingImage(preview: image, upload: .init(name: "Sketch", data: data)))
                 }
+                // Mark Up's pinned notes, numbered as on the picture, after anything typed.
+                if !notes.isEmpty { composerState.add(MobileReviewResult(text: notes, images: [])) }
             }
         }
         .photosPicker(isPresented: $choosingPhotos, selection: $photoPicks, maxSelectionCount: 6, matching: .images)

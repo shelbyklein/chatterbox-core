@@ -22,6 +22,7 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-13", changes: [
+            "Mark Up on the phone has a Comment mode: tap a spot to pin a numbered note. The picture goes with its pins, and the notes go in your message.",
             "What's New: this list, in Settings on the Mac and the phone, with a note after each update.",
             "Mark Up on the phone: pinch to zoom and pan with two fingers; a Pencil Only switch lets a finger move the page instead of drawing.",
             "Open Duo, portrait: the session list is a shelf over the chat (the button at the chat's top left, or swipe in from the left edge), so the chat gets the whole width.",
