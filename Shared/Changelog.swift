@@ -22,6 +22,7 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-13", changes: [
+            "An image still loading on the phone after a few seconds says so; tap it to start it over.",
             "Mark Up on the phone has a Comment mode: tap a spot to pin a numbered note. The picture goes with its pins, and the notes go in your message.",
             "What's New: this list, in Settings on the Mac and the phone, with a note after each update.",
             "Mark Up on the phone: pinch to zoom and pan with two fingers; a Pencil Only switch lets a finger move the page instead of drawing.",
@@ -124,6 +125,9 @@ private struct WhatsNewOnUpdate: ViewModifier {
     func body(content: Content) -> some View {
         content
             .task {
+                // Not in UI tests: a sheet over the app would hide what they tap.
+                if ProcessInfo.processInfo.environment["CHATTERBOX_TEST_HOST"] != nil
+                    || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil { return }
                 let new = seen.isEmpty ? Array(Changelog.days.prefix(1)) : Changelog.since(seen)
                 if !new.isEmpty { showing = new }
             }

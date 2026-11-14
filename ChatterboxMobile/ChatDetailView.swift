@@ -1235,6 +1235,8 @@ private struct RemoteImage: View {
     @State private var failed = false
     @State private var visible = false
     @State private var retry = 0
+    /// Still loading after a few seconds: says a tap starts it over.
+    @State private var slow = false
     @State private var loadedKey: String?
     private struct LoadRequest: Hashable {
         let key: String
@@ -1269,12 +1271,27 @@ private struct RemoteImage: View {
                             Button("Couldn't load \(file.name). Tap to retry.") { retry += 1 }
                                 .font(.caption).foregroundStyle(.secondary).padding(8)
                                 .accessibilityIdentifier("retry-image-\(file.id.uuidString.lowercased())")
-                        } else { ProgressView() }
+                        } else {
+                            VStack(spacing: 8) {
+                                ProgressView()
+                                // Stuck a while: a tap starts it over (a fresh request, on
+                                // whichever address answers now).
+                                if slow { Text("Taking a while. Tap to try again.").font(.caption).foregroundStyle(.secondary) }
+                            }
+                        }
                     }
             }
         }
         .frame(maxWidth: 320)
         .clipShape(RoundedRectangle(cornerRadius: 10))
+        // A tap on a loading image starts its load over.
+        .onTapGesture { if image == nil, !failed { slow = false; retry += 1 } }
+        .task(id: "\(retry)|\(image == nil)") {
+            slow = false
+            guard image == nil else { return }
+            try? await Task.sleep(for: .seconds(6))
+            if image == nil, !Task.isCancelled { slow = true }
+        }
         .fullScreenCover(isPresented: $viewing) {
             if let shown = original ?? image {
                 ImageViewer(image: shown, name: file.name, onMarkUp: onMarkUp,

@@ -187,11 +187,28 @@ final class CompanionServer {
                 if buffer.count > Companion.maxRequestBytes || error != nil { return connection.cancel() }
                 switch HTTPRequest.parse(buffer) {
                 case .request(let request):
+                    let started = Date()
                     let response = await self.respondAsync(to: request)
+                    // Images and files the phone loads: which address, how big, how long, in the
+                    // service log, to tell a slow Mac from a slow path when one sits spinning.
+                    let traced = request.method == "GET" && (request.path.contains("/files/") || request.path.contains("/thumbnail/"))
+                    let answered = Date().timeIntervalSince(started)
+                    @MainActor func trace(_ bytes: Int?) {
+                        guard traced else { return }
+                        let size = bytes.map { String(format: "%.0f KB", Double($0) / 1024) } ?? "a file"
+                        RuntimeHooks.note(String(format: "Phone image %@ (%@) via %@: %d, answered in %.2fs, sent in %.2fs",
+                                                 request.path.split(separator: "/").last.map(String.init) ?? "?",
+                                                 size, "\(connection.endpoint)", response.status, answered, Date().timeIntervalSince(started)))
+                    }
                     if let file = response.fileURL {
+                        if traced { trace((try? FileManager.default.attributesOfItem(atPath: file.path)[.size] as? Int) ?? nil) }
                         HTTPFileTransfer(connection: connection, url: file, contentType: response.contentType).start()
                     } else {
-                        connection.send(content: response.data, completion: .contentProcessed { _ in connection.cancel() })
+                        let data = response.data
+                        connection.send(content: data, completion: .contentProcessed { _ in
+                            Task { @MainActor in trace(data.count) }
+                            connection.cancel()
+                        })
                     }
                 case .invalid:
                     let response = HTTPResponse.error(400, "Bad request.")
