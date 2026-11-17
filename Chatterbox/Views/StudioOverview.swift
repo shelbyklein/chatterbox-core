@@ -261,7 +261,7 @@ private struct StudioColumn: View {
                 VStack(alignment: .leading, spacing: 2) {
                     // Home's first page: what needs you, work to place, and what's working.
                     let desk = DeskModel.shared.sections(in: model).actionCount
-                    entry(.desk, title: "Desk", count: nil, attention: desk, icon: "tray",
+                    entry(.desk, title: "Desk", count: nil, attention: desk, icon: "lamp.desk",
                           badgeHelp: "\(desk) waiting on you or to be placed")
                         .padding(.bottom, 12)
                     HStack {

@@ -217,7 +217,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         let deskCount = DeskModel.shared.badgeCount(in: model)
         if deskCount != lastDeskCount, let item = items[ID.desk] {
             lastDeskCount = deskCount
-            item.image = Self.viewImage("tray", count: deskCount)
+            item.image = Self.viewImage("lamp.desk", count: deskCount)
             item.toolTip = Self.deskTip + (deskCount > 0 ? " · \(deskCount) waiting on you or to be placed" : " · Nothing waiting")
         }
 
@@ -290,8 +290,8 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         case ID.automations:
             item = button(id, "clock.arrow.circlepath", "Automations", "All project automations", #selector(toggleAutomations))
         case ID.desk:
-            item = button(id, "tray", "Desk", Self.deskTip, #selector(showDeskPage))
-            item.image = Self.viewImage("tray", count: 0)
+            item = button(id, "lamp.desk", "Desk", Self.deskTip, #selector(showDeskPage))
+            item.image = Self.viewImage("lamp.desk", count: 0)
         default:
             return nil
         }

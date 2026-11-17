@@ -22,6 +22,7 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-17", changes: [
+            "The Desk has the same desk-lamp icon on the Mac as on the phone.",
             "A pinned session on the Mac stays in its own list (its Studio, Projects or Chats) too, first and marked with a pin.",
         ]),
         Day(id: "2026-11-14", changes: [
