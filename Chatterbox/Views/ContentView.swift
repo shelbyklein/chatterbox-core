@@ -995,7 +995,26 @@ struct PinnedSidebarRow: View {
     }
 }
 
+/// Rows and cards in the sidebar's Pinned section (which names each one's place) rather than
+/// in their own list (which marks them with a pin, first).
+private struct InPinnedSectionKey: EnvironmentKey { static let defaultValue = false }
+extension EnvironmentValues {
+    var inPinnedSection: Bool {
+        get { self[InPinnedSectionKey.self] }
+        set { self[InPinnedSectionKey.self] = newValue }
+    }
+}
+
+/// The pin beside a pinned session's name in its own list.
+struct PinnedMark: View {
+    var body: some View {
+        Image(systemName: "pin.fill").font(.system(size: 9, weight: .semibold)).foregroundStyle(.orange)
+            .rotationEffect(.degrees(45)).accessibilityLabel("Pinned")
+    }
+}
+
 struct SidebarRow: View {
+    @Environment(\.inPinnedSection) private var inPinnedSection
     @Environment(AppModel.self) private var model
     /// Centers a shape (spinner, dot) on the first line of text, which it's baseline-aligned
     /// with; shapes have no baseline, so they'd otherwise sit on it and look low.
@@ -1043,8 +1062,11 @@ struct SidebarRow: View {
                 .help(session.record.provider == session.record.backend ? session.record.provider.label : "Claude model via Codex")
             if session.record.projectFolder != nil {
                 VStack(alignment: .leading, spacing: lineSpacing) {
-                    Text(session.projectName).font(compact ? .callout : nil).lineLimit(1)
-                    if model.isPinnedThread(session) { SessionOriginLabel(session: session) }
+                    HStack(spacing: 4) {
+                        if model.isPinnedThread(session), !inPinnedSection { PinnedMark() }
+                        Text(session.projectName).font(compact ? .callout : nil).lineLimit(1)
+                    }
+                    if model.isPinnedThread(session), inPinnedSection { SessionOriginLabel(session: session) }
                     if !tags.isEmpty {
                         TagPills(tags: tags)
                     }
@@ -1077,8 +1099,11 @@ struct SidebarRow: View {
                 .task(id: session.record.projectFolder) { ProjectIcons.shared.load(session.record.projectFolder) }
             } else {
                 VStack(alignment: .leading, spacing: lineSpacing) {
-                    Text(session.title).font(compact ? .callout : nil).lineLimit(1)
-                    if model.isPinnedThread(session) { SessionOriginLabel(session: session) }
+                    HStack(spacing: 4) {
+                        if model.isPinnedThread(session), !inPinnedSection { PinnedMark() }
+                        Text(session.title).font(compact ? .callout : nil).lineLimit(1)
+                    }
+                    if model.isPinnedThread(session), inPinnedSection { SessionOriginLabel(session: session) }
                     if !tags.isEmpty { TagPills(tags: tags) }
                 }
             }
@@ -1418,6 +1443,13 @@ extension ContentView {
         if sidebarCards { cardSection(section) } else { listSection(section) }
     }
 
+    /// A list's pinned sessions first (in their pinned order), then the rest as sorted.
+    private func pinnedFirst(_ sessions: [ChatSession]) -> [ChatSession] {
+        let order = model.pinnedThreadIDs
+        let pinned = sessions.filter { order.contains($0.id) }.sorted { (order.firstIndex(of: $0.id) ?? 0) < (order.firstIndex(of: $1.id) ?? 0) }
+        return pinned + sessions.filter { !order.contains($0.id) }
+    }
+
     private func cardFamily(_ root: ChatSession) -> [ChatSession] {
         threadFamily(root).filter(isShown)
     }
@@ -1442,18 +1474,18 @@ extension ContentView {
             LazyVStack(alignment: .leading, spacing: 10) {
                 switch section {
                 case .projects:
-                    let threads = model.sidebarProjects.filter { !model.isPinnedThread($0) }.filter(projectActivity.includes).flatMap(cardFamily)
+                    let threads = pinnedFirst(model.sidebarProjects.filter(projectActivity.includes)).flatMap(cardFamily)
                     if showsTagPills, !model.allTags.isEmpty { tagPills }
                     cardGrid(threads)
                     if threads.isEmpty { Text("No matching projects").font(.caption).foregroundStyle(.secondary) }
                 case .chats:
-                    let threads = model.sidebarChats.filter { !model.isPinnedThread($0) }.filter(chatActivity.includes).flatMap(cardFamily)
+                    let threads = pinnedFirst(model.sidebarChats.filter(chatActivity.includes)).flatMap(cardFamily)
                     if showsTagPills, !model.allTags.isEmpty { tagPills }
                     cardGrid(threads)
                     if threads.isEmpty { Text("No matching chats").font(.caption).foregroundStyle(.secondary) }
                 case .studios:
                     if let studio = model.sidebarStudio {
-                        let threads = model.sortedChats(in: studio).filter(isShown).filter(studioActivity.includes).flatMap(cardFamily)
+                        let threads = pinnedFirst(model.sortedChats(in: studio).filter(isShown).filter(studioActivity.includes)).flatMap(cardFamily)
                         cardGrid(threads)
                         if threads.isEmpty { Text("No matching sessions").font(.caption).foregroundStyle(.secondary) }
                     }
@@ -1466,7 +1498,7 @@ extension ContentView {
         List {
             switch section {
             case .projects:
-                let projects = model.sidebarProjects.filter { !model.isPinnedThread($0) }.filter(isShown).filter(projectActivity.includes)
+                let projects = pinnedFirst(model.sidebarProjects.filter(isShown).filter(projectActivity.includes))
                 if showsTagPills, !model.allTags.isEmpty {
                     tagPills.listRowSeparator(.hidden)
                 }
@@ -1477,12 +1509,12 @@ extension ContentView {
                 }
             case .studios:
                 if let studio = model.sidebarStudio {
-                    let chats = model.sortedChats(in: studio).filter(isShown).filter(studioActivity.includes)
+                    let chats = pinnedFirst(model.sortedChats(in: studio).filter(isShown).filter(studioActivity.includes))
                     ForEach(chats) { session in familyCard(session) }
                     if chats.isEmpty { Text("No matching sessions").font(.caption).foregroundStyle(.secondary) }
                 }
             case .chats:
-                let chats = model.sidebarChats.filter { !model.isPinnedThread($0) }.filter(isShown).filter(chatActivity.includes)
+                let chats = pinnedFirst(model.sidebarChats.filter(isShown).filter(chatActivity.includes))
                 if showsTagPills, !model.allTags.isEmpty { tagPills.listRowSeparator(.hidden) }
                 ForEach(chats) { session in familyCard(session) }
                 if chats.isEmpty {
@@ -1578,7 +1610,7 @@ extension ContentView {
         VStack(alignment: .leading, spacing: 0) {
             pinnedHeader.padding(.horizontal, 14).frame(height: Self.headerHeight)
             ScrollView {
-                pinnedSessionList
+                pinnedSessionList.environment(\.inPinnedSection, true)
             }
             .frame(height: min(pinnedContentHeight, max(44, maxHeight)))
             Divider().padding(.horizontal, 12).padding(.vertical, 6)

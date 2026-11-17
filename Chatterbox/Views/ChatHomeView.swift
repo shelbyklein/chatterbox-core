@@ -33,6 +33,7 @@ extension View {
 }
 
 struct ThreadCard: View {
+    @Environment(\.inPinnedSection) private var inPinnedSection
     let session: ChatSession
     var expanded = false
     var iconOnly = false
@@ -132,7 +133,7 @@ struct ThreadCard: View {
                     }
                     Text(title).font(.system(size: 8.5 * scale, weight: .medium)).lineLimit(2)
                         .multilineTextAlignment(.center).frame(height: 24 * scale, alignment: .top)
-                    if model.isPinnedThread(session) { SessionOriginLabel(session: session) }
+                    if model.isPinnedThread(session), inPinnedSection { SessionOriginLabel(session: session) }
                 }.frame(width: 80 * scale, height: 94 * scale)
                     .task(id: session.record.projectFolder) { ProjectIcons.shared.load(session.record.projectFolder) }
                     .background(selected ? SessionMarks.selectedFill : Color.clear, in: RoundedRectangle(cornerRadius: 14))
@@ -154,9 +155,12 @@ struct ThreadCard: View {
                     if expanded { Text(status).font(.system(size: 10.5 * scale, weight: .medium)).lineLimit(1) }
                     activityIndicator
                 }
-                Text(title).font(.system(size: (expanded ? 15 : 11.5) * scale, weight: .semibold))
-                    .lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
-                if model.isPinnedThread(session) { SessionOriginLabel(session: session) }
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    if model.isPinnedThread(session), !inPinnedSection { PinnedMark() }
+                    Text(title).font(.system(size: (expanded ? 15 : 11.5) * scale, weight: .semibold))
+                        .lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
+                }
+                if model.isPinnedThread(session), inPinnedSection { SessionOriginLabel(session: session) }
                 if let relation {
                     Label(relation, systemImage: session.record.workOf != nil ? "arrow.turn.down.right" : session.record.sidechatOf != nil ? "bubble.left.and.bubble.right" : "arrow.triangle.branch")
                         .font(.caption2).foregroundStyle(Color.metadata).lineLimit(1)
