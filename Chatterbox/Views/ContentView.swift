@@ -1453,7 +1453,7 @@ extension ContentView {
                     if threads.isEmpty { Text("No matching chats").font(.caption).foregroundStyle(.secondary) }
                 case .studios:
                     if let studio = model.sidebarStudio {
-                        let threads = model.sortedChats(in: studio).filter { !model.isPinnedThread($0) }.filter(isShown).filter(studioActivity.includes).flatMap(cardFamily)
+                        let threads = model.sortedChats(in: studio).filter(isShown).filter(studioActivity.includes).flatMap(cardFamily)
                         cardGrid(threads)
                         if threads.isEmpty { Text("No matching sessions").font(.caption).foregroundStyle(.secondary) }
                     }
@@ -1477,7 +1477,7 @@ extension ContentView {
                 }
             case .studios:
                 if let studio = model.sidebarStudio {
-                    let chats = model.sortedChats(in: studio).filter { !model.isPinnedThread($0) }.filter(isShown).filter(studioActivity.includes)
+                    let chats = model.sortedChats(in: studio).filter(isShown).filter(studioActivity.includes)
                     ForEach(chats) { session in familyCard(session) }
                     if chats.isEmpty { Text("No matching sessions").font(.caption).foregroundStyle(.secondary) }
                 }
