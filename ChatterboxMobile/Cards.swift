@@ -54,16 +54,18 @@ struct ApprovalPanel: View {
     let decide: (String) -> Void
     /// Wraps each button's action (the Desk's swipe guard); as it is otherwise.
     var taps: (@escaping () -> Void) -> () -> Void = { $0 }
-    /// The Desk: the top of the card (kind, where, the ask) opens its session.
+    /// The Desk: VoiceOver's Open action on the top of the card (kind, where, the ask).
     var open: (() -> Void)? = nil
     @State private var expanded = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if let open {
-                Button(action: taps(open)) { header.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle()) }
-                    .buttonStyle(.plain)
-                    .accessibilityHint("Opens the session")
+                // Not a button: a touch on the text (often a scroll starting) does nothing. The
+                // card's Open button opens the session; VoiceOver keeps it as an action here.
+                header.frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityAction(named: "Open", open)
                     .accessibilityIdentifier(identifier("open-card"))
             } else {
                 header

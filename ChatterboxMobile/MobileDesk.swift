@@ -860,8 +860,14 @@ private struct DeskWaitingCard: View {
                               identifier: { $0 == "open-card" ? "desk-waiting-\(id)" : "desk-\($0)-\(id)" },
                               decide: decide, taps: { taps($0) }, open: open)
                     .accessibilityAction(named: "Silence", silence)
+                Button(action: taps(open)) { Label("Open", systemImage: "arrow.up.forward") }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .font(.subheadline.weight(.medium))
+                    .accessibilityLabel("Open")
+                    .accessibilityIdentifier("desk-open-\(id)")
             } else {
-                Button(action: taps(open)) {
+                // Not a button: a touch on the text (often a scroll starting) does nothing; Open opens.
                     VStack(alignment: .leading, spacing: 5) {
                         Label(WaitingKind.title(item.kind), systemImage: WaitingKind.icon(item.kind))
                             .font(.caption.weight(.semibold)).foregroundStyle(Color.attention)
@@ -874,13 +880,15 @@ private struct DeskWaitingCard: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityHint("Opens the session")
-                .accessibilityAction(named: "Silence", silence)
-                .accessibilityIdentifier("desk-waiting-\(id)")
-                Button("Open", action: taps(open))
+                    .accessibilityElement(children: .combine)
+                    .accessibilityAction(named: "Open", open)
+                    .accessibilityAction(named: "Silence", silence)
+                    .accessibilityIdentifier("desk-waiting-\(id)")
+                Button(action: taps(open)) { Label("Open", systemImage: "arrow.up.forward") }
                     .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .font(.subheadline.weight(.medium))
+                    .accessibilityLabel("Open")
                     .accessibilityIdentifier("desk-open-\(id)")
             }
             if item.autoStarted == true { MobileDeskAutoStartedTag() }
