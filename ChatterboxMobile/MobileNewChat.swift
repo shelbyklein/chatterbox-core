@@ -61,6 +61,8 @@ struct MobileNewChatSheet: View {
     let studios: [Studio]
     let start: (Companion.ChatDetail) -> Void
     @State var studio: UUID?
+    /// New Project: the chat starts, then becomes the project of the folder chosen here.
+    @State var newProject = false
     @Environment(MobileStore.self) private var store
     @Environment(\.dismiss) private var dismiss
     @State private var picks = Companion.SettingsRequest()
@@ -71,6 +73,31 @@ struct MobileNewChatSheet: View {
     @State private var name = ""
     /// Put on the Desk: a task for it there, named from the first message.
     @State private var putOnDesk = false
+    /// New Project's folder on the Mac: the folder itself, or the parent of a new subfolder.
+    @State private var folder = ""
+    @State private var createFolder = true
+    @State private var folderName = ""
+    @State private var browsing = false
+
+    /// "Start in": Chats, a Studio, or a new project.
+    private enum Place: Hashable { case chats, studio(UUID), newProject }
+    private var place: Binding<Place> {
+        Binding(get: { newProject ? .newProject : studio.map(Place.studio) ?? .chats },
+                set: { pick in
+                    switch pick {
+                    case .chats: newProject = false; studio = nil
+                    case .studio(let id): newProject = false; studio = id
+                    case .newProject: newProject = true; studio = nil
+                    }
+                })
+    }
+    private var projectFolderName: String {
+        let typed = folderName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return typed.isEmpty ? name.trimmingCharacters(in: .whitespacesAndNewlines) : typed
+    }
+    private var projectReady: Bool {
+        !newProject || (!folder.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && (!createFolder || !projectFolderName.isEmpty))
+    }
 
     var body: some View {
         NavigationStack {
@@ -81,14 +108,41 @@ struct MobileNewChatSheet: View {
                             TextField("Optional: named from your first message", text: $name)
                                 .accessibilityIdentifier("new-chat-name")
                         }
-                        if !studios.isEmpty {
-                            // The row names itself: no header over it saying the same.
+                        // The row names itself: no header over it saying the same.
+                        Section {
+                            Picker("Start in", selection: place) {
+                                Text("Chats").tag(Place.chats)
+                                ForEach(studios) { Text($0.name).tag(Place.studio($0.id)) }
+                                Text("New Project\u{2026}").tag(Place.newProject)
+                            }
+                            .accessibilityIdentifier("new-chat-place")
+                        }
+                        if newProject {
                             Section {
-                                Picker("Start in", selection: $studio) {
-                                    Text("Chats").tag(UUID?.none)
-                                    ForEach(studios) { Text($0.name).tag(UUID?.some($0.id)) }
+                                Button { browsing = true } label: {
+                                    HStack {
+                                        Label(folder.isEmpty ? "Choose a Mac Folder" : (folder as NSString).lastPathComponent, systemImage: "folder")
+                                        Spacer()
+                                        Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
+                                    }
                                 }
-                                .accessibilityIdentifier("new-chat-place")
+                                .accessibilityIdentifier("new-project-browse")
+                                if !folder.isEmpty {
+                                    Text(folder).font(.footnote.monospaced()).foregroundStyle(.secondary)
+                                        .accessibilityIdentifier("new-project-folder")
+                                }
+                                Toggle("Create a new subfolder", isOn: $createFolder)
+                                    .accessibilityIdentifier("new-project-create-folder")
+                                if createFolder {
+                                    TextField(name.isEmpty ? "Folder name" : name, text: $folderName)
+                                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                                        .accessibilityIdentifier("new-project-folder-name")
+                                }
+                            } header: {
+                                Text(createFolder ? "Inside this folder on your Mac" : "Project folder on your Mac")
+                            } footer: {
+                                Text(createFolder ? "Makes the folder and starts the project's chat in it."
+                                     : "Each folder has one main project chat.")
                             }
                         }
                         Section {
@@ -107,16 +161,19 @@ struct MobileNewChatSheet: View {
                     ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
-            .navigationTitle("New Chat")
+            .navigationTitle(newProject ? "New Project" : "New Chat")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Start") { begin() }.disabled(options == nil || starting).fontWeight(.semibold)
+                    Button("Start") { begin() }.disabled(options == nil || starting || !projectReady).fontWeight(.semibold)
                         .accessibilityIdentifier("new-chat-start")
                 }
             }
             .task(id: studio) { await load() }
+            .sheet(isPresented: $browsing) {
+                MacProjectFolderPicker(initialPath: folder.isEmpty ? nil : folder) { folder = $0 }
+            }
         }
         .tint(.blue)
     }
@@ -139,8 +196,21 @@ struct MobileNewChatSheet: View {
                 // The settings as shown, so the chat starts exactly as picked.
                 let settings = Companion.SettingsRequest(model: options.model, effort: options.effort, mode: options.mode, fastMode: options.fastMode,
                                                          openModel: options.openModel)
-                let detail = try await store.newChat(in: studio, backend: options.backend, preset: picks.preset, settings: settings, title: name,
-                                                      desk: putOnDesk)
+                var detail = try await store.newChat(in: newProject ? nil : studio, backend: options.backend, preset: picks.preset,
+                                                      settings: settings, title: name, desk: putOnDesk)
+                if newProject {
+                    // The fresh chat becomes the folder's project chat, before its first message.
+                    do {
+                        detail = try await store.promote(detail.summary.id, using: .init(kind: .project,
+                            folder: folder.trimmingCharacters(in: .whitespacesAndNewlines),
+                            newFolderName: createFolder ? projectFolderName : nil))
+                    } catch {
+                        problem = "\(error.localizedDescription) The chat was started in Chats; use Make Project\u{2026} in its menu to try again."
+                        starting = false
+                        await store.loadChats()
+                        return
+                    }
+                }
                 dismiss()
                 start(detail)
                 await store.loadChats()

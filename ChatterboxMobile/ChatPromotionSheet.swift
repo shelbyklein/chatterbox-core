@@ -128,7 +128,8 @@ struct ChatPromotionSheet: View {
     }
 }
 
-private struct MacProjectFolderPicker: View {
+/// Browses the Mac's folders: Make Project and New Chat's New Project.
+struct MacProjectFolderPicker: View {
     let initialPath: String?
     var choose: (String) -> Void
     @Environment(MobileStore.self) private var store

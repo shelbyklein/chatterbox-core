@@ -134,7 +134,8 @@ struct ChatListView: View {
             if let id = automationPick { automationPick = nil; MobilePushNotifications.shared.pendingChat = id }
         }) { MobileAutomationsView { automationPick = $0 }.environment(store) }
         .sheet(isPresented: $startingNewChat) {
-            MobileNewChatSheet(studios: newChatStudios, start: { open($0.summary) }, studio: newChatStudio).environment(store)
+            MobileNewChatSheet(studios: newChatStudios, start: { open($0.summary) }, studio: newChatStudio,
+                               newProject: newChatStudio == nil && page == .projects).environment(store)
         }
         .sheet(isPresented: $showingSettings) { MobileSettingsSheet().environment(store) }
         .sheet(isPresented: $showingArchived, onDismiss: {
