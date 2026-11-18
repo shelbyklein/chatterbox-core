@@ -1236,7 +1236,7 @@ private struct ItemRow: View {
     }
 }
 
-/// Visibility rather than lazy-row creation controls image downloads on iOS 18+.
+/// Visibility rather than lazy-row creation controls image downloads.
 private struct ImageVisibility: ViewModifier {
     let report: (Bool) -> Void
 
@@ -1254,12 +1254,19 @@ private struct ImageVisibility: ViewModifier {
     }
 
     @ViewBuilder private func tracked(_ content: Content) -> some View {
+        // The row's own position against the transcript's visible area: reported from the first
+        // layout on, so an image already on screen when a chat opens (scrolled to the bottom)
+        // loads without leaving and coming back. onScrollVisibilityChange alone missed that on
+        // the Duo (iOS 27 beta); it stays as a second signal where it works.
+        let measured = content.onGeometryChange(for: Bool.self) { proxy in
+            guard let visible = proxy.bounds(of: .scrollView) else { return true }
+            return visible.intersects(CGRect(origin: .zero, size: proxy.size))
+        } action: { report($0) }
         if #available(iOS 18, *) {
-            // Lazy rows may exist before they enter the viewport. Start at the first sliver.
-            content.onScrollVisibilityChange(threshold: 0.01, report)
+            measured.onScrollVisibilityChange(threshold: 0.01) { if $0 { report(true) } }
                 .onDisappear { report(false) }
         } else {
-            content.onAppear { report(true) }.onDisappear { report(false) }
+            measured.onDisappear { report(false) }
         }
     }
 }

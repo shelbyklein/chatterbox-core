@@ -22,6 +22,7 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-18", changes: [
+            "Images on the phone load the first time you open a session, without leaving and coming back.",
             "The \"This looks like … work\" banner is gone from chats on the Mac and the phone. Moving a session to a Studio is still in its menu.",
             "A session card on the Mac that's asking you something has a yellow border, instead of a bar down its side.",
             "Turning off Show Tag Pills on the Mac also hides the tags on session cards and sidebar rows.",
