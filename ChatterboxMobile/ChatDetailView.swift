@@ -1325,7 +1325,7 @@ private struct RemoteImage: View {
                     .frame(height: 160)
                     .overlay {
                         if failed {
-                            Button("Couldn't load \(file.name). Tap to retry.") { requested = true; retry += 1 }
+                            Button("Couldn't load \(file.name). Tap to retry.") { tapped("retry") }
                                 .font(.caption).foregroundStyle(.secondary).padding(8)
                                 .accessibilityIdentifier("retry-image-\(file.id.uuidString.lowercased())")
                         } else if loading {
@@ -1338,14 +1338,14 @@ private struct RemoteImage: View {
                                 }
                                 Text(progressText).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                                     .accessibilityIdentifier("image-progress-\(file.id.uuidString.lowercased())")
-                                Button("Restart Download") { requested = true; retry += 1 }
+                                Button("Restart Download") { tapped("restart") }
                                     .font(.caption)
                                     .accessibilityIdentifier("restart-image-\(file.id.uuidString.lowercased())")
                             }
                             .padding(8)
                         } else {
                             // Not started (it loads by itself on coming into view): ask for it.
-                            Button { requested = true; retry += 1 } label: {
+                            Button { tapped("download") } label: {
                                 Label("Download \(file.name)", systemImage: "arrow.down.circle").font(.caption).lineLimit(2)
                             }
                             .buttonStyle(.bordered)
@@ -1381,11 +1381,20 @@ private struct RemoteImage: View {
         }
         // The viewer opens on the shown copy and sharpens to the original when it arrives.
         .onChange(of: viewing) { _, open in if open { Task { _ = await full() } } }
-        .modifier(ImageVisibility(report: { visible = $0 }))
+        .modifier(ImageVisibility(report: { now in
+            if now != visible { MobileImageTrace.note(file.name, now ? "in view" : "out of view") }
+            visible = now
+        }))
         .task(id: LoadRequest(key: imageKey, eligible: shouldLoad, retry: retry, host: store.connection?.hosts.first)) {
             await load()
         }
-        .onDisappear { requested = false }
+        .onAppear { MobileImageTrace.note(file.name, "appeared (\(image == nil ? "no picture" : "showing"))") }
+        .onDisappear { MobileImageTrace.note(file.name, "disappeared"); requested = false }
+    }
+
+    private func tapped(_ button: String) {
+        MobileImageTrace.note(file.name, "tapped \(button)")
+        requested = true; retry += 1
     }
 
     /// Automatic work follows viewport visibility. A deliberate tap must not be cancelled
@@ -1418,8 +1427,12 @@ private struct RemoteImage: View {
             failed = false
             loadedKey = imageKey
         }
-        guard shouldLoad else { return }
+        guard shouldLoad else {
+            MobileImageTrace.note(file.name, "waiting: visible \(visible), requested \(requested), \(scenePhase)")
+            return
+        }
         guard image == nil else { requested = false; return }
+        MobileImageTrace.note(file.name, "loading (requested \(requested), host \(store.connection?.hosts.first ?? "none"))")
         failed = false
         loading = true; received = 0; expected = 0
         defer {
@@ -1436,10 +1449,12 @@ private struct RemoteImage: View {
                     received = got; expected = total
                 }
                 try Task.checkCancellation()
-                if let fetched { image = fetched; requested = false; return }
+                if let fetched { image = fetched; requested = false; MobileImageTrace.note(file.name, "loaded"); return }
+                MobileImageTrace.note(file.name, "got data that isn't a picture")
             } catch {
                 // Lazy-row cancellation is ordinary scrolling, not a broken image.
-                if Task.isCancelled { return }
+                if Task.isCancelled { MobileImageTrace.note(file.name, "cancelled"); return }
+                MobileImageTrace.note(file.name, "failed: \(error.localizedDescription.prefix(120))")
             }
         }
         failed = true
