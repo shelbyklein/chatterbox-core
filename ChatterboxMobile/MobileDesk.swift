@@ -1038,7 +1038,8 @@ private struct DeskReadyCard: View {
 
     private func card(_ taps: DeskSwipeTaps) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Button(action: taps(open)) {
+            // Not a button: a touch on the text (often the start of a scroll) does nothing. Only
+            // the assets and the buttons below act; Open opens the session.
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 8) {
                         // The icon carries the color; the words stay readable in light mode.
@@ -1058,12 +1059,11 @@ private struct DeskReadyCard: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityHint("Opens the session")
-            .accessibilityAction(named: "Mark Complete", complete)
-            .accessibilityAction(named: "Silence", silence)
-            .accessibilityIdentifier("desk-ready-\(item.id.uuidString)")
+                .accessibilityElement(children: .combine)
+                .accessibilityAction(named: "Open", open)
+                .accessibilityAction(named: "Mark Complete", complete)
+                .accessibilityAction(named: "Silence", silence)
+                .accessibilityIdentifier("desk-ready-\(item.id.uuidString)")
             // What it made: links open in Safari; files and images are in the session.
             if let assets = item.assets, !assets.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {

@@ -22,6 +22,7 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-17", changes: [
+            "Touching a Review card's text on the phone no longer opens the session (so scrolling over it doesn't either); use Open or its files.",
             "Review cards on the phone have smaller one-line buttons: Complete, Open and Hold.",
             "The Desk has the same desk-lamp icon on the Mac as on the phone.",
             "A pinned session on the Mac stays in its own list (its Studio, Projects or Chats) too, first and marked with a pin.",
