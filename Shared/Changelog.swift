@@ -21,6 +21,9 @@ enum Changelog {
     }
 
     static let days: [Day] = [
+        Day(id: "2026-11-18", changes: [
+            "Activity on the phone puts a session's sidequests and Sidechats inside its card, as the other lists do.",
+        ]),
         Day(id: "2026-11-17", changes: [
             "The Desk's Needs you shows only sessions on the Desk: ones with a task, their sidequests, and any you switch on with Show on the Desk (a session's Task menu on the Mac; its ⋯ menu or About on the phone).",
             "New Project on the phone: New Chat's \"Start in\" has New Project…, where you pick a Mac folder (or make a subfolder in it). From the Projects page, New starts there.",

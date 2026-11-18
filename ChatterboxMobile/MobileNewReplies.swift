@@ -255,9 +255,22 @@ struct MobileNewReplies: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     dedicatedHeader(workingCount: workingCount, replyCount: replyCount, pressure: pressure)
-                    LazyVGrid(columns: typeSize.isAccessibilitySize ? [GridItem(.flexible())] : [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
-                        ForEach(entries) { entry in expandedEntry(entry, card: true) }
-                    }.accessibilityIdentifier("activity-cards")
+                    // A session's sidequests and Sidechats sit inside its card, as in the lists.
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(MobileActivityGroup.segments(entries, chats: chats)) { segment in
+                            switch segment {
+                            case .grid(let run):
+                                LazyVGrid(columns: typeSize.isAccessibilitySize ? [GridItem(.flexible())] : [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                                    ForEach(run) { entry in expandedEntry(entry, card: true) }
+                                }
+                            case .family(let parent, let head, let children):
+                                familyCard(parent, head: head, children: children)
+                            }
+                        }
+                    }
+                    // A container, so its cards and rows keep their own identifiers.
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("activity-cards")
                     if !recent.isEmpty {
                         Text("Recent").font(.headline).padding(.top, 8)
                             .accessibilityAddTraits(.isHeader)
@@ -270,8 +283,13 @@ struct MobileNewReplies: View {
         } else {
             List {
                 Section {
-                    ForEach(entries) { entry in
-                        expandedEntry(entry, card: false)
+                    ForEach(MobileActivityGroup.flattened(entries, chats: chats)) { row in
+                        let entry = row.entry
+                        Group {
+                            if let parent = row.parent { nestedRow(entry, parent: parent, compact: true).padding(.leading, 20) }
+                            else if row.plain { ChatRow(chat: entry.chat) { open(entry.chat) } }
+                            else { expandedEntry(entry, card: false) }
+                        }
                             .padding(.vertical, 8)
                             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                 Button { dismiss(entry) } label: { Label("Dismiss", systemImage: "checkmark") }.tint(.blue)
@@ -298,6 +316,49 @@ struct MobileNewReplies: View {
             }
             .listStyle(.insetGrouped)
             .accessibilityIdentifier("activity-list")
+        }
+    }
+
+    /// A session with the sidequests and Sidechats in Activity: one card the width of the page,
+    /// the session on top (its own activity, or just its name when only they have some) and
+    /// each of them a row inside it.
+    private func familyCard(_ parent: Companion.ChatSummary, head: MobileActivityEntry?, children: [MobileActivityEntry]) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
+        let waiting = head.map { $0.needsYouIn != nil || ($0.reply == nil && $0.chat.isWaitingOnYou) } ?? false
+        return VStack(alignment: .leading, spacing: 0) {
+            if let head { expandedEntry(head, card: true, embedded: true) }
+            else { ChatCard(chat: parent, embedded: true) { open(parent) } }
+            ForEach(children) { child in
+                Divider().padding(.leading, 12)
+                nestedRow(child, parent: parent, compact: false)
+            }
+        }
+        .padding(.bottom, 4)
+        .background(shape.fill(Color(uiColor: .secondarySystemGroupedBackground)))
+        .overlay(shape.strokeBorder(waiting ? Color.yellow.opacity(0.6) : Color.primary.opacity(0.06), lineWidth: waiting ? 1.5 : 1))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("activity-family-\(parent.id.uuidString)")
+    }
+
+    /// A sidequest's or Sidechat's activity as a row inside its session's card.
+    private func nestedRow(_ entry: MobileActivityEntry, parent: Companion.ChatSummary, compact: Bool) -> some View {
+        var display = entry.chat
+        if store.isStale { display.isRunning = false }
+        if entry.chat.isSidequest, let task = entry.chat.sidequestTask { display.subtitle = task }
+        let state = entry.reply == nil && entry.chat.isWaitingOnYou ? "Needs you" : entry.reply != nil ? "New reply" : store.isStale ? "Last seen working" : "Working"
+        return TimelineView(.periodic(from: .now, by: 60)) { context in
+            let status = entry.reply.map { reply in
+                let formatter = RelativeDateTimeFormatter(); formatter.unitsStyle = .short
+                return state + " · " + formatter.localizedString(for: reply.endedAt, relativeTo: context.date)
+            } ?? state
+            NestedChatRow(chat: display, parent: parent, isNew: entry.reply != nil, status: status, compact: compact) { open(entry.chat) }
+                .contextMenu {
+                    Button { rename(entry.chat) } label: { Label("Rename", systemImage: "pencil") }
+                    Button { dismiss(entry) } label: { Label("Dismiss from Activity", systemImage: "checkmark") }
+                    Button { manage(entry.chat, deleting: false) } label: { Label("Archive", systemImage: "archivebox") }
+                    Button(role: .destructive) { manage(entry.chat, deleting: true) } label: { Label("Delete", systemImage: "trash") }
+                }
+                .disabled(busy.contains(entry.chat.id))
         }
     }
 
@@ -330,7 +391,7 @@ struct MobileNewReplies: View {
         }
     }
 
-    private func expandedEntry(_ entry: MobileActivityEntry, card: Bool) -> some View {
+    private func expandedEntry(_ entry: MobileActivityEntry, card: Bool, embedded: Bool = false) -> some View {
         var display = entry.chat
         if let source = entry.source { display.project = source }
         if let needs = entry.needsYouIn { display.subtitle = "Needs you in " + needs + (entry.subtitle.map { " · " + $0 } ?? "") }
@@ -345,7 +406,7 @@ struct MobileNewReplies: View {
             } ?? state
             Group {
                 if card {
-                    ChatCard(chat: display, isNew: entry.reply != nil, status: status) { open(entry.chat) }
+                    ChatCard(chat: display, isNew: entry.reply != nil, status: status, embedded: embedded) { open(entry.chat) }
                 } else {
                     ChatRow(chat: display, status: status, isNew: entry.reply != nil) { open(entry.chat) }
                 }
@@ -399,6 +460,72 @@ struct MobileNewReplies: View {
                 else { _ = try await store.setArchived(true, chat: action.chat.id) }
                 await store.loadChats()
             } catch { problem = error.localizedDescription }
+        }
+    }
+}
+
+/// Activity's entries with each sidequest's and Sidechat's under the session that started it
+/// (when that session is still listed), as the lists nest them.
+private enum MobileActivityGroup: Identifiable {
+    case grid([MobileActivityEntry])
+    case family(Companion.ChatSummary, head: MobileActivityEntry?, children: [MobileActivityEntry])
+
+    var id: String {
+        switch self {
+        case .grid(let run): "grid:" + (run.first?.id ?? "")
+        case .family(let parent, _, _): "family:" + parent.id.uuidString
+        }
+    }
+
+    /// The session an entry sits under: a sidequest's or Sidechat's (not a worktree's, or a
+    /// work thread's, which shows as its front thread's row already).
+    static func parent(of entry: MobileActivityEntry, in chats: [Companion.ChatSummary]) -> Companion.ChatSummary? {
+        guard entry.needsYouIn == nil, entry.chat.worktreeBranch == nil, entry.chat.workOf == nil,
+              let id = entry.chat.sidequestOf ?? entry.chat.sidechatOf, id != entry.chat.id else { return nil }
+        return chats.first { $0.id == id }
+    }
+
+    /// Families in the order their first entry comes, each the session (its own entry, if it
+    /// has one) and its children; the rest in runs that share rows.
+    static func segments(_ entries: [MobileActivityEntry], chats: [Companion.ChatSummary]) -> [MobileActivityGroup] {
+        var children: [UUID: [MobileActivityEntry]] = [:]
+        var parents: [UUID: Companion.ChatSummary] = [:]
+        for entry in entries { if let parent = parent(of: entry, in: chats) { children[parent.id, default: []].append(entry); parents[parent.id] = parent } }
+        var heads: [UUID: MobileActivityEntry] = [:]
+        for entry in entries where parent(of: entry, in: chats) == nil && children[entry.chat.id] != nil {
+            if heads[entry.chat.id] == nil { heads[entry.chat.id] = entry }
+        }
+        var result: [MobileActivityGroup] = [], run: [MobileActivityEntry] = [], placed = Set<UUID>()
+        func flush() { if !run.isEmpty { result.append(.grid(run)); run = [] } }
+        for entry in entries {
+            let family = parent(of: entry, in: chats)?.id ?? (children[entry.chat.id] != nil ? entry.chat.id : nil)
+            if let family {
+                guard placed.insert(family).inserted, let parent = parents[family] else { continue }
+                flush()
+                result.append(.family(parent, head: heads[family], children: children[family] ?? []))
+            } else { run.append(entry) }
+        }
+        flush()
+        return result
+    }
+
+    /// The list's rows: each child right under its session's row (the session's own name
+    /// when only its children have activity).
+    struct Row: Identifiable {
+        let entry: MobileActivityEntry
+        let parent: Companion.ChatSummary?
+        /// A session listed only for its children's activity: its plain row.
+        var plain = false
+        var id: String { (plain ? "plain:" : "") + entry.id }
+    }
+    static func flattened(_ entries: [MobileActivityEntry], chats: [Companion.ChatSummary]) -> [Row] {
+        segments(entries, chats: chats).flatMap { segment -> [Row] in
+            switch segment {
+            case .grid(let run): return run.map { Row(entry: $0, parent: nil) }
+            case .family(let parent, let head, let children):
+                let top = head.map { Row(entry: $0, parent: nil) } ?? Row(entry: MobileActivityEntry(chat: parent, reply: nil, source: nil), parent: nil, plain: true)
+                return [top] + children.map { Row(entry: $0, parent: parent) }
+            }
         }
     }
 }

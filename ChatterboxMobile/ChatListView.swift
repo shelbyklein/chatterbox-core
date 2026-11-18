@@ -1174,10 +1174,13 @@ struct ChatRow: View {
 }
 
 /// A Sidechat, sidequest or work thread as a row inside its session's card: its name, latest line and state.
-private struct NestedChatRow: View {
+struct NestedChatRow: View {
     let chat: Companion.ChatSummary
     let parent: Companion.ChatSummary
     var selected = false
+    /// Activity: an unread reply (a blue dot), and its state ("New reply · 13 min. ago").
+    var isNew = false
+    var status: String? = nil
     /// In a list row, which brings its own insets.
     var compact = false
     var open: () -> Void
@@ -1195,12 +1198,15 @@ private struct NestedChatRow: View {
                         Text(subtitle).font(.caption)
                             .foregroundStyle(chat.isWaitingOnYou ? Color.attention : Color.secondary).lineLimit(1)
                     }
+                    if let status { Text(status).font(.caption2).foregroundStyle(.tertiary).lineLimit(1) }
                 }
                 Spacer(minLength: 0)
                 if chat.isWaitingOnYou {
                     Circle().fill(Color.attention).frame(width: 8, height: 8).accessibilityLabel("Waiting on you")
                 } else if chat.isRunning {
                     MobileWorkingMark(size: .mini)
+                } else if isNew {
+                    Circle().fill(.blue).frame(width: 8, height: 8).accessibilityLabel("New reply")
                 }
             }
             .padding(.horizontal, compact ? 0 : 12).padding(.vertical, compact ? 4 : 8)
