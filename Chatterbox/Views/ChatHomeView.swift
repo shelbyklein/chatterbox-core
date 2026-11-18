@@ -14,8 +14,8 @@ extension EnvironmentValues {
 
 /// Selected and needs-you, kept apart on every session card and row (the sidebar, Home,
 /// Studio lists): selected is a quiet accent tint, the same in light and dark; needs you is a
-/// bar down the leading edge in the attention color, beside the card's own "Needs you" word or
-/// dot. Never a full-card tint or an outline, which read as selection.
+/// bar down a row's leading edge in the attention color, beside its own "Needs you" word or dot;
+/// a card's border turns the attention color instead (Shelby, November 18). Never a full-card tint.
 enum SessionMarks {
     static let selectedFill = Color.accentColor.opacity(0.2)
 }
@@ -35,6 +35,7 @@ extension View {
 struct ThreadCard: View {
     @Environment(\.inPinnedSection) private var inPinnedSection
     let session: ChatSession
+    private var needsYou: Bool { !iconOnly && session.isWaitingOnYou }
     var expanded = false
     var iconOnly = false
     var selected = false
@@ -226,7 +227,9 @@ struct ThreadCard: View {
             .frame(minHeight: (expanded ? 250 : 144) * scale)
             .background(cardBackground, in: RoundedRectangle(cornerRadius: 12))
             .overlay {
-                RoundedRectangle(cornerRadius: 12).strokeBorder(Color.primary.opacity(hovered ? 0.28 : 0.12))
+                // Needs you: the border in the attention color.
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(needsYou ? Color.attention : Color.primary.opacity(hovered ? 0.28 : 0.12), lineWidth: needsYou ? 2 : 1)
             }
             .contentShape(RoundedRectangle(cornerRadius: 12))
             }
@@ -240,7 +243,6 @@ struct ThreadCard: View {
                 LinkedStudioShortcut(folder: session.record.projectFolder).padding(10 * scale)
             }
         }
-        .needsYouBar(!iconOnly && session.isWaitingOnYou)
         #if DEBUG
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { MacHomeDebug.cards[session.id] = $0 }
         #endif

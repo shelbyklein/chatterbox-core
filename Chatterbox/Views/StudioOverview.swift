@@ -404,10 +404,11 @@ private struct StudioPreviewCard: View {
         .padding(12)
         .background(RoundedRectangle(cornerRadius: 14).fill(Color.primary.opacity(hovered ? 0.08 : 0.055)))
         .overlay {
+            // Needs you: the border in the attention color.
             RoundedRectangle(cornerRadius: 14)
-                .strokeBorder(Color.primary.opacity(hovered ? 0.28 : 0.1))
+                .strokeBorder(summary.status == .needsYou ? Color.attention : Color.primary.opacity(hovered ? 0.28 : 0.1),
+                              lineWidth: summary.status == .needsYou ? 2 : 1)
         }
-        .needsYouBar(summary.status == .needsYou)
         .contentShape(RoundedRectangle(cornerRadius: 14)) }
         .buttonStyle(.plain)
         .onHover { hovered = $0 }

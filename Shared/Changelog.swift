@@ -22,6 +22,7 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-18", changes: [
+            "A session card on the Mac that's asking you something has a yellow border, instead of a bar down its side.",
             "Turning off Show Tag Pills on the Mac also hides the tags on session cards and sidebar rows.",
             "Activity on the phone puts a session's sidequests and Sidechats inside its card, as the other lists do.",
         ]),
@@ -147,9 +148,12 @@ private struct WhatsNewOnUpdate: ViewModifier {
     func body(content: Content) -> some View {
         content
             .task {
-                // Not in UI tests: a sheet over the app would hide what they tap.
+                // Not in tests: a sheet over the app would hide what they tap. That's the phone's
+                // UI tests, and the Mac's test harnesses, which run the app's views in a plain
+                // executable (no .app bundle, with fresh preferences that never saw the note).
                 if ProcessInfo.processInfo.environment["CHATTERBOX_TEST_HOST"] != nil
-                    || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil { return }
+                    || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+                    || Bundle.main.bundleURL.pathExtension != "app" { return }
                 let new = seen.isEmpty ? Array(Changelog.days.prefix(1)) : Changelog.since(seen)
                 if !new.isEmpty { showing = new }
             }
