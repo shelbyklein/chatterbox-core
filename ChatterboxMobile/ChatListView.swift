@@ -442,14 +442,31 @@ struct ChatListView: View {
         let all = store.chatList?.groups ?? []
         // A tab searches its own page; the switcher's search looks through every page.
         let everyChat = all.flatMap(\.chats)
-        // Sidequests are shown with the chat that started them, not as chats of their own.
-        let lists = all.map { group in
-            var group = group
-            group.chats = group.chats.filter { !MobileSidequests.listedWithParent($0, in: everyChat) }
-            return group
-        }
+        // Sidequests sit inside the card of the chat that started them, as rows like its
+        // Sidechats: each moves to its parent's list, right after the parent.
+        let lists = Self.nestingSidequests(all, everyChat: everyChat)
         let shown = filtered(search.isEmpty || fixedPage != nil ? lists.filter { page.includes($0.kind) } : lists)
                 return sorted(page == .all ? Self.mixed(shown) : shown)
+    }
+
+    /// Each sidequest whose parent is listed moves into the parent's group, just after it and
+    /// its other sidequests (a sidequest of a project can be filed under Chats), so it nests in
+    /// the parent's card instead of standing alone or being left out.
+    static func nestingSidequests(_ groups: [Companion.ChatGroup], everyChat: [Companion.ChatSummary]) -> [Companion.ChatGroup] {
+        let moving = everyChat.filter { MobileSidequests.listedWithParent($0, in: everyChat) && $0.worktreeBranch == nil }
+        guard !moving.isEmpty else { return groups }
+        let movingIDs = Set(moving.map(\.id))
+        return groups.map { group in
+            var group = group
+            var chats = group.chats.filter { !movingIDs.contains($0.id) }
+            for parent in chats.map(\.id) {
+                let quests = moving.filter { $0.sidequestOf == parent }.sorted { $0.updatedAt > $1.updatedAt }
+                guard !quests.isEmpty, let at = chats.firstIndex(where: { $0.id == parent }) else { continue }
+                chats.insert(contentsOf: quests, at: at + 1)
+            }
+            group.chats = chats
+            return group
+        }
     }
 
     /// Pinned's one list: the Mac's pinned sessions, in the Mac's order.
@@ -709,7 +726,7 @@ struct ChatListView: View {
     /// The parent a chat sits inside, when that parent is in `chats`: Sidechats and work
     /// threads (worktrees keep cards of their own).
     static func nestingParent(_ chat: Companion.ChatSummary, in ids: Set<UUID>) -> UUID? {
-        guard chat.worktreeBranch == nil, let parent = chat.workOf ?? chat.sidechatOf, parent != chat.id, ids.contains(parent) else { return nil }
+        guard chat.worktreeBranch == nil, let parent = chat.workOf ?? chat.sidequestOf ?? chat.sidechatOf, parent != chat.id, ids.contains(parent) else { return nil }
         return parent
     }
 
@@ -1138,11 +1155,6 @@ struct ChatRow: View {
             if let pins = chat.pins, !pins.isEmpty {
                 MobilePinPills(pins: pins).padding(.leading, 24)
             }
-            if let line = MobileSidequests.line(MobileSidequests.of(chat.id, in: store.chatList?.groups.flatMap(\.chats) ?? [])) {
-                Label(line, systemImage: "point.topleft.down.to.point.bottomright.curvepath")
-                    .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                    .padding(.leading, 26)
-            }
         }
         .padding(.vertical, 2)
         // A worktree sits indented under its project.
@@ -1160,7 +1172,7 @@ struct ChatRow: View {
     }
 }
 
-/// A Sidechat or work thread as a row inside its session's card: its name, latest line and state.
+/// A Sidechat, sidequest or work thread as a row inside its session's card: its name, latest line and state.
 private struct NestedChatRow: View {
     let chat: Companion.ChatSummary
     let parent: Companion.ChatSummary
@@ -1172,7 +1184,8 @@ private struct NestedChatRow: View {
     var body: some View {
         Button(action: open) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Image(systemName: chat.workOf != nil ? "arrow.turn.down.right" : "bubble.left.and.bubble.right")
+                Image(systemName: chat.workOf != nil ? "arrow.turn.down.right"
+                      : chat.isSidequest ? "point.topleft.down.to.point.bottomright.curvepath" : "bubble.left.and.bubble.right")
                     .font(.caption).foregroundStyle(.secondary).frame(width: 16)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
@@ -1196,7 +1209,8 @@ private struct NestedChatRow: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("chat-\(chat.id.uuidString)")
-        .accessibilityHint(chat.workOf != nil ? "Work thread of \(parent.project ?? parent.title)" : "Sidechat of \(parent.project ?? parent.title)")
+        .accessibilityHint(chat.workOf != nil ? "Work thread of \(parent.project ?? parent.title)"
+                           : chat.isSidequest ? "Sidequest of \(parent.project ?? parent.title)" : "Sidechat of \(parent.project ?? parent.title)")
     }
 }
 
@@ -1252,7 +1266,6 @@ struct ChatCard: View {
                         .multilineTextAlignment(.leading)
                 }
                 if let status { Text(status).font(.caption).foregroundStyle(.secondary) }
-                sidequestLine
                 if showsThumbnail, let thumbnail {
                     Image(uiImage: thumbnail).resizable().scaledToFit()
                         .frame(height: 80)
@@ -1286,13 +1299,6 @@ struct ChatCard: View {
             }
         }
     }
-    /// The sidequests this chat started, in one line; open the chat to open one.
-    @ViewBuilder private var sidequestLine: some View {
-        if let line = MobileSidequests.line(MobileSidequests.of(chat.id, in: store.chatList?.groups.flatMap(\.chats) ?? [])) {
-            Label(line, systemImage: "point.topleft.down.to.point.bottomright.curvepath")
-                .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-        }
-    }
 
     private var studioCard: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -1320,7 +1326,6 @@ struct ChatCard: View {
                 }
                 Text(chat.isRunning ? "Reply in progress" : (chat.subtitle ?? "No replies yet"))
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                sidequestLine
                 HStack(spacing: 5) {
                     if chat.isWaitingOnYou {
                         Circle().fill(.orange).frame(width: 6, height: 6)
