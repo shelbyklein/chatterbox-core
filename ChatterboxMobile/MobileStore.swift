@@ -642,6 +642,13 @@ final class MobileStore {
         try await changeDesk { try await self.call("/v1/desk/\(task.uuidString)/unlink", method: "POST", body: Data("{}".utf8)) }
     }
 
+    /// Show on the Desk: a session without a task, its questions in Needs you (or off again).
+    @discardableResult
+    func followDesk(_ chat: UUID, _ on: Bool) async throws -> Companion.Desk {
+        let body = try JSONEncoder().encode(Companion.DeskSessionRequest(chatID: chat))
+        return try await changeDesk { try await self.call("/v1/desk/\(on ? "follow" : "unfollow")", method: "POST", body: body) }
+    }
+
     /// Make this a task: a new task, already linked to the thread.
     @discardableResult
     func makeTask(_ chat: UUID, text: String? = nil) async throws -> Companion.Desk {

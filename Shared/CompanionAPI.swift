@@ -478,6 +478,9 @@ enum Companion {
         var sourcePull: DeskSourcePull? = nil
         /// Manual holds; nil from services that do not support hold/resume.
         var onHold: [DeskHeld]? = nil
+        /// Sessions put on the Desk without a task (their questions show in Needs you; other
+        /// sessions without a task don't). Nil from a service older than following.
+        var followed: [UUID]? = nil
     }
 
     struct DeskHeld: Codable, Identifiable, Hashable {

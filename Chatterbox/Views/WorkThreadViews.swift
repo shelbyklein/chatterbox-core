@@ -152,8 +152,9 @@ struct WorkThreadBanner: View {
     }
 }
 
-/// A session menu's task items (plans/work-threads.md): Make This a Task, Link to a Task (a
-/// To do one), or Unlink from its task. Nothing from a service older than tasks.
+/// A session menu's task items (plans/work-threads.md): Show on the Desk (its questions in
+/// Needs you without a task), Make This a Task, Link to a Task (a To do one), or Unlink from
+/// its task. Nothing from a service older than tasks.
 struct ThreadTaskMenu: View {
     let session: ChatSession
     var desk: DeskModel = .shared
@@ -163,6 +164,12 @@ struct ThreadTaskMenu: View {
             if let task = desk.task(of: session.id) {
                 Button("Unlink from Task \u{201C}\(DeskStore.short(task.text, limit: 40))\u{201D}") { Task { await desk.unlink(task.id) } }
             } else {
+                // A session without a task reports to the Desk only when put on it.
+                if desk.canFollow {
+                    Toggle("Show on the Desk", isOn: Binding(get: { desk.isFollowed(session.id) },
+                                                            set: { on in Task { await desk.setFollowed(session.id, on) } }))
+                    Divider()
+                }
                 Button("Make This a Task") { Task { await desk.makeTask(session.id) } }
                 let todo = desk.snapshot?.incoming ?? []
                 if !todo.isEmpty {

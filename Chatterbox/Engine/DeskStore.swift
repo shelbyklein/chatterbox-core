@@ -29,6 +29,9 @@ final class DeskStore {
     /// Waiting things Shelby silenced: off the Desk, still waiting in their sessions. Each goes
     /// once it no longer waits.
     private(set) var silences: [Silence] = []
+    /// Sessions Shelby put on the Desk without a task: their questions, permissions and plans
+    /// show in Needs you. Otherwise only sessions carrying a task (and their sidequests) do.
+    private(set) var followed: Set<UUID> = []
     /// Goes up whenever anything the Desk shows changes, including what sessions are doing.
     private(set) var revision = 1
     /// After the Desk changed, with what it shows now: the service tells the app (desk.changed).
@@ -112,6 +115,8 @@ final class DeskStore {
         /// Every task; nil in a desk.json from before tasks, whose requests become tasks to do.
         var tasks: [TaskRecord]? = nil
         var sourceChecks: [String: Companion.DeskIngestResult]? = nil
+        /// Nil in a desk.json from before following.
+        var followed: [UUID]? = nil
     }
     private struct Content: Equatable {
         var needsYou: [Companion.DeskWaiting]
@@ -123,6 +128,7 @@ final class DeskStore {
         var linked: [Companion.DeskTask] = []
         var sourcePull: Companion.DeskSourcePull? = nil
         var onHold: [Companion.DeskHeld] = []
+        var followed: [UUID] = []
     }
     /// Something a session waits on Shelby for.
     private struct Waiting {
@@ -165,6 +171,7 @@ final class DeskStore {
                 tasks[index].origin = DeskOriginRules.clickUp(in: (tasks[index].note ?? "") + "\n" + tasks[index].text)
             }
             silences = saved.silences ?? []
+            followed = Set(saved.followed ?? [])
             sourceChecks = saved.sourceChecks ?? [:]
             // Sessions may have changed while the service was down.
             revision = saved.revision + 1
@@ -1031,6 +1038,11 @@ final class DeskStore {
             guard let request = try? body.decode(Companion.DeskSilenceRequest.self) else { throw Failure(status: 400, message: "Say what to unsilence.") }
             unsilence(request)
             return try .value(snapshot())
+        case "follow", "unfollow":
+            // On the Desk without a task, or back off it (Shelby's switch in a session's menu).
+            guard let request = try? body.decode(Companion.DeskSessionRequest.self) else { throw Failure(status: 400, message: "Say which session.") }
+            setFollowed(request.chatID, body["action"]?.string == "follow")
+            return try .value(snapshot())
         case "complete", "reopen":
             guard let request = try? body.decode(Companion.DeskSessionRequest.self) else { throw Failure(status: 400, message: "Say which session.") }
             if body["action"]?.string == "complete" { try complete(request.chatID) } else { try reopen(request.chatID) }
@@ -1081,9 +1093,13 @@ final class DeskStore {
         var working: [(date: Date, item: Companion.DeskWorking)] = []
         var ready: [(date: Date, item: Companion.DeskReady)] = []
         var live = Set<Silence>()
+        // Needs you: only sessions on the Desk, a task's or one followed (or their sidequests,
+        // Sidechats and work threads).
+        let onDesk = Self.onDesk(followed: followed, carrying: Set(carried.keys), byID: byID)
         for session in model.sessions where session.record.archivedAt == nil {
             let task = carried[session.id]
             if task?.heldAt != nil { continue }
+            if task == nil, !onDesk(session) { continue }
             let all = waiting(in: session, now: now)
             var shown: Waiting?
             for waiting in all {
@@ -1154,7 +1170,29 @@ final class DeskStore {
                        working: working.sorted(by: newestFirst).map(\.item), silenced: silenced.sorted(by: newestFirst).map(\.item),
                        ready: Array(ready.sorted(by: newestFirst).prefix(Self.readyLimit).map(\.item)),
                        done: done.map { (date: $0.completedAt, item: $0) }.sorted(by: newestFirst).map(\.item),
-                       linked: linked, sourcePull: sourcePullState(), onHold: heldItems)
+                       linked: linked, sourcePull: sourcePullState(), onHold: heldItems,
+                       followed: followed.filter { byID[$0] != nil }.sorted { $0.uuidString < $1.uuidString })
+    }
+
+    /// Show on the Desk (or off it) for a session without a task: from the Mac's or phone's switch.
+    func setFollowed(_ chatID: UUID, _ on: Bool) {
+        if on { followed.insert(chatID) } else { followed.remove(chatID) }
+        scheduleSave()
+    }
+
+    /// Whether a session reports to the Desk: it carries a task or was followed, or its parent
+    /// (a sidequest's, Sidechat's or work thread's) does, a few levels up.
+    static func onDesk(followed: Set<UUID>, carrying: Set<UUID>, byID: [UUID: ChatSession]) -> (ChatSession) -> Bool {
+        { session in
+            var current: ChatSession? = session
+            for _ in 0..<4 {
+                guard let here = current else { return false }
+                if carrying.contains(here.id) || followed.contains(here.id) { return true }
+                guard let parent = here.record.sidequestOf ?? here.record.workOf ?? here.record.sidechatOf, parent != here.id else { return false }
+                current = byID[parent]
+            }
+            return false
+        }
     }
 
     private func sourcePullState() -> Companion.DeskSourcePull {
@@ -1380,7 +1418,8 @@ final class DeskStore {
 
     private static func desk(_ content: Content, revision: Int) -> Companion.Desk {
         .init(revision: revision, needsYou: content.needsYou, incoming: content.incoming, working: content.working, silenced: content.silenced,
-              ready: content.ready, done: content.done, linked: content.linked, sourcePull: content.sourcePull, onHold: content.onHold)
+              ready: content.ready, done: content.done, linked: content.linked, sourcePull: content.sourcePull, onHold: content.onHold,
+              followed: content.followed)
     }
 
     /// Now, in whole seconds, as desk.json keeps it.
@@ -1486,7 +1525,8 @@ final class DeskStore {
 
     private func persist() throws {
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try Companion.encoder.encode(Saved(revision: revision, requests: requests, silences: silences, tasks: tasks, sourceChecks: sourceChecks)).write(to: file, options: .atomic)
+        try Companion.encoder.encode(Saved(revision: revision, requests: requests, silences: silences, tasks: tasks, sourceChecks: sourceChecks,
+                                           followed: followed.sorted { $0.uuidString < $1.uuidString })).write(to: file, options: .atomic)
     }
 }
 

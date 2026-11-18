@@ -352,6 +352,16 @@ struct MobileAboutPanel: View {
                         }
                     }
                     .accessibilityIdentifier("about-task")
+                } else if tasksKept, let followed = store.latestDesk?.followed {
+                    // No task: its questions show in the Desk's Needs you only when switched on.
+                    Toggle(isOn: Binding(get: { followed.contains(summary.id) },
+                                         set: { on in Task { try? await store.followDesk(summary.id, on) } })) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Show on the Desk")
+                            Text("Its questions and approvals in Needs you, without a task.").font(.caption).foregroundStyle(Color.metadata)
+                        }
+                    }
+                    .accessibilityIdentifier("about-show-on-desk")
                 }
                 if let front = summary.workOf {
                     let listed = chats.first { $0.id == front }

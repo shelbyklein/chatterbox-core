@@ -132,6 +132,8 @@ final class DeskModel {
     private(set) var reopening: Set<UUID> = []
     /// Silenced things being put back (DeskNeed.silenceKey), off the silenced list until the service answers.
     private(set) var unsilencing: Set<String> = []
+    /// Show on the Desk switches sent and not yet confirmed: shown as switched meanwhile.
+    private(set) var following: [UUID: Bool] = [:]
     /// Tasks being unlinked here, and threads being made tasks, until the service answers.
     private(set) var unlinking: Set<UUID> = []
     private(set) var tasking: Set<UUID> = []
@@ -252,8 +254,14 @@ final class DeskModel {
     /// was silenced is in neither. A ready session this Mac sees working, waiting or archived
     /// again leaves Ready before the service says so; a done one unarchived leaves Done.
     func sections(in model: AppModel, now: Date = Date()) -> DeskSections {
-        let sessions = model.activeSessions
         let carried = openTasks
+        // Only sessions on the Desk: a task's or one followed, and their sidequests (every
+        // session from a service older than following).
+        let onDesk: (ChatSession) -> Bool = snapshot?.followed.map { followed in
+            DeskStore.onDesk(followed: Set(followed), carrying: Set(carried?.keys.map { $0 } ?? []),
+                             byID: Dictionary(model.sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }))
+        } ?? { _ in true }
+        let sessions = model.activeSessions.filter(onDesk)
         let heldChats = Set((snapshot?.onHold ?? []).compactMap(\.chatID))
         var needs: [(date: Date, need: DeskNeed)] = []
         var waiting = Set<UUID>()
@@ -328,6 +336,21 @@ final class DeskModel {
 
     /// Whether the service keeps tasks (Make this a task, Link, Unlink).
     var hasTasks: Bool { snapshot?.linked != nil && !unsupported }
+
+    /// Whether the service can put sessions on the Desk without a task (Show on the Desk).
+    var canFollow: Bool { snapshot?.followed != nil && !unsupported }
+
+    /// A session on the Desk without a task: its questions show in Needs you.
+    func isFollowed(_ chatID: UUID) -> Bool { following[chatID] ?? snapshot?.followed?.contains(chatID) ?? false }
+
+    /// Show on the Desk, or take it off: on every device.
+    func setFollowed(_ chatID: UUID, _ on: Bool) async {
+        following[chatID] = on
+        defer { following[chatID] = nil }
+        await change(["action": .string(on ? "follow" : "unfollow"), "chatID": .string(chatID.uuidString)],
+                     doing: on ? "put it on the Desk" : "take it off the Desk",
+                     older: "Show on the Desk works once the background service restarts with this version of Chatterbox.")
+    }
 
     private func recentlyAnswered(_ id: UUID, now: Date) -> Bool {
         answered[id].map { now.timeIntervalSince($0) < 15 } ?? false

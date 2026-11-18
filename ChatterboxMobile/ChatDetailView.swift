@@ -668,6 +668,14 @@ struct ChatDetailView: View {
                 Button { deskChange { try await store.unlinkDesk(task.id) } } label: { Label("Unlink from Task", systemImage: "link") }
                     .accessibilityIdentifier("menu-unlink-task")
             } else {
+                // Without a task, a session reports to the Desk only when put on it.
+                if let followed = store.latestDesk?.followed {
+                    Toggle(isOn: Binding(get: { followed.contains(chat.id) },
+                                         set: { on in deskChange { try await store.followDesk(chat.id, on) } })) {
+                        Label("Show on the Desk", systemImage: "lamp.desk")
+                    }
+                    .accessibilityIdentifier("menu-show-on-desk")
+                }
                 Button { deskChange { try await store.makeTask(chat.id) } } label: { Label("Make This a Task", systemImage: "checklist") }
                     .accessibilityIdentifier("menu-make-task")
                 if !(store.latestDesk?.incoming ?? []).isEmpty {
