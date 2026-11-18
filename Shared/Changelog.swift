@@ -22,6 +22,7 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-18", changes: [
+            "Turning off Show Tag Pills on the Mac also hides the tags on session cards and sidebar rows.",
             "Activity on the phone puts a session's sidequests and Sidechats inside its card, as the other lists do.",
         ]),
         Day(id: "2026-11-17", changes: [

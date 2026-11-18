@@ -1169,11 +1169,18 @@ struct SidebarRow: View {
     }
 }
 
-/// A project's tags as small colored pills, wrapping onto more lines if needed.
+/// A project's tags as small colored pills, wrapping onto more lines if needed. Hidden on cards
+/// and rows when the sidebar's Show Tag Pills is off (`always`: shown anyway, as the quick switcher's).
 struct TagPills: View {
     let tags: [String]
+    var always = false
+    @AppStorage("sidebarTagPills") private var shown = true
 
     var body: some View {
+        if shown || always { pills }
+    }
+
+    private var pills: some View {
         FlowLayout(spacing: 4) {
             ForEach(tags, id: \.self) { tag in
                 Text(tag)

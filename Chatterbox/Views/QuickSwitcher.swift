@@ -150,7 +150,7 @@ struct QuickSwitcher: View {
                 }
                 Spacer(minLength: 8)
                 if !session.tags.isEmpty {
-                    TagPills(tags: session.tags).fixedSize()
+                    TagPills(tags: session.tags, always: true).fixedSize()
                 }
                 Text(session.record.backend.label).font(.caption).foregroundStyle(.secondary)
             case .pin(let pin):
