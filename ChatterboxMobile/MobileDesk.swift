@@ -1082,22 +1082,30 @@ private struct DeskReadyCard: View {
             if item.autoStarted == true { MobileDeskAutoStartedTag() }
             MobileDeskSourceLine(id: (item.task ?? item.id).uuidString, origin: item.origin, check: item.check,
                                  writeBack: writeBack, taps: { taps($0) })
-            HStack(spacing: 8) {
-                Button("Mark Complete", action: taps(complete))
+            // Small, one-line buttons with short labels, so the row stays one compact line.
+            HStack(spacing: 6) {
+                Button(action: taps(complete)) { Label("Complete", systemImage: "checkmark") }
                     .buttonStyle(.borderedProminent)
                     .tint(.green)
+                    .accessibilityLabel("Mark Complete")
                     .accessibilityIdentifier("desk-complete-\(item.id.uuidString)")
-                Button("Open", action: taps(open))
+                Button(action: taps(open)) { Label("Open", systemImage: "arrow.up.forward") }
                     .buttonStyle(.bordered)
+                    .accessibilityLabel("Open")
                     .accessibilityIdentifier("desk-ready-open-\(item.id.uuidString)")
                 // Waiting on someone's reply: off Review until resumed.
                 if let hold {
-                    Button(action: taps(hold)) { Label("On Hold", systemImage: "pause.circle") }
+                    Button(action: taps(hold)) { Label("Hold", systemImage: "pause") }
                         .buttonStyle(.bordered)
+                        .accessibilityLabel("On Hold")
                         .accessibilityIdentifier("desk-ready-hold-\(item.id.uuidString)")
                 }
                 Spacer(minLength: 0)
             }
+            .controlSize(.small)
+            .font(.subheadline.weight(.medium))
+            .lineLimit(1)
+            .fixedSize(horizontal: false, vertical: true)
         }
         .deskCard()
         .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 16, style: .continuous))
