@@ -160,7 +160,6 @@ struct ChatView: View {
                     }
                 }
             if session.isSidequest { SidequestArchiveRequest(session: session) }
-            if tileContext == nil { PlaceSuggestionCard(session: session).padding(.horizontal, 20) }
             ThreadRestartStatus(session: session).padding(.horizontal, 20)
             if let stopStatus { Text(stopStatus).font(.caption).foregroundStyle(.secondary).padding(.horizontal, 20) }
             composer
@@ -1820,35 +1819,3 @@ private struct ComposerStatusLayout: Layout {
     }
 }
 
-/// A loose session whose first message fits one of the Studios: offer to move it there.
-struct PlaceSuggestionCard: View {
-    let session: ChatSession
-    @Environment(AppModel.self) private var model
-    @State private var dismissed = false
-
-    private var studio: Studio? {
-        guard !dismissed, ChatPromotion.eligible(session), !PlaceSuggestion.isDismissed(session.id),
-              let first = session.items.first(where: { $0.kind == .user })?.text else { return nil }
-        let places = model.activeStudios.map { PlaceSuggestion.Place(id: $0.id, name: $0.name, instructions: $0.instructions ?? "") }
-        return PlaceSuggestion.best(for: first, among: places).flatMap { best in model.activeStudios.first { $0.id == best.id } }
-    }
-
-    var body: some View {
-        if let studio {
-            HStack(spacing: 10) {
-                Image(systemName: "paintpalette").foregroundStyle(.secondary)
-                Text("This looks like **\(studio.name)** work.").font(.callout)
-                Spacer(minLength: 8)
-                Button(session.isRunning ? "Move after this reply" : "Move to \(studio.name)") { model.move(session, to: studio) }
-                    .disabled(session.isRunning)
-                Button("Not here") { PlaceSuggestion.dismiss(session.id); dismissed = true }
-                    .buttonStyle(.borderless)
-            }
-            .controlSize(.small)
-            .padding(.horizontal, 12).padding(.vertical, 8)
-            .background(RoundedRectangle(cornerRadius: 10).fill(.quaternary.opacity(0.5)))
-            .accessibilityElement(children: .contain)
-            .accessibilityIdentifier("place-suggestion")
-        }
-    }
-}

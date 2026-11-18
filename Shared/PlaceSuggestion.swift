@@ -1,9 +1,8 @@
 import Foundation
 
 /// Where a piece of work belongs, from what it says and each place's name and what belongs
-/// there: a Studio's instructions, or a project's brief (the Desk proposes both; a loose
-/// session's card suggests Studios). Cautious on purpose: nothing unless one place clearly
-/// fits, since a wrong suggestion is worse than none.
+/// there: a Studio's instructions, or a project's brief (the Desk proposes both). Cautious on
+/// purpose: nothing unless one place clearly fits, since a wrong suggestion is worse than none.
 enum PlaceSuggestion {
     struct Place: Equatable {
         enum Kind: String { case studio, project }
@@ -77,16 +76,6 @@ enum PlaceSuggestion {
         if exact.count == 1 { return exact[0] }
         let matches = places.filter { plain($0.name) == wanted }
         return matches.count == 1 ? matches[0] : nil
-    }
-
-    /// Dismissed per session, on this device.
-    static let dismissedKey = "placeSuggestionDismissed"
-    static func isDismissed(_ id: UUID) -> Bool {
-        (UserDefaults.standard.stringArray(forKey: dismissedKey) ?? []).contains(id.uuidString)
-    }
-    static func dismiss(_ id: UUID) {
-        let list = (UserDefaults.standard.stringArray(forKey: dismissedKey) ?? []).suffix(500) + [id.uuidString]
-        UserDefaults.standard.set(Array(list), forKey: dismissedKey)
     }
 
     private static let ignored: Set<String> = [
