@@ -499,10 +499,13 @@ final class DeskModel {
 
     var canHold: Bool { snapshot?.onHold != nil }
 
-    func hold(_ task: UUID, resume: Bool = false) async {
+    /// `waiting`: held because you're waiting for someone's response.
+    func hold(_ task: UUID, resume: Bool = false, waiting: Bool = false) async {
         guard canHold, busy.insert(task).inserted else { return }
         defer { busy.remove(task) }
-        await change(["action": .string(resume ? "resume" : "hold"), "id": .string(task.uuidString)],
+        var body: [String: JSON] = ["action": .string(resume ? "resume" : "hold"), "id": .string(task.uuidString)]
+        if waiting, !resume { body["reason"] = "response" }
+        await change(body,
                      doing: resume ? "resume the task" : "put it on hold",
                      older: "On hold needs the newest background service.")
     }
@@ -1243,6 +1246,7 @@ private struct DeskRequestRow: View {
         .accessibilityElement(children: .contain)
         .contextMenu {
             if desk.canHold {
+                Button("Waiting for response", systemImage: "ellipsis.bubble") { Task { await desk.hold(request.id, waiting: true) } }
                 Button("Put on hold", systemImage: "pause.circle") { Task { await desk.hold(request.id) } }
             }
         }
@@ -1687,6 +1691,7 @@ private struct DeskTaskMenuItems: View {
         if desk.hasTasks {
             if let task {
                 if desk.canHold && canHoldHere {
+                    Button("Waiting for response", systemImage: "ellipsis.bubble") { Task { await desk.hold(task, waiting: true) } }
                     Button("Put on hold", systemImage: "pause.circle") { Task { await desk.hold(task) } }
                 }
                 Button("Unlink Task", systemImage: "link.badge.plus") { Task { await desk.unlink(task) } }
@@ -1858,8 +1863,13 @@ private struct DeskReadyRow: View {
                     .deskFrame("readyOpen:\(item.id)")
                 // Waiting on someone's reply: off Review until resumed (Shelby, 2026-11-10).
                 if desk.canHold, let task = item.task {
-                    Button { Task { await desk.hold(task) } } label: { Label("On hold", systemImage: "pause.circle") }
-                        .help("Waiting on a response: move it to On hold. Resume brings it back to Review.")
+                    // A click holds it; the arrow says why (waiting for someone's response).
+                    Menu {
+                        Button("Waiting for response", systemImage: "ellipsis.bubble") { Task { await desk.hold(task, waiting: true) } }
+                        Button("On hold", systemImage: "pause.circle") { Task { await desk.hold(task) } }
+                    } label: { Label("On hold", systemImage: "pause.circle") } primaryAction: { Task { await desk.hold(task) } }
+                        .fixedSize()
+                        .help("Move it to On hold; the arrow marks it as waiting for a response. Resume brings it back to Review.")
                         .deskFrame("readyHold:\(item.id)")
                 }
                 Spacer(minLength: 0)
@@ -2079,7 +2089,9 @@ private struct DeskHeldRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Label("On hold", systemImage: "pause.circle").font(.caption).foregroundStyle(Color.metadata)
+                Label(item.label, systemImage: item.isWaitingForResponse ? "ellipsis.bubble" : "pause.circle").font(.caption.weight(item.isWaitingForResponse ? .semibold : .regular))
+                    .foregroundStyle(item.isWaitingForResponse ? Color.purple : Color.metadata)
+                    .deskFrame("heldLabel:\(item.id)")
                 Spacer(minLength: 4)
                 if let place = item.place { DeskPlaceLabel(name: place) }
             }
@@ -2095,6 +2107,13 @@ private struct DeskHeldRow: View {
             }
         }
         .deskCard()
+        .contextMenu {
+            if item.isWaitingForResponse {
+                Button("Just On Hold", systemImage: "pause.circle") { Task { await desk.hold(item.id) } }
+            } else {
+                Button("Waiting for Response", systemImage: "ellipsis.bubble") { Task { await desk.hold(item.id, waiting: true) } }
+            }
+        }
         .disabled(desk.busy.contains(item.id))
         .accessibilityElement(children: .contain)
         .deskFrame("held:\(item.id)")

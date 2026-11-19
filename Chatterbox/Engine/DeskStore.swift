@@ -94,6 +94,8 @@ final class DeskStore {
         var autoStarted: Bool? = nil
         /// Manual workflow pause; the thread and its progress stay linked.
         var heldAt: Date? = nil
+        /// Why it's held: "response" (waiting for someone's reply), or nil for a plain hold.
+        var heldReason: String? = nil
 
         init(_ request: Companion.DeskRequest) {
             id = request.id; text = request.text; source = request.source; createdAt = request.createdAt
@@ -817,11 +819,17 @@ final class DeskStore {
     }
 
     /// Holding never interrupts a reply. Only an explicit resume clears this saved pause.
-    func hold(_ id: UUID) throws {
+    /// `reason` "response": waiting for someone's reply. Holding a held task again only
+    /// changes its reason.
+    func hold(_ id: UUID, reason: String? = nil) throws {
+        let reason = reason == "response" ? reason : nil
         guard let index = tasks.firstIndex(where: { $0.id == id && $0.isOpen }) else {
             throw Failure(status: 404, message: "That open task is gone.")
         }
-        if tasks[index].heldAt != nil { return }
+        if tasks[index].heldAt != nil {
+            if tasks[index].heldReason != reason { tasks[index].heldReason = reason; changed() }
+            return
+        }
         if let chat = tasks[index].chatID, let session = model?.sessions.first(where: { $0.id == chat }) {
             guard session.record.archivedAt == nil else { throw Failure(status: 409, message: "That task is already complete.") }
             guard !session.isRunning && !session.isWorkingOn && session.record.pressureHold == nil else {
@@ -829,6 +837,7 @@ final class DeskStore {
             }
         }
         tasks[index].heldAt = Self.wholeSeconds()
+        tasks[index].heldReason = reason
         changed()
     }
 
@@ -838,6 +847,7 @@ final class DeskStore {
         }
         guard tasks[index].heldAt != nil else { return }
         tasks[index].heldAt = nil
+        tasks[index].heldReason = nil
         changed()
     }
 
@@ -845,7 +855,8 @@ final class DeskStore {
         tasks.filter { $0.isOpen && $0.heldAt != nil }.map { task in
             let session = task.chatID.flatMap { id in model?.sessions.first { $0.id == id } }
             return Companion.DeskHeld(id: task.id, text: task.text, heldAt: task.heldAt!,
-                place: session.flatMap { placeName($0) } ?? task.proposed?.name, chatID: session?.id, note: task.note)
+                place: session.flatMap { placeName($0) } ?? task.proposed?.name, chatID: session?.id, note: task.note,
+                reason: task.heldReason)
         }.sorted { $0.heldAt == $1.heldAt ? $0.id.uuidString < $1.id.uuidString : $0.heldAt > $1.heldAt }
     }
 
@@ -1055,7 +1066,7 @@ final class DeskStore {
         case "hold", "resume":
             guard !agent else { throw Failure(status: 403, message: "Only Shelby can put tasks on hold or resume them.") }
             let id = try Self.requestID(body)
-            if body["action"]?.string == "hold" { try hold(id) } else { try resume(id) }
+            if body["action"]?.string == "hold" { try hold(id, reason: body["reason"]?.string) } else { try resume(id) }
             return try .value(snapshot())
         case "unlink":
             try unlink(try Self.requestID(body))

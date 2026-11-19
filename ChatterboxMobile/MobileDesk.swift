@@ -434,7 +434,8 @@ struct MobileDeskView: View {
                                 markDone: { markDone(request) },
                                 link: hasTasks && place(for: request) != nil ? { linking = request } : nil,
                                 writeBack: { writeBack(request.id) },
-                                hold: supportsHold ? { setHold(request.id) } : nil)
+                                hold: supportsHold ? { setHold(request.id) } : nil,
+                                wait: supportsHold ? { setHold(request.id, waiting: true) } : nil)
             }
         case .working:
             ForEach(working) { item in
@@ -453,7 +454,8 @@ struct MobileDeskView: View {
                                 unlink: item.task.map { task in { unlink(task) } },
                                 writeBack: item.task.map { task in { writeBack(task) } },
                                 completeChat: { completeChat(item.chatID) },
-                                hold: supportsHold ? item.task.map { task in { setHold(task) } } : nil)
+                                hold: supportsHold ? item.task.map { task in { setHold(task) } } : nil,
+                                wait: supportsHold ? item.task.map { task in { setHold(task, waiting: true) } } : nil)
             }
             if !silenced.isEmpty {
                 DeskSilencedList(items: silenced, busy: unsilencing) { unsilence($0) }
@@ -463,13 +465,15 @@ struct MobileDeskView: View {
                 DeskReadyCard(item: item, swipes: !wide, open: { open(item.id) }, complete: { complete(item) }, silence: { silence(item) },
                               unlink: item.task.map { task in { unlink(task) } },
                               writeBack: item.task.map { task in { writeBack(task) } },
-                              hold: supportsHold ? item.task.map { task in { setHold(task) } } : nil)
+                              hold: supportsHold ? item.task.map { task in { setHold(task) } } : nil,
+                                wait: supportsHold ? item.task.map { task in { setHold(task, waiting: true) } } : nil)
             }
         case .onHold:
             ForEach(held) { item in
                 MobileDeskHeldCard(item: item, busy: busy.contains(item.id),
                     resume: { setHold(item.id, resume: true) },
-                    open: item.chatID.map { chat in { open(chat) } })
+                    open: item.chatID.map { chat in { open(chat) } },
+                    setWaiting: supportsHold ? { setHold(item.id, waiting: $0) } : nil)
             }
         case .done:
             ForEach(done) { item in
@@ -636,12 +640,12 @@ struct MobileDeskView: View {
         }
     }
 
-    private func setHold(_ task: UUID, resume: Bool = false) {
+    private func setHold(_ task: UUID, resume: Bool = false, waiting: Bool = false) {
         guard supportsHold, busy.insert(task).inserted else { return }
         Task {
             defer { busy.remove(task) }
             do {
-                let updated = try await store.holdDesk(task, resume: resume)
+                let updated = try await store.holdDesk(task, resume: resume, waiting: waiting)
                 if !resume { column = .onHold }
                 else if updated.ready?.contains(where: { $0.task == task }) == true { column = .ready }
                 else if updated.needsYou.contains(where: { $0.task == task }) { column = .needsYou }
@@ -846,6 +850,8 @@ private struct DeskWaitingCard: View {
     private var context: String { deskContext(title: item.title, place: item.place, subtitle: item.subtitle) }
 
     var hold: (() -> Void)? = nil
+    /// On hold because you're waiting for someone's response.
+    var wait: (() -> Void)? = nil
 
     var body: some View {
         DeskSwipe(action: .silence, id: item.id.uuidString, enabled: swipes, fullSwipe: false, perform: silence) { taps in card(taps) }
@@ -912,6 +918,7 @@ private struct DeskWaitingCard: View {
         .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 16, style: .continuous))
         .contextMenu {
             Button("Open", systemImage: "arrow.up.forward.square", action: open)
+            if let wait { Button("Waiting for response", systemImage: "ellipsis.bubble", action: wait) }
             if let hold { Button("Put on hold", systemImage: "pause.circle", action: hold) }
             if let unlink { Button("Unlink Task", systemImage: "link", action: unlink) }
             else if hasTasks { Button("Make This a Task", systemImage: "checklist", action: makeTask) }
@@ -1039,6 +1046,8 @@ private struct DeskReadyCard: View {
     var writeBack: (() -> Void)? = nil
 
     var hold: (() -> Void)? = nil
+    /// On hold because you're waiting for someone's response.
+    var wait: (() -> Void)? = nil
 
     var body: some View {
         DeskSwipe(action: .complete, id: item.id.uuidString, enabled: swipes, perform: complete) { taps in card(taps) }
@@ -1102,8 +1111,12 @@ private struct DeskReadyCard: View {
                     .accessibilityLabel("Open")
                     .accessibilityIdentifier("desk-ready-open-\(item.id.uuidString)")
                 // Waiting on someone's reply: off Review until resumed.
+                // Asks why: waiting for someone's response, or just on hold.
                 if let hold {
-                    Button(action: taps(hold)) { Label("Hold", systemImage: "pause") }
+                    Menu {
+                        if let wait { Button("Waiting for response", systemImage: "ellipsis.bubble", action: taps(wait)) }
+                        Button("On hold", systemImage: "pause.circle", action: taps(hold))
+                    } label: { Label("Hold", systemImage: "pause") }
                         .buttonStyle(.bordered)
                         .accessibilityLabel("On Hold")
                         .accessibilityIdentifier("desk-ready-hold-\(item.id.uuidString)")
@@ -1119,6 +1132,7 @@ private struct DeskReadyCard: View {
         .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 16, style: .continuous))
         .contextMenu {
             Button("Open", systemImage: "arrow.up.forward.square", action: open)
+            if let wait { Button("Waiting for response", systemImage: "ellipsis.bubble", action: wait) }
             if let hold { Button("Put on hold", systemImage: "pause.circle", action: hold) }
             Button("Mark Complete", systemImage: "checkmark.circle", action: complete)
             if let unlink { Button("Unlink Task", systemImage: "link", action: unlink) }
@@ -1330,11 +1344,14 @@ private struct DeskRequestCard: View {
     }
 
     var hold: (() -> Void)? = nil
+    /// On hold because you're waiting for someone's response.
+    var wait: (() -> Void)? = nil
 
     var body: some View {
         DeskSwipe(action: .remove, id: request.id.uuidString, enabled: swipes && !busy, fullSwipe: false, perform: ignore) { taps in card(taps) }
             .contextMenu {
-                if let hold { Button("Put on hold", systemImage: "pause.circle", action: hold) }
+                if let wait { Button("Waiting for response", systemImage: "ellipsis.bubble", action: wait) }
+            if let hold { Button("Put on hold", systemImage: "pause.circle", action: hold) }
             }
     }
 
@@ -1935,11 +1952,16 @@ private struct MobileDeskHeldCard: View {
     let busy: Bool
     let resume: () -> Void
     var open: (() -> Void)?
+    /// Switches why it's held: true for waiting for a response.
+    var setWaiting: ((Bool) -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Label("On hold", systemImage: "pause.circle").font(.subheadline).foregroundStyle(Color.metadata)
+                Label(item.label, systemImage: item.isWaitingForResponse ? "ellipsis.bubble" : "pause.circle")
+                    .font(.subheadline.weight(item.isWaitingForResponse ? .semibold : .regular))
+                    .foregroundStyle(item.isWaitingForResponse ? Color.purple : Color.metadata)
+                    .accessibilityIdentifier("desk-held-label-" + item.id.uuidString)
                 Spacer(minLength: 4)
                 if let place = item.place { Text(place).font(.caption).foregroundStyle(Color.metadata).lineLimit(1) }
             }
@@ -1953,6 +1975,12 @@ private struct MobileDeskHeldCard: View {
             }
         }
         .deskCard()
+        .contextMenu {
+            if let setWaiting {
+                if item.isWaitingForResponse { Button("Just On Hold", systemImage: "pause.circle") { setWaiting(false) } }
+                else { Button("Waiting for Response", systemImage: "ellipsis.bubble") { setWaiting(true) } }
+            }
+        }
         .disabled(busy)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("desk-held-" + item.id.uuidString)

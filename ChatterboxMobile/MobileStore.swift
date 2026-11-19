@@ -635,9 +635,11 @@ final class MobileStore {
     }
 
     @discardableResult
-    func holdDesk(_ task: UUID, resume: Bool = false) async throws -> Companion.Desk {
+    func holdDesk(_ task: UUID, resume: Bool = false, waiting: Bool = false) async throws -> Companion.Desk {
         let action = resume ? "resume" : "hold"
-        return try await changeDesk { try await self.call("/v1/desk/\(task.uuidString)/\(action)", method: "POST", body: Data("{}".utf8)) }
+        // Waiting for someone's response is a reason on the hold.
+        let body = Data((waiting && !resume ? #"{"reason":"response"}"# : "{}").utf8)
+        return try await changeDesk { try await self.call("/v1/desk/\(task.uuidString)/\(action)", method: "POST", body: body) }
     }
 
     /// Unlink: the task goes back to To do.

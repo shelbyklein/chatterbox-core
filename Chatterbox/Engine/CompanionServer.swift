@@ -457,7 +457,9 @@ final class CompanionServer {
             guard let id = UUID(uuidString: parts[2]) else { return .error(404, "That task is gone.") }
             do {
                 if parts[3] == "hold" {
-                    try DeskStore.shared.hold(id)
+                    // {"reason": "response"}: waiting for someone's reply.
+                    let reason = (try? JSONSerialization.jsonObject(with: request.body) as? [String: Any])?["reason"] as? String
+                    try DeskStore.shared.hold(id, reason: reason)
                 } else if parts[3] == "resume" {
                     try DeskStore.shared.resume(id)
                 } else if parts[3] == "unlink" {

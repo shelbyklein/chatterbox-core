@@ -22,6 +22,7 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-19", changes: [
+            "Desk: \"Waiting for response\" when putting a card on hold (the Hold button on Review cards, and each card's menu). It sits in On hold with that label; long-press or right-click a held card to switch.",
             "Desk cards from ClickUp (or an email) show the task's status as a colored pill and a link that opens it there, on the Mac and the phone.",
         ]),
         Day(id: "2026-11-18", changes: [

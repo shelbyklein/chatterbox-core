@@ -491,6 +491,11 @@ enum Companion {
         var place: String? = nil
         var chatID: UUID? = nil
         var note: String? = nil
+        /// Why it's held: "response" when waiting for someone's reply; nil for a plain hold.
+        var reason: String? = nil
+        var isWaitingForResponse: Bool { reason == "response" }
+        /// "Waiting for response" or "On hold": the card's label.
+        var label: String { isWaitingForResponse ? "Waiting for response" : "On hold" }
     }
 
     struct DeskSourcePull: Codable, Equatable {
