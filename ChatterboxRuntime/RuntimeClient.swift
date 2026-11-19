@@ -93,8 +93,26 @@ import Darwin
             DispatchQueue.main.async {MainActor.assumeIsolated {guard self?.generation==generation else{return};self?.problem="Background service disconnected";self?.disconnect()}}
         }.start()
     }
+    /// What each request was, for the breadcrumbs: which operation, for which session, since when.
+    private struct Asked { let operation:String; let chat:String?; let started:ContinuousClock.Instant }
+    private var asked:[String:Asked]=[:]
+    /// Requests that timed out, kept so a late reply can say how long the service really took.
+    private var late:[String:Asked]=[:]
+    /// The session's name for a breadcrumb (set by the app), else its ID.
+    static var chatName:(UUID)->String? = { _ in nil }
+    /// A reply slower than this is noted even when it arrived in time.
+    private static let slowReply:Duration = .seconds(5)
+
+    private static func label(_ asked:Asked)->String{
+        guard let chat=asked.chat else{return asked.operation}
+        let name=UUID(uuidString:chat).flatMap(chatName) ?? chat
+        return "\(asked.operation) in \u{201C}\(name)\u{201D}"
+    }
+    private static func seconds(_ d:Duration)->String{String(format:"%.1f s",Double(d.components.seconds)+Double(d.components.attoseconds)/1e18)}
+
     private func disconnect(){
         generation += 1;connected=false
+        asked.removeAll();late.removeAll()
         socket?.stop();socket=nil
         let pending=waiters;waiters.removeAll()
         for w in pending.values{w.resume(throwing:RuntimeFailure("Connection lost; command delivery may be uncertain. Reconnect and inspect before resending."))}
@@ -104,6 +122,8 @@ import Darwin
     func request(_ operation:String,body:JSON=[:],id:String=UUID().uuidString,timeout:Duration = .seconds(15)) async throws -> JSON {
         guard let connection=socket,connection.active else{throw RuntimeFailure("Background service disconnected; nothing was sent")}
         let request=RuntimeRequest(id:id,operation:operation,body:body)
+        let chat=body["chatID"]?.string ?? body["chat"]?.string ?? (operation=="get" || operation=="fork" ? nil : body["id"]?.string)
+        asked[id]=Asked(operation:operation,chat:chat,started:.now)
         var data=try JSONEncoder().encode(request);data.append(10)
         let generation=self.generation,bytes=data
         return try await withCheckedThrowingContinuation { continuation in
@@ -122,7 +142,13 @@ import Darwin
             }
             Task { [weak self] in
                 try? await Task.sleep(for:timeout)
-                if let w=self?.waiters.removeValue(forKey:id){w.resume(throwing:RuntimeFailure("Runtime request timed out; inspect the session before retrying"))}
+                guard let self,let w=self.waiters.removeValue(forKey:id) else{return}
+                if let a=self.asked.removeValue(forKey:id){
+                    self.late[id]=a
+                    if self.late.count>100,let oldest=self.late.min(by:{$0.value.started<$1.value.started})?.key{self.late[oldest]=nil}
+                    RuntimeHooks.note("Timed out after \(Self.seconds(timeout)): \(Self.label(a)), with \(self.waiters.count) other request\(self.waiters.count==1 ? "" : "s") waiting on the service")
+                }
+                w.resume(throwing:RuntimeFailure("Runtime request timed out; inspect the session before retrying"))
             }
         }
     }
@@ -144,7 +170,18 @@ import Darwin
     private static let backgroundSyncs:Set<String>=["setDraft","metadata","preferences","pins","studios"]
     private func receive(_ reply:RuntimeReply){
         if let event=reply.event{deliver(event);return}
-        guard let id=reply.id,let waiter=waiters.removeValue(forKey:id) else{return}
+        guard let id=reply.id else{return}
+        guard let waiter=waiters.removeValue(forKey:id) else{
+            // Answered after we stopped waiting: how long the service really took.
+            if let a=late.removeValue(forKey:id){
+                RuntimeHooks.note("The service answered \(Self.label(a)) after \(Self.seconds(a.started.duration(to:.now))), too late\(reply.error.map{": \($0)"} ?? "")")
+            }
+            return
+        }
+        if let a=asked.removeValue(forKey:id){
+            let took=a.started.duration(to:.now)
+            if took>Self.slowReply{RuntimeHooks.note("Slow reply: \(Self.label(a)) took \(Self.seconds(took))")}
+        }
         if let error=reply.error{waiter.resume(throwing:RuntimeFailure(error))}else{waiter.resume(returning:reply.result ?? .null)}
     }
     private func deliver(_ event:RuntimeEvent){cursor=max(cursor,event.sequence);onEvent?(event)}

@@ -102,6 +102,8 @@ final class Diagnostics {
 
     /// The last few things that happened, for context in a report. Safe from any thread.
     nonisolated static func note(_ event: String) { Breadcrumbs.shared.add(event) }
+    /// The breadcrumbs so far, newest last (tests read them).
+    nonisolated static var breadcrumbText: String { Breadcrumbs.shared.text }
 
     // MARK: - The last run
 

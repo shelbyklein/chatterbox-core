@@ -498,6 +498,12 @@ final class AppModel {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         // The UI can crash or hang even when the daemon owns its conversations.
         Diagnostics.shared.start()
+        // Before the service branch below, which returns early: the app's own notes (timeouts,
+        // slow replies, hosts) reach Settings → Diagnostics either way.
+        RuntimeHooks.note = { Diagnostics.note($0) }
+        RuntimeClient.chatName = { [weak self] id in
+            self?.sessions.first { $0.id == id }.map { $0.record.projectFolder != nil ? $0.projectName : $0.title }
+        }
         if RuntimeClient.usesDaemon {
             // Changes not confirmed before the last quit go again, and show meanwhile.
             let outbox = RuntimeOutbox.shared
@@ -543,7 +549,6 @@ final class AppModel {
         if CompanionServer.shared.isEnabled { CompanionServer.shared.start() }
         // Chats look their Studio up when they talk to their agent.
         ChatSession.studioLookup = { [weak self] id in self?.studio(id) }
-        RuntimeHooks.note = { Diagnostics.note($0) }
         RuntimeHooks.clearSuggestions = { NextSteps.shared.clear($0) }
         RuntimeHooks.turnEnded = { session in
             NextSteps.shared.turnEnded(session, commands: session.availableSlashCommands)
