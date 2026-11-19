@@ -285,10 +285,10 @@ struct MobileNewReplies: View {
                 Section {
                     ForEach(MobileActivityGroup.flattened(entries, chats: chats)) { row in
                         let entry = row.entry
-                        Group {
-                            if let parent = row.parent { nestedRow(entry, parent: parent, compact: true).padding(.leading, 20) }
-                            else if row.plain { ChatRow(chat: entry.chat) { open(entry.chat) } }
+                        VStack(alignment: .leading, spacing: 6) {
+                            if row.plain { ChatRow(chat: entry.chat) { open(entry.chat) } }
                             else { expandedEntry(entry, card: false) }
+                            if !row.quests.isEmpty { questIcons(row.quests).padding(.leading, 26) }
                         }
                             .padding(.vertical, 8)
                             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
@@ -321,45 +321,37 @@ struct MobileNewReplies: View {
 
     /// A session with the sidequests and Sidechats in Activity: one card the width of the page,
     /// the session on top (its own activity, or just its name when only they have some) and
-    /// each of them a row inside it.
+    /// each of them a small icon under it.
     private func familyCard(_ parent: Companion.ChatSummary, head: MobileActivityEntry?, children: [MobileActivityEntry]) -> some View {
         let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
         let waiting = head.map { $0.needsYouIn != nil || ($0.reply == nil && $0.chat.isWaitingOnYou) } ?? false
         return VStack(alignment: .leading, spacing: 0) {
             if let head { expandedEntry(head, card: true, embedded: true) }
             else { ChatCard(chat: parent, embedded: true) { open(parent) } }
-            ForEach(children) { child in
-                Divider().padding(.leading, 12)
-                nestedRow(child, parent: parent, compact: false)
-            }
+            questIcons(children).padding(.horizontal, 12)
         }
-        .padding(.bottom, 4)
+        .padding(.bottom, 8)
         .background(shape.fill(Color(uiColor: .secondarySystemGroupedBackground)))
         .overlay(shape.strokeBorder(waiting ? Color.yellow.opacity(0.6) : Color.primary.opacity(0.06), lineWidth: waiting ? 1.5 : 1))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("activity-family-\(parent.id.uuidString)")
     }
 
-    /// A sidequest's or Sidechat's activity as a row inside its session's card.
-    private func nestedRow(_ entry: MobileActivityEntry, parent: Companion.ChatSummary, compact: Bool) -> some View {
-        var display = entry.chat
-        if store.isStale { display.isRunning = false }
-        if entry.chat.isSidequest, let task = entry.chat.sidequestTask { display.subtitle = task }
-        let state = entry.reply == nil && entry.chat.isWaitingOnYou ? "Needs you" : entry.reply != nil ? "New reply" : store.isStale ? "Last seen working" : "Working"
-        return TimelineView(.periodic(from: .now, by: 60)) { context in
-            let status = entry.reply.map { reply in
-                let formatter = RelativeDateTimeFormatter(); formatter.unitsStyle = .short
-                return state + " · " + formatter.localizedString(for: reply.endedAt, relativeTo: context.date)
-            } ?? state
-            NestedChatRow(chat: display, parent: parent, isNew: entry.reply != nil, status: status, compact: compact) { open(entry.chat) }
-                .contextMenu {
-                    Button { rename(entry.chat) } label: { Label("Rename", systemImage: "pencil") }
-                    Button { dismiss(entry) } label: { Label("Dismiss from Activity", systemImage: "checkmark") }
-                    Button { manage(entry.chat, deleting: false) } label: { Label("Archive", systemImage: "archivebox") }
-                    Button(role: .destructive) { manage(entry.chat, deleting: true) } label: { Label("Delete", systemImage: "trash") }
+    /// A session's sidequests and Sidechats with activity, as small icons in their model's
+    /// color. Tapping one shows its title and state, with Open.
+    private func questIcons(_ entries: [MobileActivityEntry]) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 4) {
+                ForEach(entries) { entry in
+                    MobileQuestIcon(entry: entry, stale: store.isStale, open: { open(entry.chat) },
+                                    dismiss: { dismiss(entry) },
+                                    archive: { manage(entry.chat, deleting: false) },
+                                    delete: { manage(entry.chat, deleting: true) })
+                        .disabled(busy.contains(entry.chat.id))
                 }
-                .disabled(busy.contains(entry.chat.id))
+            }
         }
+        .scrollBounceBehavior(.basedOnSize)
     }
 
     private func recentThread(_ chat: Companion.ChatSummary, card: Bool) -> some View {
@@ -509,11 +501,12 @@ private enum MobileActivityGroup: Identifiable {
         return result
     }
 
-    /// The list's rows: each child right under its session's row (the session's own name
+    /// The list's rows: each session's children as icons on its row (the session's own name
     /// when only its children have activity).
     struct Row: Identifiable {
         let entry: MobileActivityEntry
-        let parent: Companion.ChatSummary?
+        /// Its sidequests and Sidechats with activity, shown as icons under it.
+        var quests: [MobileActivityEntry] = []
         /// A session listed only for its children's activity: its plain row.
         var plain = false
         var id: String { (plain ? "plain:" : "") + entry.id }
@@ -521,10 +514,10 @@ private enum MobileActivityGroup: Identifiable {
     static func flattened(_ entries: [MobileActivityEntry], chats: [Companion.ChatSummary]) -> [Row] {
         segments(entries, chats: chats).flatMap { segment -> [Row] in
             switch segment {
-            case .grid(let run): return run.map { Row(entry: $0, parent: nil) }
+            case .grid(let run): return run.map { Row(entry: $0) }
             case .family(let parent, let head, let children):
-                let top = head.map { Row(entry: $0, parent: nil) } ?? Row(entry: MobileActivityEntry(chat: parent, reply: nil, source: nil), parent: nil, plain: true)
-                return [top] + children.map { Row(entry: $0, parent: parent) }
+                return [head.map { Row(entry: $0, quests: children) }
+                        ?? Row(entry: MobileActivityEntry(chat: parent, reply: nil, source: nil), quests: children, plain: true)]
             }
         }
     }
@@ -762,5 +755,70 @@ private final class MobileActivityCell: UITableViewCell {
         accessibilityValue = [entry.subtitle, time.text].compactMap { $0 }.joined(separator: ", ")
         accessibilityHint = "Opens the chat. Swipe left to clear it from Activity, right to archive or delete."
         accessibilityTraits = busy ? [.button, .notEnabled] : .button
+    }
+}
+
+/// A sidequest or Sidechat in Activity, as an icon on its session's card or row: tap for its
+/// title and state, with Open; hold for the session commands.
+private struct MobileQuestIcon: View {
+    let entry: MobileActivityEntry
+    let stale: Bool
+    let open: () -> Void
+    let dismiss: () -> Void
+    let archive: () -> Void
+    let delete: () -> Void
+    @State private var showing = false
+
+    private var chat: Companion.ChatSummary { entry.chat }
+    private var title: String {
+        if chat.isSidequest, let task = chat.sidequestTask { return task }
+        return chat.title.hasPrefix("Sidequest · ") ? String(chat.title.dropFirst("Sidequest · ".count)) : chat.title
+    }
+    private var state: String {
+        entry.reply == nil && chat.isWaitingOnYou ? "Needs you" : entry.reply != nil ? "New reply"
+            : stale ? "Last seen working" : "Working"
+    }
+
+    var body: some View {
+        Button { showing = true } label: {
+            Image(systemName: chat.isSidequest ? "point.topleft.down.to.point.bottomright.curvepath" : "bubble.left.and.bubble.right")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(MobileConversationStyle.accent(for: entry.backend))
+                .frame(width: 36, height: 32)
+                .background(Capsule().fill(Color.primary.opacity(0.06)))
+                .overlay(alignment: .topTrailing) {
+                    if entry.reply == nil && chat.isWaitingOnYou {
+                        Circle().fill(Color.attention).frame(width: 7, height: 7)
+                    } else if entry.reply != nil {
+                        Circle().fill(.blue).frame(width: 7, height: 7)
+                    }
+                }
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("chat-\(chat.id.uuidString)")
+        .accessibilityLabel((chat.isSidequest ? "Sidequest " : "Sidechat ") + title)
+        .accessibilityValue(state)
+        .accessibilityAction(named: "Open") { open() }
+        .contextMenu {
+            Button(action: open) { Label("Open", systemImage: "arrow.up.right") }
+            Button(action: dismiss) { Label("Dismiss from Activity", systemImage: "checkmark") }
+            Button(action: archive) { Label("Archive", systemImage: "archivebox") }
+            Button(role: .destructive, action: delete) { Label("Delete", systemImage: "trash") }
+        }
+        .popover(isPresented: $showing) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(title).font(.subheadline.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
+                Text(state).font(.caption).foregroundStyle(.secondary)
+                Button { showing = false; open() } label: {
+                    Label("Open", systemImage: "arrow.up.right").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("quest-open")
+            }
+            .padding(14)
+            .frame(width: 260)
+            .presentationCompactAdaptation(.popover)
+        }
     }
 }
