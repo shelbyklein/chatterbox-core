@@ -1278,7 +1278,8 @@ private struct RemoteImage: View {
     let chat: UUID
     let onMarkUp: (UIImage) -> Void
     @Environment(MobileStore.self) private var store
-    @Environment(\.scenePhase) private var scenePhase
+    /// iOS's own word on whether the app is in front (not scenePhase: see MobileAppState).
+    private var app: MobileAppState { .shared }
     @State private var image: UIImage?
     @State private var original: UIImage?
     @State private var viewing = false
@@ -1291,9 +1292,13 @@ private struct RemoteImage: View {
     @State private var received: Int64 = 0
     @State private var expected: Int64 = 0
     @State private var activeLoad: UUID?
-    /// A tapped download remains requested until it finishes or this row goes away.
-    /// Viewport/address callbacks and a foreground return may replace the task meanwhile.
+    /// A tapped download: requested until it finishes or fails. It runs as its own task
+    /// (`manual`), which no viewport callback, refresh or row "disappearing" can cancel; only
+    /// the app going to the background pauses it, and coming back restarts it.
     @State private var requested = false
+    @State private var manual: Task<Void, Never>?
+    /// A tapped download just failed: the automatic load doesn't try again right behind it.
+    @State private var skipAutomatic = false
     @State private var loadedKey: String?
     private struct LoadRequest: Hashable {
         let key: String
@@ -1382,27 +1387,52 @@ private struct RemoteImage: View {
         // The viewer opens on the shown copy and sharpens to the original when it arrives.
         .onChange(of: viewing) { _, open in if open { Task { _ = await full() } } }
         .modifier(ImageVisibility(report: { now in
-            if now != visible { MobileImageTrace.note(file.name, now ? "in view" : "out of view") }
+            if now != visible {
+                MobileImageTrace.note(file.name, now ? "in view" : "out of view")
+                skipAutomatic = false
+            }
             visible = now
         }))
-        .task(id: LoadRequest(key: imageKey, eligible: shouldLoad, retry: retry, host: store.connection?.hosts.first)) {
-            await load()
+        // Automatic: while in view and the app is in front, unless a tapped download has it.
+        .task(id: LoadRequest(key: imageKey, eligible: loadsAutomatically, retry: retry, host: store.connection?.hosts.first)) {
+            await loadAutomatically()
         }
+        // A tapped download pauses in the background and starts over on coming back; it also
+        // starts over when the phone finds a better address for the Mac.
+        .onChange(of: app.isBackground) { _, background in
+            if background { manual?.cancel() } else { resumeManual("back in front") }
+        }
+        .onChange(of: app.isActive) { _, active in if active { resumeManual("active") } }
+        .onChange(of: store.connection?.hosts.first) { resumeManual("address changed", restart: true) }
         .onAppear { MobileImageTrace.note(file.name, "appeared (\(image == nil ? "no picture" : "showing"))") }
-        .onDisappear { MobileImageTrace.note(file.name, "disappeared"); requested = false }
+        .onDisappear { MobileImageTrace.note(file.name, "disappeared") }
     }
 
+    /// Download, Restart Download and Tap to retry: starts at once, whatever the viewport or
+    /// app-state signals say, and always shows progress, the picture or an error.
     private func tapped(_ button: String) {
-        MobileImageTrace.note(file.name, "tapped \(button)")
-        requested = true; retry += 1
+        MobileImageTrace.note(file.name, "tapped \(button) (visible \(visible), active \(app.isActive), background \(app.isBackground))")
+        requested = true
+        failed = false; loading = true; received = 0; expected = 0
+        startManual()
     }
 
-    /// Automatic work follows viewport visibility. A deliberate tap must not be cancelled
-    /// by that same unreliable callback; keep it through foreground transitions, but never
-    /// download in the background. A tap during an inactive foreground transition is valid.
-    private var shouldLoad: Bool {
-        scenePhase != .background && (requested || (visible && scenePhase == .active))
+    private func startManual() {
+        manual?.cancel()
+        manual = Task { await fetch(manual: true) }
     }
+
+    /// A tapped download that was paused (or, with `restart`, is still going) starts again.
+    private func resumeManual(_ why: String, restart: Bool = false) {
+        guard requested, image == nil, !app.isBackground else { return }
+        guard restart || activeLoad == nil else { return }
+        MobileImageTrace.note(file.name, "tapped download restarts: \(why)")
+        startManual()
+    }
+
+    /// Automatic work follows viewport visibility and the app being in front. A tapped
+    /// download doesn't: it has its own task.
+    private var loadsAutomatically: Bool { visible && app.isActive && !requested }
 
     private var imageKey: String {
         MobileImageCache.key(chat: chat, file: file, size: String(Self.displayPixels))
@@ -1416,31 +1446,43 @@ private struct RemoteImage: View {
         return "\(percent)% \u{00B7} \(size.string(fromByteCount: received)) of \(size.string(fromByteCount: expected))"
     }
 
-    private func load() async {
+    private func loadAutomatically() async {
         guard !Task.isCancelled else { return }
-        let loadID = UUID()
-        activeLoad = loadID
-        loading = false
-        if loadedKey != imageKey {
-            image = nil
-            original = nil
-            failed = false
-            loadedKey = imageKey
-        }
-        guard shouldLoad else {
-            MobileImageTrace.note(file.name, "waiting: visible \(visible), requested \(requested), \(scenePhase)")
+        resetIfChanged()
+        guard loadsAutomatically else {
+            if !requested, image == nil {
+                MobileImageTrace.note(file.name, "waiting: visible \(visible), active \(app.isActive)")
+            }
             return
         }
-        guard image == nil else { requested = false; return }
-        MobileImageTrace.note(file.name, "loading (requested \(requested), host \(store.connection?.hosts.first ?? "none"))")
+        if skipAutomatic { skipAutomatic = false; return }
+        guard image == nil else { return }
+        await fetch(manual: false)
+    }
+
+    /// A changed file (a render redone under the same name) drops the picture shown.
+    private func resetIfChanged() {
+        guard loadedKey != imageKey else { return }
+        image = nil
+        original = nil
+        failed = false
+        loadedKey = imageKey
+    }
+
+    /// One attempt, then two short retries for transient failures. An automatic load is
+    /// cancelled with its view task (leaving view, the app leaving the front); a tapped one
+    /// only by the background or its own restart.
+    private func fetch(manual: Bool) async {
+        guard !Task.isCancelled else { return }
+        resetIfChanged()
+        let loadID = UUID()
+        activeLoad = loadID
         failed = false
         loading = true; received = 0; expected = 0
         defer {
             if activeLoad == loadID { loading = false; activeLoad = nil }
         }
-        // One attempt on entering view, then two short retries for transient failures.
-        // The view task cancels on leaving/backgrounding. Automatic requests also stop
-        // offscreen; a deliberate Download stays requested through visibility changes.
+        MobileImageTrace.note(file.name, "loading (\(manual ? "tapped" : "automatic"), host \(store.connection?.hosts.first ?? "none"))")
         for delay in [0.0, 0.75, 2.0] {
             do {
                 try await Task.sleep(for: .seconds(delay))
@@ -1449,16 +1491,22 @@ private struct RemoteImage: View {
                     received = got; expected = total
                 }
                 try Task.checkCancellation()
-                if let fetched { image = fetched; requested = false; MobileImageTrace.note(file.name, "loaded"); return }
+                if let fetched {
+                    image = fetched
+                    if manual { requested = false }
+                    MobileImageTrace.note(file.name, "loaded")
+                    return
+                }
                 MobileImageTrace.note(file.name, "got data that isn't a picture")
             } catch {
-                // Lazy-row cancellation is ordinary scrolling, not a broken image.
+                // Cancellation is ordinary (scrolling away, a restart), not a broken image.
                 if Task.isCancelled { MobileImageTrace.note(file.name, "cancelled"); return }
                 MobileImageTrace.note(file.name, "failed: \(error.localizedDescription.prefix(120))")
             }
         }
+        guard activeLoad == loadID else { return }
         failed = true
-        requested = false
+        if manual { skipAutomatic = true; requested = false }
     }
 }
 

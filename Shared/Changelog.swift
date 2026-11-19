@@ -22,6 +22,7 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-18", changes: [
+            "Tapping Download on a phone image always starts it: it shows progress, the picture or an error, whatever else is going on.",
             "Images on the phone load the first time you open a session, without leaving and coming back.",
             "The \"This looks like … work\" banner is gone from chats on the Mac and the phone. Moving a session to a Studio is still in its menu.",
             "A session card on the Mac that's asking you something has a yellow border, instead of a bar down its side.",
