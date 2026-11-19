@@ -22,6 +22,8 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-19", changes: [
+            "Mac sidebar: hover over a temporary session (a sidechat or sidequest) for Archive and Delete buttons at its right.",
+            "Mac sidebar: Hide folds a session's sidechats and sidequests into one line (\"4 threads · 1 working\"); click it to open them again.",
             "Mac Activity: a new reply's dot is its model's color, and sidequests sit indented under the session that sent them.",
             "The Mac's session sidebar has Skills used: each skill the session has used (Claude's or Codex's), how many times, and when last.",
             "Closing Image Review with unsent notes (Esc or Cancel) asks before deleting them.",

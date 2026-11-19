@@ -191,6 +191,9 @@ struct ThreadCard: View {
                     // At most three until Show more (ThreadFamilyLimit); what needs you or works always shows.
                     let expansion = FamilyExpansion.shared
                     let visible = expansion.visible(children, of: session.id)
+                    if expansion.collapsed.contains(session.id) {
+                        FamilyCollapsedLine(parent: session.id, children: children, scale: scale, leading: 2)
+                    } else {
                     VStack(alignment: .leading, spacing: 3) {
                         ForEach(visible.shown) { child in
                             ChildChatCardRow(chat: child, scale: scale)
@@ -198,17 +201,26 @@ struct ThreadCard: View {
                                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { MacHomeDebug.childRows[child.id] = $0 }
                                 #endif
                         }
-                        if visible.hidden > 0 || expansion.ids.contains(session.id) {
-                            Button { withAnimation(.smooth(duration: 0.2)) { expansion.toggle(session.id) } } label: {
-                                Text(expansion.ids.contains(session.id) ? "Show less" : "Show \(visible.hidden) more")
-                                    .font(.system(size: 10 * scale, weight: .medium)).foregroundStyle(Color.accentColor)
+                        HStack(spacing: 8 * scale) {
+                            if visible.hidden > 0 || expansion.ids.contains(session.id) {
+                                Button { withAnimation(.smooth(duration: 0.2)) { expansion.toggle(session.id) } } label: {
+                                    Text(expansion.ids.contains(session.id) ? "Show less" : "Show \(visible.hidden) more")
+                                        .font(.system(size: 10 * scale, weight: .medium)).foregroundStyle(Color.accentColor)
+                                        .padding(.horizontal, 6 * scale).padding(.vertical, 2 * scale).contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                #if DEBUG
+                                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { MacHomeDebug.familyToggles[session.id] = $0 }
+                                #endif
+                            }
+                            Button { withAnimation(.smooth(duration: 0.2)) { expansion.toggleCollapsed(session.id) } } label: {
+                                Text("Hide").font(.system(size: 10 * scale, weight: .medium)).foregroundStyle(.secondary)
                                     .padding(.horizontal, 6 * scale).padding(.vertical, 2 * scale).contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
-                            #if DEBUG
-                            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { MacHomeDebug.familyToggles[session.id] = $0 }
-                            #endif
+                            .help("Collapse this session's sidechats and sidequests")
                         }
+                    }
                     }
                 }
                 Spacer(minLength: 0)

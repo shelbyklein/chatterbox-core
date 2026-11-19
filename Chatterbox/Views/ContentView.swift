@@ -1544,19 +1544,37 @@ extension ContentView {
             ? model.worktrees(of: root) : []
         return VStack(alignment: .leading, spacing: 1) {
             familyRow(root, depth: 0)
+            if !children.isEmpty, expansion.collapsed.contains(root.id) {
+                FamilyCollapsedLine(parent: root.id, children: children)
+            } else {
             ForEach(visible.shown) { familyRow($0, depth: 1, under: root) }
-            if visible.hidden > 0 || expansion.ids.contains(root.id) {
-                Button { withAnimation(.smooth(duration: 0.2)) { expansion.toggle(root.id) } } label: {
-                    Text(expansion.ids.contains(root.id) ? "Show less" : "Show \(visible.hidden) more")
-                        .font(.caption.weight(.medium)).foregroundStyle(Color.accentColor)
-                        .padding(.leading, 46).padding(.vertical, 3)
-                        .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+            if !children.isEmpty {
+                HStack(spacing: 12) {
+                    if visible.hidden > 0 || expansion.ids.contains(root.id) {
+                        Button { withAnimation(.smooth(duration: 0.2)) { expansion.toggle(root.id) } } label: {
+                            Text(expansion.ids.contains(root.id) ? "Show less" : "Show \(visible.hidden) more")
+                                .font(.caption.weight(.medium)).foregroundStyle(Color.accentColor).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(expansion.ids.contains(root.id) ? "Show fewer threads" : "Show \(visible.hidden) more threads")
+                        #if DEBUG
+                        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { SidebarDebug.familyToggles[root.id] = $0 }
+                        #endif
+                    }
+                    // Fold the family down to its parent and a count.
+                    Button { withAnimation(.smooth(duration: 0.2)) { expansion.toggleCollapsed(root.id) } } label: {
+                        Text("Hide").font(.caption.weight(.medium)).foregroundStyle(.secondary).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Collapse this session's sidechats and sidequests")
+                    .accessibilityLabel("Hide \(children.count) threads")
+                    #if DEBUG
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { SidebarDebug.familyHide[root.id] = $0 }
+                    #endif
+                    Spacer(minLength: 0)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(expansion.ids.contains(root.id) ? "Show fewer threads" : "Show \(visible.hidden) more threads")
-                #if DEBUG
-                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { SidebarDebug.familyToggles[root.id] = $0 }
-                #endif
+                .padding(.leading, 46).padding(.vertical, 3)
+            }
             }
             ForEach(branches) { branch in
                 familyRow(branch, depth: 1, under: root)
@@ -1596,6 +1614,12 @@ extension ContentView {
             )
             .contentShape(Rectangle())
             .onTapGesture { model.selectedID = session.id }
+            // A temporary session (sidechat or sidequest): Archive and Delete on hover.
+            .modifier(TemporaryRowActions(enabled: depth > 0 && session.record.sidechatOf != nil && session.record.workOf == nil
+                                                   && session.record.automationID == nil && session.record.archivedAt == nil,
+                                          id: session.id,
+                                          archive: { withAnimation(.smooth(duration: 0.2)) { model.archive(session) } },
+                                          delete: { pendingDelete = session }))
             // Drag onto a Studio to move the chat in. Project chats stay put.
             .modifier(ChatDrag(id: session.record.projectFolder == nil ? session.id : nil))
             .contextMenu { threadMenu(session) }
@@ -1826,6 +1850,9 @@ extension ContentView {
     static var families: [UUID: CGRect] = [:]
     static var rows: [UUID: CGRect] = [:]
     static var familyToggles: [UUID: CGRect] = [:]
+    static var rowActions: [UUID: CGRect] = [:]
+    static var familyHide: [UUID: CGRect] = [:]
+    static var familyCollapsed: [UUID: CGRect] = [:]
 }
 #endif
 
@@ -1835,8 +1862,89 @@ extension ContentView {
     static let shared = FamilyExpansion()
     var ids: Set<UUID> = []
     func toggle(_ id: UUID) { if ids.contains(id) { ids.remove(id) } else { ids.insert(id) } }
+    /// Families folded down to their parent and a one-line count (Hide), kept across launches.
+    var collapsed: Set<UUID> = Set((AppPreferences.defaults.stringArray(forKey: "sidebarCollapsedFamilies") ?? []).compactMap(UUID.init)) {
+        didSet { AppPreferences.defaults.set(collapsed.map(\.uuidString), forKey: "sidebarCollapsedFamilies") }
+    }
+    func toggleCollapsed(_ id: UUID) { if collapsed.contains(id) { collapsed.remove(id) } else { collapsed.insert(id) } }
     func visible(_ children: [ChatSession], of parent: UUID) -> (shown: [ChatSession], hidden: Int) {
         ThreadFamilyLimit.visible(children, expanded: ids.contains(parent), updatedAt: \.lastActivity) { $0.isWaitingOnYou || $0.isRunning }
+    }
+}
+
+/// On hover over a temporary session's row: Archive and Delete at its right edge.
+struct TemporaryRowActions: ViewModifier {
+    let enabled: Bool
+    let id: UUID
+    let archive: () -> Void
+    let delete: () -> Void
+    @State private var hovered = false
+
+    func body(content: Content) -> some View {
+        content
+            .onHover { hovered = enabled && $0 }
+            .overlay(alignment: .trailing) {
+                if enabled && hovered {
+                    HStack(spacing: 2) {
+                        Button(action: archive) { Image(systemName: "archivebox") }
+                            .help("Archive")
+                            .accessibilityLabel("Archive")
+                        Button(action: delete) { Image(systemName: "trash") }
+                            .help("Delete\u{2026}")
+                            .accessibilityLabel("Delete")
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6).padding(.vertical, 3)
+                    // Solid, so the row's label underneath doesn't show through.
+                    .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .controlBackgroundColor)))
+                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.primary.opacity(0.1)))
+                    .padding(.trailing, 6)
+                    .transition(.opacity)
+                    #if DEBUG
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { SidebarDebug.rowActions[id] = $0 }
+                    #endif
+                }
+            }
+            #if DEBUG
+            .onAppear { if TemporaryRowActions.forceHover, enabled { hovered = true } }
+            #endif
+    }
+
+    #if DEBUG
+    /// Tests: show the actions without a pointer.
+    static var forceHover = false
+    #endif
+}
+
+/// A collapsed family's one line: "▸ 4 threads · 1 working"; a click opens it again.
+struct FamilyCollapsedLine: View {
+    let parent: UUID
+    let children: [ChatSession]
+    var scale: CGFloat = 1
+    var leading: CGFloat = 46
+
+    var body: some View {
+        let working = children.filter(\.isRunning).count, waiting = children.filter(\.isWaitingOnYou).count
+        let parts = ["\(children.count) thread\(children.count == 1 ? "" : "s")",
+                     working > 0 ? "\(working) working" : nil, waiting > 0 ? "\(waiting) need\(waiting == 1 ? "s" : "") you" : nil].compactMap { $0 }
+        Button { withAnimation(.smooth(duration: 0.2)) { FamilyExpansion.shared.toggleCollapsed(parent) } } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "chevron.right").font(.system(size: 8 * scale, weight: .bold))
+                if waiting > 0 { Circle().fill(Color.attention).frame(width: 5 * scale, height: 5 * scale) }
+                Text(parts.joined(separator: " \u{00B7} ")).font(.system(size: 10.5 * scale, weight: .medium))
+            }
+            .foregroundStyle(.secondary)
+            .padding(.leading, leading).padding(.vertical, 3)
+            .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Show this session's sidechats and sidequests")
+        .accessibilityLabel("Show \(parts.joined(separator: ", "))")
+        #if DEBUG
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { SidebarDebug.familyCollapsed[parent] = $0 }
+        #endif
     }
 }
 
