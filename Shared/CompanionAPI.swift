@@ -811,6 +811,15 @@ enum Companion {
         }
     }
 
+    /// A session named from its first message is cut short ("Prepare a checklist of required
+    /// policies for…"). When its task says the same thing in full, a card shows that instead.
+    static func deskTitle(_ title: String, task: String?) -> String {
+        let cut = title.hasSuffix("\u{2026}") ? String(title.dropLast()) : title.hasSuffix("...") ? String(title.dropLast(3)) : nil
+        guard let cut, let task, task.count > cut.count,
+              task.lowercased().hasPrefix(cut.trimmingCharacters(in: .whitespaces).lowercased()) else { return title }
+        return task
+    }
+
     /// Desk cards are accordions: the title and the actions, and the rest once opened. Which
     /// ones are open is kept in preferences (`key`), as ids joined by commas, newest last.
     enum DeskCardExpansion {

@@ -22,6 +22,9 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-19", changes: [
+            "Desk card titles show in full, on as many lines as they need, instead of ending in an ellipsis.",
+            "Link a thread on the Mac's Desk has a search box and shows at least five threads at a time.",
+            "Desk columns on the Mac collapse to a narrow strip: empty ones by themselves, any column with the button in its header. Click a strip to open it.",
             "Review and On hold cards on the Desk are accordions: just the title and the buttons, until you tap the title to see the rest.",
             "Desk: \"Waiting for response\" when putting a card on hold (the Hold button on Review cards, and each card's menu). It sits in On hold with that label; long-press or right-click a held card to switch.",
             "Desk cards from ClickUp (or an email) show the task's status as a colored pill and a link that opens it there, on the Mac and the phone.",

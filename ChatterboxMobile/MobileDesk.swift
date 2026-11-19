@@ -1060,7 +1060,7 @@ private struct DeskReadyCard: View {
         VStack(alignment: .leading, spacing: 12) {
             // An accordion: the title and the buttons; a tap on the title shows the rest. The
             // details themselves aren't a button (a touch there is often a scroll starting).
-            MobileDeskCardTitle(title: item.title, expanded: expanded,
+            MobileDeskCardTitle(title: Companion.deskTitle(item.title, task: item.taskText), expanded: expanded,
                                 toggle: taps { openCards = Companion.DeskCardExpansion.toggled(item.id, in: openCards) })
                 .accessibilityAction(named: "Open", open)
                 .accessibilityAction(named: "Mark Complete", complete)
@@ -1080,7 +1080,7 @@ private struct DeskReadyCard: View {
                     if let subtitle = item.subtitle {
                         Text(subtitle).font(.subheadline.weight(.medium)).lineLimit(2).multilineTextAlignment(.leading)
                     }
-                    if let task = item.taskText, ![item.title, item.subtitle].contains(task) { DeskTaskLine(text: task) }
+                    if let task = item.taskText, ![Companion.deskTitle(item.title, task: item.taskText), item.title, item.subtitle].contains(task) { DeskTaskLine(text: task) }
                     Text(item.text).font(.subheadline).foregroundStyle(Color.metadata).lineLimit(3).multilineTextAlignment(.leading)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1966,7 +1966,8 @@ private struct MobileDeskCardTitle: View {
                 Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(Color.metadata)
                     .rotationEffect(.degrees(expanded ? 90 : 0))
                 if let mark { Image(systemName: mark).font(.footnote).foregroundStyle(.purple) }
-                Text(title).font(.headline).lineLimit(expanded ? 3 : 2).multilineTextAlignment(.leading)
+                // The whole title, on as many lines as it takes: never cut with an ellipsis.
+                Text(title).font(.headline).multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)

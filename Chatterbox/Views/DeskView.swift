@@ -37,6 +37,33 @@ struct DeskNeed: Identifiable, Equatable {
     }
 }
 
+/// Which Desk columns are collapsed to a narrow strip. An empty column closes by itself and
+/// opens when something lands in it; a click overrides that for the column, either way, until
+/// the override matches what it would do anyway. Kept in preferences as "todo:closed,done:open".
+enum DeskColumnFolds {
+    static let key = "deskColumnFolds"
+    private static func overrides(_ stored: String) -> [String: String] {
+        Dictionary(stored.split(separator: ",").compactMap { part -> (String, String)? in
+            let pair = part.split(separator: ":").map(String.init)
+            return pair.count == 2 ? (pair[0], pair[1]) : nil
+        }, uniquingKeysWith: { _, last in last })
+    }
+    static func isCollapsed(_ column: String, count: Int, in stored: String) -> Bool {
+        switch overrides(stored)[column] {
+        case "closed": true
+        case "open": false
+        default: count == 0
+        }
+    }
+    static func toggled(_ column: String, count: Int, in stored: String) -> String {
+        var all = overrides(stored)
+        let collapse = !isCollapsed(column, count: count, in: stored)
+        // Back to automatic when that's what it would do by itself.
+        all[column] = collapse == (count == 0) ? nil : (collapse ? "closed" : "open")
+        return all.sorted { $0.key < $1.key }.map { "\($0.key):\($0.value)" }.joined(separator: ",")
+    }
+}
+
 /// What the Desk shows: the board's columns (plans/desk-board.md). A column with nothing in it
 /// says so in one quiet line.
 struct DeskSections: Equatable {
@@ -834,11 +861,13 @@ struct DeskView: View {
     @Environment(AppModel.self) private var model
     var desk: DeskModel = .shared
     @State private var ask = ""
+    @AppStorage(DeskColumnFolds.key) private var columnFolds = ""
     /// The board has been scrolled to Needs you once.
     @State private var showedNeedsYou = false
 
     /// A column's width.
     static let columnWidth: CGFloat = 320
+    static let collapsedColumnWidth: CGFloat = 46
 
     var body: some View {
         let sections = desk.sections(in: model)
@@ -962,19 +991,69 @@ struct DeskView: View {
         Task { if await desk.add(text), ask == text { ask = "" } }
     }
 
-    /// One column: its name and count, then its cards (or one quiet line), scrolling on its own.
-    private func column(_ section: DeskSections.Section, _ sections: DeskSections) -> some View {
+    /// A column, or its narrow strip when collapsed: an empty column closes by itself, and any
+    /// column can be closed or opened by hand (DeskColumnFolds).
+    @ViewBuilder private func column(_ section: DeskSections.Section, _ sections: DeskSections) -> some View {
         let count = sections.count(section)
+        if DeskColumnFolds.isCollapsed(section.key, count: count, in: columnFolds) {
+            collapsedColumn(section, count: count)
+        } else {
+            openColumn(section, sections)
+        }
+    }
+
+    private func countPill(_ section: DeskSections.Section, count: Int) -> some View {
         let urgent = section == .needsYou && count > 0
+        return Text("\(count)").font(.caption.weight(.semibold).monospacedDigit())
+            .foregroundStyle(urgent ? Color(nsColor: .windowBackgroundColor) : Color.metadata)
+            .padding(.horizontal, 7).padding(.vertical, 2)
+            .background(Capsule().fill(urgent ? Color.attention : Color.primary.opacity(0.08)))
+            .deskFrame("count:" + section.key)
+    }
+
+    /// A collapsed column: its count, and its name down the side. A click opens it.
+    private func collapsedColumn(_ section: DeskSections.Section, count: Int) -> some View {
+        Button {
+            withAnimation(.easeOut(duration: 0.18)) { columnFolds = DeskColumnFolds.toggled(section.key, count: count, in: columnFolds) }
+        } label: {
+            VStack(spacing: 10) {
+                countPill(section, count: count)
+                Text(section.rawValue).font(.subheadline.weight(.semibold)).foregroundStyle(count == 0 ? Color.metadata : Color.primary)
+                    .lineLimit(1).fixedSize()
+                    .rotationEffect(.degrees(90))
+                    .frame(width: 20, height: 110)
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 12)
+            .frame(width: Self.collapsedColumnWidth)
+            .frame(maxHeight: .infinity, alignment: .top)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(0.035)))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.primary.opacity(0.07)))
+        .help(count == 0 ? "\(section.rawValue): \(section.empty) Click to open the column." : "Open \(section.rawValue) (\(count))")
+        .accessibilityLabel("\(section.rawValue), \(count), collapsed")
+        .accessibilityHint("Opens the column")
+        .deskFrame("collapsed:" + section.key)
+        .deskFrame("section:" + section.key)
+    }
+
+    /// One column: its name and count, then its cards (or one quiet line), scrolling on its own.
+    private func openColumn(_ section: DeskSections.Section, _ sections: DeskSections) -> some View {
+        let count = sections.count(section)
         return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 Text(section.rawValue).font(.headline).lineLimit(1)
-                Text("\(count)").font(.caption.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(urgent ? Color(nsColor: .windowBackgroundColor) : Color.metadata)
-                    .padding(.horizontal, 7).padding(.vertical, 2)
-                    .background(Capsule().fill(urgent ? Color.attention : Color.primary.opacity(0.08)))
-                    .deskFrame("count:" + section.key)
+                countPill(section, count: count)
                 Spacer(minLength: 0)
+                Button {
+                    withAnimation(.easeOut(duration: 0.18)) { columnFolds = DeskColumnFolds.toggled(section.key, count: count, in: columnFolds) }
+                } label: { Image(systemName: "chevron.left.to.line").font(.caption.weight(.semibold)) }
+                    .buttonStyle(.borderless).foregroundStyle(Color.metadata)
+                    .help("Collapse this column")
+                    .accessibilityLabel("Collapse \(section.rawValue)")
+                    .deskFrame("collapse:" + section.key)
             }
             .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 10)
             .accessibilityElement(children: .combine)
@@ -1712,6 +1791,18 @@ struct DeskLinkPopover: View {
     @State private var threads: [Companion.DeskThread]?
     /// A thread carrying another task, waiting for Link Anyway.
     @State private var confirming: Companion.DeskThread?
+    @State private var search = ""
+    @FocusState private var searching: Bool
+
+    /// Threads whose name or task has every word typed.
+    private func matching(_ threads: [Companion.DeskThread]) -> [Companion.DeskThread] {
+        let words = search.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard !words.isEmpty else { return threads }
+        return threads.filter { thread in
+            let text = thread.title + " " + (thread.task ?? "")
+            return words.allSatisfy { text.localizedStandardContains($0) }
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -1723,9 +1814,24 @@ struct DeskLinkPopover: View {
                 if threads.isEmpty {
                     Text("No threads in \(place.name) yet.").foregroundStyle(.secondary).padding(.vertical, 8)
                 } else {
+                    HStack(spacing: 6) {
+                        Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                        TextField("Search threads", text: $search).textFieldStyle(.plain).focused($searching)
+                            .accessibilityLabel("Search threads")
+                        if !search.isEmpty {
+                            Button { search = "" } label: { Image(systemName: "xmark.circle.fill") }
+                                .buttonStyle(.borderless).foregroundStyle(.secondary).accessibilityLabel("Clear search")
+                        }
+                    }
+                    .padding(7).background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 7))
+                    .deskFrame("linkSearch")
+                    let shown = matching(threads)
+                    if shown.isEmpty {
+                        Text("No threads match \u{201C}\(search)\u{201D}.").font(.callout).foregroundStyle(.secondary).padding(.vertical, 8)
+                    }
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 2) {
-                            ForEach(threads) { thread in
+                            ForEach(shown) { thread in
                                 DeskStartChoice(title: thread.title,
                                                 detail: [thread.match == "clear" ? "Best match" : thread.match == "possible" ? "Similar work" : nil,
                                                          thread.task.map { "Has a task: \($0)" }, thread.isRunning ? "Working now" : nil]
@@ -1735,7 +1841,10 @@ struct DeskLinkPopover: View {
                             }
                         }
                     }
-                    .frame(maxHeight: 320)
+                    // Room for at least five threads at a time (each row is about 48 points);
+                    // a popover otherwise squeezes the list to a row or two.
+                    .frame(height: CGFloat(min(max(matching(threads).count, 1), 7)) * 50)
+                    .deskFrame("linkList")
                 }
             } else {
                 ProgressView().frame(maxWidth: .infinity).padding(16)
@@ -1755,8 +1864,8 @@ struct DeskLinkPopover: View {
             }
         }
         .padding(14)
-        .frame(width: 380)
-        .task { threads = await desk.allThreads(for: request, in: place) }
+        .frame(width: 400)
+        .task { threads = await desk.allThreads(for: request, in: place); searching = true }
     }
 
     private func pick(_ thread: Companion.DeskThread) {
@@ -1832,7 +1941,7 @@ private struct DeskReadyRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             // An accordion: the title and the actions; a click on the title shows the rest.
-            DeskCardTitle(title: item.title, expanded: expanded) {
+            DeskCardTitle(title: Companion.deskTitle(item.title, task: item.taskText), expanded: expanded) {
                 openCards = Companion.DeskCardExpansion.toggled(item.id, in: openCards)
             }
             .deskFrame("readyToggle:\(item.id)")
@@ -1858,7 +1967,7 @@ private struct DeskReadyRow: View {
                 }
             }
             if let subtitle = item.subtitle { Text(subtitle).font(.subheadline.weight(.medium)).lineLimit(2) }
-            DeskTaskText(text: item.taskText, title: item.title, subtitle: item.subtitle)
+            DeskTaskText(text: item.taskText, title: Companion.deskTitle(item.title, task: item.taskText), subtitle: item.subtitle)
             Text(item.text).font(.subheadline).foregroundStyle(Color.metadata).lineLimit(3)
                 .frame(maxWidth: .infinity, alignment: .leading)
             if let assets = item.assets, !assets.isEmpty { DeskAssetLinks(assets: assets) }
@@ -2108,7 +2217,8 @@ struct DeskCardTitle: View {
                 Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(Color.metadata)
                     .rotationEffect(.degrees(expanded ? 90 : 0))
                 if let mark { Image(systemName: mark).font(.caption).foregroundStyle(.purple) }
-                Text(title).font(.headline).lineLimit(expanded ? 3 : 2).multilineTextAlignment(.leading)
+                // The whole title, on as many lines as it takes: never cut with an ellipsis.
+                Text(title).font(.headline).multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
             }
             .contentShape(Rectangle())
