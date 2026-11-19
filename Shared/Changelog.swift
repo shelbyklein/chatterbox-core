@@ -22,6 +22,7 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-19", changes: [
+            "Mac sidebar: the Archive and Delete buttons on a temporary session no longer flicker when you move the pointer onto them.",
             "On the phone, a session's sidequests are a row of small icons at the top of the chat and under the session in a Studio, instead of a full row each; tap one for its task and Open.",
             "On the phone, Activity shows a session's sidequests and sidechats as small icons on its card; tap one for its title and Open.",
             "In the sidebar's Activity, a session's sidequests show as small icons beside its name instead of rows of their own; hover one to see its title, click to open it.",

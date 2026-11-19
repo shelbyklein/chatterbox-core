@@ -1882,7 +1882,6 @@ struct TemporaryRowActions: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .onHover { hovered = enabled && $0 }
             .overlay(alignment: .trailing) {
                 if enabled && hovered {
                     HStack(spacing: 2) {
@@ -1907,6 +1906,11 @@ struct TemporaryRowActions: ViewModifier {
                     #endif
                 }
             }
+            // After the overlay, so the row and its buttons are one hover area: moving onto a
+            // button no longer counts as leaving the row (which hid the buttons, then showed
+            // them again, over and over).
+            .contentShape(Rectangle())
+            .onHover { hovered = enabled && $0 }
             #if DEBUG
             .onAppear { if TemporaryRowActions.forceHover, enabled { hovered = true } }
             #endif
