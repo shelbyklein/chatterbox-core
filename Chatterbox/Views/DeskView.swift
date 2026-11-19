@@ -1826,9 +1826,23 @@ private struct DeskReadyRow: View {
     @Environment(AppModel.self) private var model
     let item: Companion.DeskReady
     let desk: DeskModel
+    @AppStorage(Companion.DeskCardExpansion.key) private var openCards = ""
+    private var expanded: Bool { Companion.DeskCardExpansion.isOpen(item.id, in: openCards) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
+            // An accordion: the title and the actions; a click on the title shows the rest.
+            DeskCardTitle(title: item.title, expanded: expanded) {
+                openCards = Companion.DeskCardExpansion.toggled(item.id, in: openCards)
+            }
+            .deskFrame("readyToggle:\(item.id)")
+            #if DEBUG
+            // Tests read where parts are: a closed card's hidden parts are nowhere.
+            .onChange(of: expanded) { _, open in
+                if !open { for part in ["readySilence", "auto", "source"] { DeskDebug.frames["\(part):\(item.id)"] = nil } }
+            }
+            #endif
+            if expanded {
             HStack(spacing: 6) {
                 Image(systemName: "checkmark.circle").foregroundStyle(.green)
                 Text("Finished \(DeskText.ago(item.finishedAt))").font(.caption.weight(.semibold)).foregroundStyle(Color.metadata).lineLimit(1)
@@ -1843,7 +1857,6 @@ private struct DeskReadyRow: View {
                         .deskFrame("readySilence:\(item.id)")
                 }
             }
-            Text(item.title).font(.headline).lineLimit(2)
             if let subtitle = item.subtitle { Text(subtitle).font(.subheadline.weight(.medium)).lineLimit(2) }
             DeskTaskText(text: item.taskText, title: item.title, subtitle: item.subtitle)
             Text(item.text).font(.subheadline).foregroundStyle(Color.metadata).lineLimit(3)
@@ -1853,8 +1866,9 @@ private struct DeskReadyRow: View {
             // Mark complete is already on the card.
             DeskSourceLine(id: item.task ?? item.id, origin: item.origin, check: item.check,
                            writeBack: item.task.map { task in { Task { await desk.writeBack(task, in: model) } } })
+            }
             HStack(spacing: 8) {
-                Button("Mark complete") { Task { await desk.complete(item) } }
+                Button("Complete") { Task { await desk.complete(item) } }
                     .buttonStyle(.accent)
                     .disabled(!desk.canSilence)
                     .help("Archive the session, completing its task. It shows in Done for a week, where Reopen brings it back.")
@@ -2080,14 +2094,48 @@ private struct DeskAutoStartedTag: View {
     }
 }
 
+/// A Desk card's title as its accordion header: a click opens or closes the rest of the card.
+/// `mark`: a small purple symbol after the chevron (a held card waiting for a response).
+struct DeskCardTitle: View {
+    let title: String
+    let expanded: Bool
+    var mark: String? = nil
+    let toggle: () -> Void
+
+    var body: some View {
+        Button(action: toggle) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(Color.metadata)
+                    .rotationEffect(.degrees(expanded ? 90 : 0))
+                if let mark { Image(systemName: mark).font(.caption).foregroundStyle(.purple) }
+                Text(title).font(.headline).lineLimit(expanded ? 3 : 2).multilineTextAlignment(.leading)
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(expanded ? "Hide the details" : "Show the details")
+        .accessibilityLabel(title)
+        .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+    }
+}
+
 /// A held task keeps its conversation and finished work; Resume restores its derived lane.
 private struct DeskHeldRow: View {
     @Environment(AppModel.self) private var model
     let item: Companion.DeskHeld
     let desk: DeskModel
+    @AppStorage(Companion.DeskCardExpansion.key) private var openCards = ""
+    private var expanded: Bool { Companion.DeskCardExpansion.isOpen(item.id, in: openCards) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            // An accordion: the title (and that it's waiting for a response) and the actions.
+            DeskCardTitle(title: item.text, expanded: expanded, mark: item.isWaitingForResponse ? "ellipsis.bubble" : nil) {
+                openCards = Companion.DeskCardExpansion.toggled(item.id, in: openCards)
+            }
+            .deskFrame("heldToggle:\(item.id)")
+            if expanded {
             HStack {
                 Label(item.label, systemImage: item.isWaitingForResponse ? "ellipsis.bubble" : "pause.circle").font(.caption.weight(item.isWaitingForResponse ? .semibold : .regular))
                     .foregroundStyle(item.isWaitingForResponse ? Color.purple : Color.metadata)
@@ -2095,9 +2143,9 @@ private struct DeskHeldRow: View {
                 Spacer(minLength: 4)
                 if let place = item.place { DeskPlaceLabel(name: place) }
             }
-            Text(item.text).font(.headline).lineLimit(3)
             Text("Held " + DeskText.ago(item.heldAt)).font(.caption).foregroundStyle(Color.metadata)
             if let note = item.note { Text(note).font(.callout).foregroundStyle(Color.metadata).lineLimit(3) }
+            }
             HStack {
                 Button("Resume") { Task { await desk.hold(item.id, resume: true) } }
                     .deskFrame("resume:\(item.id)")

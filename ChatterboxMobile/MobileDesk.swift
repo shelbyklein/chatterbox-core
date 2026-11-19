@@ -1049,14 +1049,24 @@ private struct DeskReadyCard: View {
     /// On hold because you're waiting for someone's response.
     var wait: (() -> Void)? = nil
 
+    @AppStorage(Companion.DeskCardExpansion.key) private var openCards = ""
+    private var expanded: Bool { Companion.DeskCardExpansion.isOpen(item.id, in: openCards) }
+
     var body: some View {
         DeskSwipe(action: .complete, id: item.id.uuidString, enabled: swipes, perform: complete) { taps in card(taps) }
     }
 
     private func card(_ taps: DeskSwipeTaps) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            // Not a button: a touch on the text (often the start of a scroll) does nothing. Only
-            // the assets and the buttons below act; Open opens the session.
+            // An accordion: the title and the buttons; a tap on the title shows the rest. The
+            // details themselves aren't a button (a touch there is often a scroll starting).
+            MobileDeskCardTitle(title: item.title, expanded: expanded,
+                                toggle: taps { openCards = Companion.DeskCardExpansion.toggled(item.id, in: openCards) })
+                .accessibilityAction(named: "Open", open)
+                .accessibilityAction(named: "Mark Complete", complete)
+                .accessibilityAction(named: "Silence", silence)
+                .accessibilityIdentifier("desk-ready-\(item.id.uuidString)")
+            if expanded {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 8) {
                         // The icon carries the color; the words stay readable in light mode.
@@ -1067,7 +1077,6 @@ private struct DeskReadyCard: View {
                         Spacer(minLength: 8)
                         if let place = item.place, place != item.title { DeskPlaceTag(name: place) }
                     }
-                    Text(item.title).font(.headline).lineLimit(2).multilineTextAlignment(.leading)
                     if let subtitle = item.subtitle {
                         Text(subtitle).font(.subheadline.weight(.medium)).lineLimit(2).multilineTextAlignment(.leading)
                     }
@@ -1075,12 +1084,7 @@ private struct DeskReadyCard: View {
                     Text(item.text).font(.subheadline).foregroundStyle(Color.metadata).lineLimit(3).multilineTextAlignment(.leading)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-                .accessibilityElement(children: .combine)
-                .accessibilityAction(named: "Open", open)
-                .accessibilityAction(named: "Mark Complete", complete)
-                .accessibilityAction(named: "Silence", silence)
-                .accessibilityIdentifier("desk-ready-\(item.id.uuidString)")
+                .accessibilityIdentifier("desk-ready-details-\(item.id.uuidString)")
             // What it made: links open in Safari; files and images are in the session.
             if let assets = item.assets, !assets.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
@@ -1099,6 +1103,7 @@ private struct DeskReadyCard: View {
             if item.autoStarted == true { MobileDeskAutoStartedTag() }
             MobileDeskSourceLine(id: (item.task ?? item.id).uuidString, origin: item.origin, check: item.check,
                                  writeBack: writeBack, taps: { taps($0) })
+            }
             // Small, one-line buttons with short labels, so the row stays one compact line.
             HStack(spacing: 6) {
                 Button(action: taps(complete)) { Label("Complete", systemImage: "checkmark") }
@@ -1947,6 +1952,33 @@ private struct MobileDeskAutoStartedTag: View {
     }
 }
 
+/// A Desk card's title as its accordion header: a tap opens or closes the rest of the card.
+/// `mark`: a small purple symbol by the title (a held card waiting for a response).
+private struct MobileDeskCardTitle: View {
+    let title: String
+    let expanded: Bool
+    var mark: String? = nil
+    let toggle: () -> Void
+
+    var body: some View {
+        Button(action: toggle) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(Color.metadata)
+                    .rotationEffect(.degrees(expanded ? 90 : 0))
+                if let mark { Image(systemName: mark).font(.footnote).foregroundStyle(.purple) }
+                Text(title).font(.headline).lineLimit(expanded ? 3 : 2).multilineTextAlignment(.leading)
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel((mark != nil ? "Waiting for response: " : "") + title)
+        .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+        .accessibilityHint(expanded ? "Hides the details" : "Shows the details")
+    }
+}
+
 private struct MobileDeskHeldCard: View {
     let item: Companion.DeskHeld
     let busy: Bool
@@ -1954,9 +1986,16 @@ private struct MobileDeskHeldCard: View {
     var open: (() -> Void)?
     /// Switches why it's held: true for waiting for a response.
     var setWaiting: ((Bool) -> Void)? = nil
+    @AppStorage(Companion.DeskCardExpansion.key) private var openCards = ""
+    private var expanded: Bool { Companion.DeskCardExpansion.isOpen(item.id, in: openCards) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            // An accordion: the title (and that it's waiting for a response) and the buttons.
+            MobileDeskCardTitle(title: item.text, expanded: expanded, mark: item.isWaitingForResponse ? "ellipsis.bubble" : nil,
+                                toggle: { openCards = Companion.DeskCardExpansion.toggled(item.id, in: openCards) })
+                .accessibilityIdentifier("desk-held-toggle-" + item.id.uuidString)
+            if expanded {
             HStack {
                 Label(item.label, systemImage: item.isWaitingForResponse ? "ellipsis.bubble" : "pause.circle")
                     .font(.subheadline.weight(item.isWaitingForResponse ? .semibold : .regular))
@@ -1965,9 +2004,9 @@ private struct MobileDeskHeldCard: View {
                 Spacer(minLength: 4)
                 if let place = item.place { Text(place).font(.caption).foregroundStyle(Color.metadata).lineLimit(1) }
             }
-            Text(item.text).font(.headline).lineLimit(3)
             Text("Held " + MobileDeskView.ago(item.heldAt)).font(.footnote).foregroundStyle(Color.metadata)
             if let note = item.note { Text(note).font(.footnote).foregroundStyle(Color.metadata).lineLimit(3) }
+            }
             HStack {
                 Button("Resume", action: resume).buttonStyle(.borderedProminent)
                     .accessibilityIdentifier("desk-resume-" + item.id.uuidString)

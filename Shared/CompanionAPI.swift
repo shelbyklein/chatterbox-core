@@ -811,6 +811,18 @@ enum Companion {
         }
     }
 
+    /// Desk cards are accordions: the title and the actions, and the rest once opened. Which
+    /// ones are open is kept in preferences (`key`), as ids joined by commas, newest last.
+    enum DeskCardExpansion {
+        static let key = "deskExpandedCards"
+        static func isOpen(_ id: UUID, in stored: String) -> Bool { stored.contains(id.uuidString) }
+        static func toggled(_ id: UUID, in stored: String) -> String {
+            var ids = stored.split(separator: ",").map(String.init)
+            if let index = ids.firstIndex(of: id.uuidString) { ids.remove(at: index) } else { ids.append(id.uuidString) }
+            return ids.suffix(80).joined(separator: ",")
+        }
+    }
+
     /// How a Desk card shows a task's source: its status as a pill, and a link to open it.
     enum DeskOriginTone { case done, review, active, waiting, blocked, unknown }
 
