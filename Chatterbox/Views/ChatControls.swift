@@ -350,104 +350,89 @@ struct SidebarActivityStrip: View {
         .help("\(name) · \(work.title) needs you")
     }
 
-    /// A row in Activity: a session, a sidequest indented under its parent, or (when only the
-    /// sidequest has news) its parent's name as a plain row above it.
+    /// A row in Activity: a session, with its sidequests' news as icons after its name. When
+    /// only a sidequest has news, the session's name is shown plainly (`listed` false).
     private struct ActivityEntry: Identifiable {
-        enum Kind { case session, nested, parentName }
         let session: ChatSession
-        let kind: Kind
-        var id: String { "\(kind)-\(session.id)" }
+        let listed: Bool
+        let quests: [ChatSession]
+        var id: UUID { session.id }
     }
 
-    /// Each sidequest right under the session that sent it, indented; one whose parent isn't
-    /// in the list gets the parent's name above it. Otherwise in the list's own order.
+    /// One row per session; its sidequests ride along as icons on that row. Otherwise in the
+    /// list's own order.
     private func families(_ list: [ChatSession]) -> [ActivityEntry] {
         let listed = Set(list.map(\.id))
         func parent(of session: ChatSession) -> ChatSession? {
             session.record.sidequestOf.flatMap { id in model.sessions.first { $0.id == id } }
         }
         var children: [UUID: [ChatSession]] = [:]
-        var entries: [ActivityEntry] = []
-        var headed = Set<UUID>()
         for session in list {
             if let p = parent(of: session) { children[p.id, default: []].append(session) }
         }
+        var entries: [ActivityEntry] = []
+        var seen = Set<UUID>()
         for session in list {
-            if let p = parent(of: session) {
-                // Under its parent's own row, if that's listed; otherwise under its name.
-                guard !listed.contains(p.id), headed.insert(p.id).inserted else { continue }
-                entries.append(ActivityEntry(session: p, kind: .parentName))
-                entries += (children[p.id] ?? []).map { ActivityEntry(session: $0, kind: .nested) }
-            } else {
-                entries.append(ActivityEntry(session: session, kind: .session))
-                entries += (children[session.id] ?? []).map { ActivityEntry(session: $0, kind: .nested) }
-            }
+            let head = parent(of: session) ?? session
+            guard seen.insert(head.id).inserted else { continue }
+            entries.append(ActivityEntry(session: head, listed: listed.contains(head.id),
+                                         quests: children[head.id] ?? []))
         }
         return entries
     }
 
-    @ViewBuilder private func entry(_ entry: ActivityEntry, running: Bool) -> some View {
-        switch entry.kind {
-        case .session: row(entry.session, running: running)
-        case .nested: row(entry.session, running: running, nested: true)
-        case .parentName:
-            Button { model.selectedID = entry.session.id } label: {
-                HStack(spacing: 7) {
-                    Color.clear.frame(width: 11, height: 11)
-                    Text(entry.session.record.projectFolder != nil ? entry.session.projectName : entry.session.title)
-                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }.padding(.vertical, 3).padding(.horizontal, 2).contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Open \(entry.session.title)")
-            .help("Open \(entry.session.title)")
-        }
+    private func open(_ session: ChatSession, running: Bool) {
+        if running { Attention.shared.openWorkingChat(session.id, in: model) }
+        else { Attention.shared.openFinishedChat(session.id, in: model) }
     }
 
-    private func row(_ session: ChatSession, running: Bool, nested: Bool = false) -> some View {
-        Button {
-            if running { Attention.shared.openWorkingChat(session.id, in: model) }
-            else { Attention.shared.openFinishedChat(session.id, in: model) }
-        } label: {
-            HStack(spacing: 7) {
-                if running {
-                    ActivitySpinner(color: appearance.style.color(for: session))
-                        .frame(width: 11, height: 11)
-                } else {
-                    // The reply's model color, as its spinner was while it worked.
-                    Circle().fill(appearance.style.color(for: session)).frame(width: 6, height: 6).frame(width: 11, height: 11)
-                }
-                if nested {
-                    Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
-                        .font(.caption).foregroundStyle(.secondary)
-                        .accessibilityLabel("Sidequest")
-                    Text(session.title.hasPrefix("Sidequest · ") ? String(session.title.dropFirst("Sidequest · ".count)) : session.title)
-                        .font(.caption).lineLimit(1)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                } else if session.isSidequest {
-                    if let parent = session.record.sidequestOf.flatMap({ id in model.sessions.first { $0.id == id } }) {
-                        Text(parent.record.projectFolder != nil ? parent.projectName : parent.title)
-                            .font(.caption).lineLimit(1).layoutPriority(1)
+    private func questTitle(_ session: ChatSession) -> String {
+        session.title.hasPrefix("Sidequest · ") ? String(session.title.dropFirst("Sidequest · ".count)) : session.title
+    }
+
+    private func entry(_ entry: ActivityEntry, running: Bool) -> some View {
+        let session = entry.session
+        let name = session.record.projectFolder != nil ? session.projectName : session.title
+        return HStack(spacing: 5) {
+            Button {
+                if entry.listed { open(session, running: running) } else { model.selectedID = session.id }
+            } label: {
+                HStack(spacing: 7) {
+                    if !entry.listed {
+                        Color.clear.frame(width: 11, height: 11)
+                    } else if running {
+                        ActivitySpinner(color: appearance.style.color(for: session))
+                            .frame(width: 11, height: 11)
+                    } else {
+                        // The reply's model color, as its spinner was while it worked.
+                        Circle().fill(appearance.style.color(for: session)).frame(width: 6, height: 6).frame(width: 11, height: 11)
                     }
+                    Text(name).font(.caption).lineLimit(1)
+                        .foregroundStyle(entry.listed ? .primary : .secondary)
+                }.padding(.vertical, 4).padding(.horizontal, 2).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(entry.listed ? "Open \(running ? "working session" : "new reply") \(session.title)" : "Open \(session.title)")
+            .help(entry.listed ? activityHelp(session, running: running) : "Open \(session.title)")
+            // Its sidequests with news: an icon each, in the sidequest's model color. Hovering
+            // shows the sidequest's title; clicking opens it.
+            ForEach(entry.quests) { quest in
+                Button { open(quest, running: running) } label: {
                     Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
-                        .font(.caption).foregroundStyle(.secondary)
-                        .accessibilityLabel("Sidequest")
-                    Text(session.title.hasPrefix("Sidequest · ") ? String(session.title.dropFirst("Sidequest · ".count)) : session.title)
-                        .font(.caption).lineLimit(1)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                } else {
-                    Text(session.record.projectFolder != nil ? session.projectName : session.title)
-                        .font(.caption).lineLimit(1)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(appearance.style.color(for: quest))
+                        .opacity(running ? 0.75 : 1)
+                        .frame(width: 18, height: 20).contentShape(Rectangle())
                 }
-            }.padding(.vertical, 4).padding(.horizontal, 2)
-            .padding(.leading, nested ? 18 : 0)
-            .contentShape(Rectangle())
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open sidequest \(questTitle(quest))")
+                .help("\(questTitle(quest)) · \(running ? quest.record.provider.label + " is working" : "New reply")")
+            }
+            Spacer(minLength: 0)
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Open \(running ? "working session" : "new reply") \(session.title)")
-        .help(activityHelp(session, running: running))
+        // The rest of the row opens the session too.
+        .contentShape(Rectangle())
+        .onTapGesture { if entry.listed { open(session, running: running) } else { model.selectedID = session.id } }
     }
 }
 

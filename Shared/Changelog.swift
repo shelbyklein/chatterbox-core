@@ -22,6 +22,7 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-19", changes: [
+            "In the sidebar's Activity, a session's sidequests show as small icons beside its name instead of rows of their own; hover one to see its title, click to open it.",
             "On the Mac, a session's sidequests start as small bubbles in its corner; click one to open it.",
             "Mac sidebar: hover over a temporary session (a sidechat or sidequest) for Archive and Delete buttons at its right.",
             "Mac sidebar: Hide folds a session's sidechats and sidequests into one line (\"4 threads · 1 working\"); click it to open them again.",
