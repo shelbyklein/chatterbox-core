@@ -61,6 +61,72 @@ struct MobileSidequestRow: View {
     }
 }
 
+/// A sidequest as a small icon: its agent, with a mark for its state (a spinner while it
+/// works, yellow when it needs you, a check when done). Tapping shows its task, with Open.
+struct MobileSidequestIcon: View {
+    let quest: Companion.ChatSummary
+    let open: () -> Void
+    @State private var showing = false
+
+    private var task: String { quest.sidequestTask ?? quest.title }
+    private var agent: String { quest.backend == "codex" ? "Codex" : "Claude" }
+    private var state: String { quest.isWaitingOnYou ? "Needs you" : quest.isRunning ? "Working" : "Finished" }
+
+    var body: some View {
+        Button { showing = true } label: {
+            Image((Backend(rawValue: quest.backend) ?? .codex).iconName).resizable().scaledToFit()
+                .frame(width: 16, height: 16)
+                .foregroundStyle(MobileConversationStyle.accent(for: quest.backend))
+                .opacity(quest.isRunning || quest.isWaitingOnYou ? 1 : 0.6)
+                .frame(width: 38, height: 32)
+                .background(Color(uiColor: .tertiarySystemFill), in: Capsule())
+                .overlay(alignment: .topTrailing) {
+                    Group {
+                        if quest.isWaitingOnYou { Circle().fill(.yellow).frame(width: 8, height: 8) }
+                        else if quest.isRunning { ProgressView().controlSize(.mini).tint(MobileConversationStyle.accent(for: quest.backend)).scaleEffect(0.7) }
+                        else { Image(systemName: "checkmark.circle.fill").font(.system(size: 10)).foregroundStyle(.secondary) }
+                    }
+                    .offset(x: 2, y: -2)
+                }
+                .padding(.top, 3).padding(.trailing, 3)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Sidequest to \(agent): \(task)\(quest.isRunning ? ", working" : quest.isWaitingOnYou ? ", needs you" : "")")
+        .accessibilityIdentifier("sidequest-icon-" + quest.id.uuidString)
+        .accessibilityAction(named: "Open") { open() }
+        .popover(isPresented: $showing) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(task).font(.subheadline.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
+                Text("\(agent) · \(state)").font(.caption).foregroundStyle(.secondary)
+                Button { showing = false; open() } label: {
+                    Label("Open", systemImage: "arrow.up.right").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("sidequest-open")
+            }
+            .padding(14)
+            .frame(width: 260)
+            .presentationCompactAdaptation(.popover)
+        }
+    }
+}
+
+/// A chat's sidequests as one scrolling row of icons.
+struct MobileSidequestIcons: View {
+    let quests: [Companion.ChatSummary]
+    let open: (Companion.ChatSummary) -> Void
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(quests) { quest in MobileSidequestIcon(quest: quest) { open(quest) } }
+            }
+        }
+        .scrollBounceBehavior(.basedOnSize)
+    }
+}
+
 /// Above a chat's transcript: the sidequests it started; inside a sidequest, where it reports.
 struct MobileSidequestStrip: View {
     let summary: Companion.ChatSummary
@@ -87,11 +153,17 @@ struct MobileSidequestStrip: View {
         } else {
             let quests = MobileSidequests.of(summary.id, in: chats)
             if !quests.isEmpty {
-                VStack(spacing: 6) {
-                    ForEach(quests) { quest in MobileSidequestRow(quest: quest) { open(quest) } }
+                // One row of icons, however many there are; tap one for its task and Open.
+                HStack(spacing: 8) {
+                    Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                    MobileSidequestIcons(quests: quests, open: open)
                 }
-                .padding(.horizontal, 12).padding(.vertical, 8)
+                .padding(.horizontal, 12).padding(.vertical, 6)
                 .background(.bar)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("sidequest-strip")
             }
         }
     }

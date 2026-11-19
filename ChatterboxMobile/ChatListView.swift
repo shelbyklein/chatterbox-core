@@ -792,7 +792,7 @@ struct ChatListView: View {
                             HStack {
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(group.title).font(.title3.weight(.bold))
-                                    Text("\(group.chats.count) session\(group.chats.count == 1 ? "" : "s")").font(.caption).foregroundStyle(.secondary)
+                                    Text("\(group.chats.count { !MobileSidequests.listedWithParent($0, in: group.chats) }) session\(group.chats.count { !MobileSidequests.listedWithParent($0, in: group.chats) } == 1 ? "" : "s")").font(.caption).foregroundStyle(.secondary)
                                 }
                                 Spacer()
                                 // A new session in this Studio (its instructions are under ⋯).
@@ -805,21 +805,32 @@ struct ChatListView: View {
                                 }
                             }
                             if search.isEmpty, let pins = group.pins, !pins.isEmpty { MobilePinPills(pins: pins) }
+                            // A session's sidequests are icons under it, not sessions of their own.
+                            let sessions = group.chats.filter { !MobileSidequests.listedWithParent($0, in: group.chats) }
                             if studioListMode {
                                 LazyVStack(spacing: 0) {
-                                    ForEach(group.chats) { chat in
-                                        ChatRow(chat: chat) { open(chat) }.padding(12)
-                                            .contextMenu { chatActions(chat) }
-                                        if chat.id != group.chats.last?.id { Divider().padding(.leading, 38) }
+                                    ForEach(sessions) { chat in
+                                        let quests = MobileSidequests.of(chat.id, in: group.chats)
+                                        VStack(alignment: .leading, spacing: 8) {
+                                            ChatRow(chat: chat) { open(chat) }
+                                                .contextMenu { chatActions(chat) }
+                                            if !quests.isEmpty { MobileSidequestIcons(quests: quests, open: open).padding(.leading, 26) }
+                                        }
+                                        .padding(12)
+                                        if chat.id != sessions.last?.id { Divider().padding(.leading, 38) }
                                     }
                                 }
                                 .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
                             } else {
                                 LazyVGrid(columns: cardColumns, spacing: 10) {
-                                    ForEach(group.chats) { chat in
-                                        ChatCard(chat: chat, showsThumbnail: true, selected: sizeClass == .regular && selection == chat.id,
-                                                 isNew: isNewReply(chat)) { open(chat) }
-                                            .contextMenu { chatActions(chat) }
+                                    ForEach(sessions) { chat in
+                                        let quests = MobileSidequests.of(chat.id, in: group.chats)
+                                        VStack(alignment: .leading, spacing: 6) {
+                                            ChatCard(chat: chat, showsThumbnail: true, selected: sizeClass == .regular && selection == chat.id,
+                                                     isNew: isNewReply(chat)) { open(chat) }
+                                                .contextMenu { chatActions(chat) }
+                                            if !quests.isEmpty { MobileSidequestIcons(quests: quests, open: open) }
+                                        }
                                     }
                                 }
                             }
@@ -1379,7 +1390,7 @@ private struct StudioIndexCard: View {
                     .clipped()
                 VStack(alignment: .leading, spacing: 4) {
                     Text(group.title).font(.headline).lineLimit(1)
-                    Text("\(group.chats.count) session\(group.chats.count == 1 ? "" : "s")").font(.caption).foregroundStyle(.secondary)
+                    Text("\(group.chats.count { !MobileSidequests.listedWithParent($0, in: group.chats) }) session\(group.chats.count { !MobileSidequests.listedWithParent($0, in: group.chats) } == 1 ? "" : "s")").font(.caption).foregroundStyle(.secondary)
                     if waiting > 0 || working > 0 {
                         HStack(spacing: 8) {
                             if waiting > 0 { Label("\(waiting) need\(waiting == 1 ? "s" : "") you", systemImage: "exclamationmark.circle.fill").foregroundStyle(.orange) }
