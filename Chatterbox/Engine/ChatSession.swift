@@ -19,10 +19,12 @@ final class ChatSession: Identifiable {
             // session index is rebuilt. Compared to a copy kept here, not `oldValue`: naming
             // oldValue would keep a second reference to the record during every mutation and
             // make each appended item copy the whole transcript.
-            let place = record.place
-            if place != lastPlace { lastPlace = place; placeChanged?() }
+            // Its tags too: AppModel keeps the list of every tag in the same index.
+            let place = record.place, tags = record.tags
+            if place != lastPlace || tags != lastTags { lastPlace = place; lastTags = tags; placeChanged?() }
         }
     }
+    @ObservationIgnored private var lastTags: [String]?
     @ObservationIgnored private var lastPlace: ConversationRecord.Place
     /// Set by AppModel: called when the record's place changes.
     @ObservationIgnored var placeChanged: (() -> Void)?
@@ -265,6 +267,7 @@ final class ChatSession: Identifiable {
         self.id = record.id
         self.record = record
         self.lastPlace = record.place
+        self.lastTags = record.tags
         for (key, usage) in record.savedContext ?? [:] {
             if let backend = Backend(rawValue: key) { contextUsage[backend] = usage }
         }

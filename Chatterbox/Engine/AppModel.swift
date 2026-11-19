@@ -179,6 +179,10 @@ final class AppModel {
         var sidequestsOf: [UUID: [ChatSession]] = [:]
         /// Worktree chats by their project's folder (normalized).
         var worktreesOf: [String: [ChatSession]] = [:]
+        /// Archived sessions, newest first.
+        var archived: [ChatSession] = []
+        /// Every tag in use, each once (as first written), in alphabetical order.
+        var tags: [String] = []
     }
     @ObservationIgnored private var cachedIndex: (revision: Int, index: SessionIndex)?
     /// Goes up on every change to the sessions' structure; whoever reads the index observes it.
@@ -186,6 +190,16 @@ final class AppModel {
     private var sessionIndex: SessionIndex {
         if let cachedIndex, cachedIndex.revision == sessionIndexRevision { return cachedIndex.index }
         var index = SessionIndex()
+        // The archive and the tag list were recomputed for every sidebar row on every redraw
+        // (15% and 5% of the main thread during a reply, with 647 sessions): once per change here.
+        var archived: [(Date, ChatSession)] = [], tagsSeen: [String: String] = [:]
+        for session in sessions {
+            let record = session.record
+            if let date = record.archivedAt { archived.append((date, session)) }
+            for tag in record.tags ?? [] where tagsSeen[tag.lowercased()] == nil { tagsSeen[tag.lowercased()] = tag }
+        }
+        index.archived = archived.sorted { $0.0 > $1.0 }.map(\.1)
+        index.tags = tagsSeen.values.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
         for session in sessions where session.record.archivedAt == nil {
             index.active.append(session)
             index.activeByID[session.id] = session
@@ -199,6 +213,8 @@ final class AppModel {
     }
     private func sessionsChanged() {
         sessionIndexRevision += 1
+        // A chat added or removed: the next launch's list should have it soon.
+        if loadedSessionList, !restoringNavigation { saveNavigationSoon(after: .seconds(2)) }
         for session in sessions where session.placeChanged == nil {
             session.placeChanged = { [weak self] in self?.sessionIndexRevision += 1 }
         }
@@ -424,11 +440,7 @@ final class AppModel {
     }
 
     /// Every tag in use, for the Tags menu.
-    var allTags: [String] {
-        var seen: [String: String] = [:]
-        for tag in sessions.flatMap(\.tags) where seen[tag.lowercased()] == nil { seen[tag.lowercased()] = tag }
-        return seen.values.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
-    }
+    var allTags: [String] { sessionIndex.tags }
 
     /// Moves the selection up or down the sidebar, wrapping around.
     func selectAdjacentChat(_ offset: Int) {
@@ -437,10 +449,7 @@ final class AppModel {
         let current = order.firstIndex { $0.id == selectedID } ?? 0
         selectedID = order[(current + offset + order.count) % order.count].id
     }
-    var archivedSessions: [ChatSession] {
-        sessions.filter { $0.record.archivedAt != nil }
-            .sorted { ($0.record.archivedAt ?? .distantPast) > ($1.record.archivedAt ?? .distantPast) }
-    }
+    var archivedSessions: [ChatSession] { sessionIndex.archived }
 
     func archivedSessions(matching query: String) -> [ChatSession] {
         let words = query.split(whereSeparator: \.isWhitespace)
@@ -1094,6 +1103,7 @@ final class AppModel {
         outbox.enqueue(session.id, op: "metadata", values: changes, overlays: Dictionary(uniqueKeysWithValues: changes.map { ($0.key, [$0.key: $0.value]) }))
     }
     @ObservationIgnored private var projectionRevisions: [UUID: Int] = [:]
+    @ObservationIgnored private var navigationSaveDue: ContinuousClock.Instant?
     @ObservationIgnored private var navigationStates: [UUID: RuntimeChatState] = [:]
     @ObservationIgnored private var restoringNavigation = false
     @ObservationIgnored private var transcriptReaders: [UUID: Int] = [:]
@@ -1118,17 +1128,28 @@ final class AppModel {
         restoringNavigation = false
     }
 
-    private func saveNavigationSoon() {
-        guard RuntimeClient.shared.supportsNavigationSummaries, navigationSave == nil else { return }
+    /// The session list as it was, for the next launch to show at once. It only needs to be
+    /// roughly current, so while replies stream it's saved at most every `delay` (it was every
+    /// 2 seconds, encoding every session on the main thread: 12% of it during a reply), and the
+    /// encoding happens off the main thread.
+    private func saveNavigationSoon(after delay: Duration = .seconds(30)) {
+        guard RuntimeClient.shared.supportsNavigationSummaries else { return }
+        // The earliest deadline asked for wins: a quick save (the list changed) replaces a slow
+        // one already waiting (a reply streaming).
+        let due = ContinuousClock.now + delay
+        if navigationSave != nil, let navigationSaveDue, navigationSaveDue <= due { return }
+        navigationSave?.cancel()
+        navigationSaveDue = due
         navigationSave = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(2))
-            guard let self else { return }
+            try? await Task.sleep(until: due)
+            guard !Task.isCancelled, let self else { return }
             self.navigationSave = nil
+            self.navigationSaveDue = nil
             let cache = NavigationCache(states: self.sessions.compactMap { self.navigationStates[$0.id] }, studios: self.studios)
-            let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
-            guard let data = try? encoder.encode(cache) else { return }
             let file = self.navigationFile
             _ = await Task.detached(priority: .utility) {
+                let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
+                guard let data = try? encoder.encode(cache) else { return }
                 do {
                     try data.write(to: file, options: .atomic)
                     try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
@@ -1352,7 +1373,7 @@ final class AppModel {
             if let selectedID, let selected, !selected.transcriptLoaded { refreshSession(selectedID, immediately: true) }
             loadedSessionList = true
             sessionLoadStatus = nil
-            saveNavigationSoon()
+            saveNavigationSoon(after: .seconds(2))
             for session in sessions { session.resendDraftIfUnsynced() }
             await RuntimePreferenceProjection.shared.start()
             reloadPinnedThreads()

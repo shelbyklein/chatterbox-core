@@ -489,6 +489,10 @@ private final class Watchdog: @unchecked Sendable {
         let buffer = UnsafeMutablePointer<UInt>.allocate(capacity: capacity)
         defer { buffer.deallocate() }
         var count = 0
+        #if !arch(arm64)
+        // Only Apple silicon's registers are read here; an Intel build reports no stack.
+        return []
+        #else
         guard thread_suspend(thread) == KERN_SUCCESS else { return [] }
         var state = arm_thread_state64_t()
         var stateCount = mach_msg_type_number_t(MemoryLayout<arm_thread_state64_t>.size / MemoryLayout<natural_t>.size)
@@ -517,6 +521,7 @@ private final class Watchdog: @unchecked Sendable {
         thread_resume(thread)
         // Strip pointer-authentication bits from system code's return addresses.
         return (0..<count).map { buffer[$0] & 0x0000_000F_FFFF_FFFF }
+        #endif
     }
 
     /// The stacks as readable text: the stack seen most often, symbolized, plus how often.
