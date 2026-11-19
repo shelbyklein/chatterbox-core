@@ -78,7 +78,7 @@ struct ImageReviewView: View {
     /// The PDF page showing, from 0.
     @State private var page = 0
 
-    init(attachment: Attachment, gallery: [URL] = [], initialTool: ImageReviewTool = .pen, feedback: Bool = false,
+    init(attachment: Attachment, gallery: [URL] = [], initialTool: ImageReviewTool = .notes, feedback: Bool = false,
          onSend: @escaping (_ text: String, _ attachments: [Attachment]) -> Void) {
         self.feedback = feedback
         _attachment = State(initialValue: attachment)
@@ -109,6 +109,8 @@ struct ImageReviewView: View {
     @State private var tool: ImageReviewTool
     @State private var dragRect: CGRect?
     @State private var overall = ""
+    /// Cancel (or Esc) with notes not sent yet: asking before they're thrown away.
+    @State private var confirmingDiscard = false
     @State private var error: String?
     @FocusState private var focusedMark: UUID?
     /// Zoom (1 = fitted to the window, up to 8×) and where the zoomed picture is moved to.
@@ -373,16 +375,31 @@ struct ImageReviewView: View {
 
     // MARK: - Notes
 
+    /// Notes, drawing or an overall note not sent yet, here or on another page.
+    private var hasUnsentWork: Bool {
+        !marks.isEmpty || !strokes.isEmpty || !otherMarkedPages.isEmpty
+            || !overall.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(attachment.name).font(.headline).lineLimit(1).truncationMode(.middle)
-            Picker("Annotation tool", selection: $tool) {
-                Label("Pen", systemImage: "pencil.tip").tag(ImageReviewTool.pen)
-                Text("Numbered notes").tag(ImageReviewTool.notes)
+            // Numbered notes are how a review is made; the pen is an extra on top, switched on
+            // for a while to draw, then off again (Shelby, 2026-11-19).
+            HStack(spacing: 8) {
+                Label("Numbered notes", systemImage: "number.circle")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(tool == .notes ? Color.primary : Color.secondary)
+                Spacer(minLength: 4)
+                Toggle(isOn: Binding(get: { tool == .pen }, set: { tool = $0 ? .pen : .notes })) {
+                    Label("Pen", systemImage: "pencil.tip")
+                }
+                .toggleStyle(.button)
+                .controlSize(.small)
+                .help(tool == .pen ? "Drawing with the pen: click to go back to notes" : "Draw on top with the pen")
+                .accessibilityLabel("Pen")
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            Text(tool == .pen ? "Drag on the \(noun) to draw." : "Drag to mark an area, or click to mark a spot. Add a note for each mark.")
+            Text(tool == .pen ? "Drag on the \(noun) to draw. Turn the pen off to add notes again." : "Click a spot, or drag to mark an area, and add a note for it.")
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
                 Button(action: undo) { Label("Undo", systemImage: "arrow.uturn.backward") }
@@ -437,7 +454,9 @@ struct ImageReviewView: View {
 
             HStack {
                 Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                // Esc too: closing without sending throws the notes away, so it asks first.
+                Button("Cancel") { if hasUnsentWork { confirmingDiscard = true } else { dismiss() } }
+                    .keyboardShortcut(.cancelAction)
                 Button(feedback ? "Add to Chatterbox Session" : "Send to Session") { send() }
                     .keyboardShortcut(.return, modifiers: .command)
                     .disabled(image == nil || (!feedback && marks.isEmpty && strokes.isEmpty && otherMarkedPages.isEmpty
@@ -445,6 +464,12 @@ struct ImageReviewView: View {
             }
         }
         .padding(16)
+        .confirmationDialog("Discard your notes?", isPresented: $confirmingDiscard) {
+            Button("Discard Notes", role: .destructive) { dismiss() }
+            Button("Keep Editing", role: .cancel) {}
+        } message: {
+            Text("They haven't been sent. Closing now deletes them.")
+        }
     }
 
     // MARK: - Sending

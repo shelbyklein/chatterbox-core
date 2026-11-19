@@ -22,6 +22,8 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-19", changes: [
+            "Closing Image Review with unsent notes (Esc or Cancel) asks before deleting them.",
+            "Image Review on the Mac starts with numbered notes: click a spot (or drag an area) to add one. The pen is now a button above them, to switch on when you want to draw.",
             "The background service saves its state off its main thread, so it answers the app and phone promptly while replies stream.",
             "The Mac app uses much less CPU while replies stream: it's now an optimized build, and the sidebar no longer rescans every session's tags and the archive on each update.",
             "Desk card titles show in full, on as many lines as they need, instead of ending in an ellipsis.",
