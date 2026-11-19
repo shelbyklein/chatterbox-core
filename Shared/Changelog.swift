@@ -21,6 +21,9 @@ enum Changelog {
     }
 
     static let days: [Day] = [
+        Day(id: "2026-11-19", changes: [
+            "Desk cards from ClickUp (or an email) show the task's status as a colored pill and a link that opens it there, on the Mac and the phone.",
+        ]),
         Day(id: "2026-11-18", changes: [
             "Tapping Download on a phone image always starts it: it shows progress, the picture or an error, whatever else is going on.",
             "Images on the phone load the first time you open a session, without leaving and coming back.",

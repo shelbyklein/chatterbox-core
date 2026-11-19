@@ -1835,14 +1835,30 @@ private struct MobileDeskSourceLine: View {
     var body: some View {
         if let origin {
             VStack(alignment: .leading, spacing: 8) {
-                Button(action: taps { origin.url.flatMap(URL.init(string:)).map { UIApplication.shared.open($0) } }) {
-                    Label(Self.badge(origin), systemImage: origin.kind == "email" ? "envelope" : "checklist")
-                        .font(.caption.weight(.medium)).foregroundStyle(Color.metadata)
-                        .lineLimit(1).truncationMode(.middle)
+                // Its status in the source as a pill, then a link that opens it there.
+                HStack(spacing: 8) {
+                    Text(origin.statusText)
+                        .font(.caption2.weight(.semibold)).lineLimit(1)
+                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .foregroundStyle(Self.color(origin.statusTone))
+                        .background(Self.color(origin.statusTone).opacity(0.16), in: Capsule())
+                        .accessibilityLabel("\(origin.sourceName) status: \(origin.statusText)")
+                        .accessibilityIdentifier("desk-source-status-\(id)")
+                    Button(action: taps { origin.url.flatMap(URL.init(string:)).map { UIApplication.shared.open($0) } }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: origin.kind == "email" ? "envelope" : "checklist")
+                            Text(origin.linkText).lineLimit(1).truncationMode(.middle)
+                            if origin.url != nil { Image(systemName: "arrow.up.right").font(.caption2.weight(.semibold)) }
+                        }
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(origin.url == nil ? Color.metadata : Color.accentColor)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(origin.url == nil)
+                    .accessibilityLabel("\(origin.sourceName): \(origin.linkText)")
+                    .accessibilityHint(origin.url == nil ? "" : "Opens it in \(origin.sourceName)")
+                    .accessibilityIdentifier("desk-source-\(id)")
                 }
-                .buttonStyle(.plain)
-                .disabled(origin.url == nil)
-                .accessibilityIdentifier("desk-source-\(id)")
                 if let check {
                     Label(check.warning, systemImage: "exclamationmark.triangle.fill")
                         .font(.subheadline.weight(.medium)).foregroundStyle(Color.attention)
@@ -1863,6 +1879,16 @@ private struct MobileDeskSourceLine: View {
                     }
                 }
             }
+        }
+    }
+
+    static func color(_ tone: Companion.DeskOriginTone) -> Color {
+        switch tone {
+        case .done: .green
+        case .review: .purple
+        case .active: .blue
+        case .blocked: .orange
+        case .waiting, .unknown: Color.metadata
         }
     }
 

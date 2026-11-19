@@ -780,7 +780,34 @@ enum Companion {
         /// An email's newest unanswered reply: who wrote it, and when.
         var replyFrom: String? = nil
         var replyAt: Date? = nil
+
+        /// "ClickUp" or "Email".
+        var sourceName: String { kind == "email" ? "Email" : "ClickUp" }
+        /// The pill: "In progress", "New reply from Lauren"; "Not checked yet" before any report.
+        var statusText: String {
+            guard let status, !status.isEmpty else { return "Not checked yet" }
+            let shown = status.prefix(1).uppercased() + status.dropFirst()
+            return kind == "email" && status.lowercased() == "new reply" ? shown + (replyFrom.map { " from " + $0 } ?? "") : shown
+        }
+        /// The pill's color, from the status's words (ClickUp statuses are each list's own).
+        var statusTone: DeskOriginTone {
+            guard let status = status?.lowercased(), !status.isEmpty else { return .unknown }
+            func has(_ words: String...) -> Bool { words.contains { status.contains($0) } }
+            if has("complete", "done", "closed", "approved", "answered", "shipped") { return .done }
+            if has("review", "proof", "feedback", "new reply") { return .review }
+            if has("block", "hold", "stuck", "waiting") { return .blocked }
+            if has("progress", "working", "doing", "active", "started") { return .active }
+            return .waiting
+        }
+        /// The link's words: "Open in ClickUp" (or the task's name there), "Open email".
+        var linkText: String {
+            if let title, !title.isEmpty { return title }
+            return kind == "email" ? "Open email" : "Open in ClickUp"
+        }
     }
+
+    /// How a Desk card shows a task's source: its status as a pill, and a link to open it.
+    enum DeskOriginTone { case done, review, active, waiting, blocked, unknown }
 
     /// The source disagreeing with where the task is on the board. Warns, never blocks; nothing
     /// changes outside Chatterbox without Shelby's tap.

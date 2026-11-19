@@ -1960,15 +1960,31 @@ private struct DeskSourceLine: View {
     var body: some View {
         if let origin {
             VStack(alignment: .leading, spacing: 6) {
-                Button { origin.url.flatMap(URL.init(string:)).map { _ = NSWorkspace.shared.open($0) } } label: {
-                    Label(DeskSourceText.badge(origin), systemImage: origin.kind == "email" ? "envelope" : "checklist")
-                        .font(.caption.weight(.medium)).lineLimit(1).truncationMode(.middle)
+                // Its status in the source as a pill, then a link that opens it there.
+                HStack(spacing: 8) {
+                    Text(origin.statusText)
+                        .font(.caption2.weight(.semibold)).lineLimit(1)
+                        .padding(.horizontal, 7).padding(.vertical, 2)
+                        .foregroundStyle(DeskSourceText.color(origin.statusTone))
+                        .background(DeskSourceText.color(origin.statusTone).opacity(0.16), in: Capsule())
+                        .help(origin.checkedAt.map { "\(origin.sourceName) status, checked \(DeskText.ago($0))" } ?? "Check for updates on the Desk reads its status from \(origin.sourceName)")
+                        .accessibilityLabel("\(origin.sourceName) status: \(origin.statusText)")
+                        .deskFrame("sourceStatus:\(id)")
+                    Button { origin.url.flatMap(URL.init(string:)).map { _ = NSWorkspace.shared.open($0) } } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: origin.kind == "email" ? "envelope" : "checklist")
+                            Text(origin.linkText).lineLimit(1).truncationMode(.middle)
+                            if origin.url != nil { Image(systemName: "arrow.up.right").font(.caption2.weight(.semibold)) }
+                        }
+                        .font(.caption.weight(.medium))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(origin.url == nil ? Color.metadata : Color.accentColor)
+                    .disabled(origin.url == nil)
+                    .help(DeskSourceText.help(origin))
+                    .accessibilityLabel("\(origin.sourceName): \(origin.linkText)")
+                    .deskFrame("source:\(id)")
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(Color.metadata)
-                .disabled(origin.url == nil)
-                .help(DeskSourceText.help(origin))
-                .deskFrame("source:\(id)")
                 if let check {
                     Label(check.warning, systemImage: "exclamationmark.triangle.fill")
                         .font(.subheadline.weight(.medium)).foregroundStyle(Color.attention)
@@ -1996,6 +2012,16 @@ private struct DeskSourceLine: View {
 }
 
 enum DeskSourceText {
+    static func color(_ tone: Companion.DeskOriginTone) -> Color {
+        switch tone {
+        case .done: .green
+        case .review: .purple
+        case .active: .blue
+        case .blocked: .orange
+        case .waiting, .unknown: Color.metadata
+        }
+    }
+
     /// "ClickUp · In progress · Camp schedule", "Email · New reply from Lauren".
     static func badge(_ origin: Companion.DeskOrigin) -> String {
         var parts = [origin.kind == "email" ? "Email" : "ClickUp"]
