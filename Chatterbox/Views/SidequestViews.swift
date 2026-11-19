@@ -238,7 +238,8 @@ struct SidequestWindows: View {
         HStack(alignment: .bottom, spacing: 12) {
             ForEach(quests) { quest in
                 FloatingChat(session: quest, icon: "point.topleft.down.to.point.bottomright.curvepath",
-                             storageKey: "sidequestWindowCollapsed-" + quest.id.uuidString,
+                             // A bubble until you open it (Shelby, 2026-11-19); one you open stays open.
+                             storageKey: "sidequestWindowCollapsed-" + quest.id.uuidString, startsCollapsed: true,
                              label: "\(quest.record.backend.label) \u{00B7} Sidequest",
                              title: quest.record.sidequestTask,
                              height: min(560, maxHeight),

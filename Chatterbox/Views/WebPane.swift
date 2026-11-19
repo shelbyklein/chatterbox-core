@@ -282,8 +282,10 @@ struct FloatingChat: View {
     @AppStorage private var collapsed: Bool
     private let appearance = ReaderStyleSettings()
 
-    /// `storageKey` remembers whether this one is shrunk to its bubble.
+    /// `storageKey` remembers whether this one is shrunk to its bubble; `startsCollapsed`: how
+    /// it begins before you've opened or shrunk it.
     init(session: ChatSession, icon: String = "bubble.left.and.bubble.right.fill", storageKey: String = "floatingChatCollapsed",
+         startsCollapsed: Bool = false,
          label: String? = nil, title: String? = nil, height: CGFloat = 560, tile: CommandCenterTileContext? = nil,
          onClose: (() -> Void)? = nil, onExpand: @escaping () -> Void) {
         self.session = session
@@ -294,7 +296,7 @@ struct FloatingChat: View {
         self.tile = tile
         self.onClose = onClose
         self.onExpand = onExpand
-        _collapsed = AppStorage(wrappedValue: false, storageKey)
+        _collapsed = AppStorage(wrappedValue: startsCollapsed, storageKey)
     }
 
     var body: some View {
