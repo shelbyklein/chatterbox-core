@@ -1004,11 +1004,11 @@ struct ChatView: View {
                 .help("Stop (Esc or \u{2318}.)")
                 .accessibilityLabel("Stop")
                 // Esc stops the reply from anywhere in the chat. While the "/" menu is open,
-                // Esc closes the menu instead. Kept in the background so it takes no room in the row.
+                // Esc closes the menu instead; while renaming from the title, it cancels that. Kept in the background so it takes no room in the row.
                 .background {
                     if commandMatches.isEmpty {
                         Button("Stop", action: requestStop)
-                            .keyboardShortcut(tileActive ? KeyboardShortcut(.escape, modifiers: []) : nil)
+                            .keyboardShortcut(tileActive && !editingTitle ? KeyboardShortcut(.escape, modifiers: []) : nil)
                             .opacity(0)
                             .accessibilityHidden(true)
                     }
@@ -1112,17 +1112,17 @@ struct ChatView: View {
                     .font(.title2.weight(.semibold))
                     .focused($titleFieldFocused)
                     .onSubmit { commitTitle() }
-                    .onExitCommand { editingTitle = false }
+                    .onExitCommand { endTitleEdit() }
                     .onChange(of: titleFieldFocused) { _, focused in if !focused && editingTitle { commitTitle() } }
-                    .onAppear { titleFieldFocused = true }
                     .accessibilityIdentifier("chat-title-field")
             } else {
                 Text(session.title)
                     .font(.title2.weight(.semibold))
                     .lineLimit(1)
                     .truncationMode(.tail)
-                    .contentShape(Rectangle())
-                    .onTapGesture(count: 2) { beginTitleEdit() }
+                    // AppKit catches the double-click: SwiftUI's double-tap never fired here in
+                    // the app's window (it did in a bare test window).
+                    .overlay(DoubleClickCatcher { beginTitleEdit() })
                     .accessibilityIdentifier("chat-title-header")
                     .accessibilityAction(named: "Rename") { beginTitleEdit() }
             }
@@ -1152,11 +1152,22 @@ struct ChatView: View {
 
     private func beginTitleEdit() {
         titleDraft = session.title
+        // The message box re-takes the keyboard on every update while it's focused (a working
+        // chat updates constantly), which closed the rename at once: it stands down meanwhile.
+        composerFocused = false
         editingTitle = true
+        // Once the field is in the window: asked for in the same update, focus went nowhere
+        // (typing landed in the sidebar's search).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { titleFieldFocused = true }
+    }
+
+    private func endTitleEdit() {
+        editingTitle = false
+        composerFocused = true
     }
 
     private func commitTitle() {
-        editingTitle = false
+        endTitleEdit()
         let name = titleDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, name != session.title else { return }
         session.setTitle(name)
@@ -1854,3 +1865,19 @@ private struct ComposerStatusLayout: Layout {
     }
 }
 
+
+/// A double-click on whatever it covers runs `action`; single clicks do nothing.
+private struct DoubleClickCatcher: NSViewRepresentable {
+    let action: () -> Void
+    func makeNSView(context: Context) -> CatcherView { CatcherView() }
+    func updateNSView(_ view: CatcherView, context: Context) { view.action = action }
+
+    final class CatcherView: NSView {
+        var action: (() -> Void)?
+        override var mouseDownCanMoveWindow: Bool { false }
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+        override func mouseDown(with event: NSEvent) {
+            if event.clickCount == 2 { action?() } else { super.mouseDown(with: event) }
+        }
+    }
+}
