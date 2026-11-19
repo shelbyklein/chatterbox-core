@@ -22,6 +22,7 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-19", changes: [
+            "The Mac's session sidebar has Skills used: each skill the session has used (Claude's or Codex's), how many times, and when last.",
             "Closing Image Review with unsent notes (Esc or Cancel) asks before deleting them.",
             "Image Review on the Mac starts with numbered notes: click a spot (or drag an area) to add one. The pen is now a button above them, to switch on when you want to draw.",
             "The background service saves its state off its main thread, so it answers the app and phone promptly while replies stream.",

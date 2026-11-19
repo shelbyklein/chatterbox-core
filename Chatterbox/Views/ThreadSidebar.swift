@@ -19,7 +19,7 @@ struct ThreadSidebarActions {
 
 /// The sidebar's sections, in order.
 enum ThreadSidebarSection: String, CaseIterable, Identifiable {
-    case status, place, work, outputs, notes, tools, runs
+    case status, place, work, outputs, skills, notes, tools, runs
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -27,6 +27,7 @@ enum ThreadSidebarSection: String, CaseIterable, Identifiable {
         case .place: "Where"
         case .work: "Task & work"
         case .outputs: "Outputs"
+        case .skills: "Skills used"
         case .notes: "Notes"
         case .tools: "Tools"
         case .runs: "Runs here"
@@ -38,6 +39,7 @@ enum ThreadSidebarSection: String, CaseIterable, Identifiable {
         case .place: "mappin.and.ellipse"
         case .work: "checklist"
         case .outputs: "photo.on.rectangle.angled"
+        case .skills: "sparkles"
         case .notes: "note.text"
         case .tools: "puzzlepiece.extension"
         case .runs: "clock.arrow.circlepath"
@@ -60,6 +62,7 @@ struct ThreadSidebar: View {
     @Environment(AppModel.self) private var model
     @AppStorage("threadSidebarSections") private var openSections = ThreadSidebarSection.openByDefault
     @State private var outputs: [ThreadOutput] = []
+    @State private var skills: [ThreadSkillUse] = []
     @State private var automations: [ProjectAutomation] = []
 
     var body: some View {
@@ -92,6 +95,7 @@ struct ThreadSidebar: View {
         // The transcript loaded so far: the Library loads the rest when you open it.
         .task(id: "\(session.id)|\(session.isRunning ? -1 : session.items.count)") {
             outputs = ThreadOutputs.collect(session)
+            skills = ThreadSkillUse.collect(session.items)
         }
         .task(id: session.record.projectFolder) {
             guard let folder = session.record.projectFolder else { automations = []; return }
@@ -135,6 +139,7 @@ struct ThreadSidebar: View {
             case .status, .place: true
             case .work: hasWork
             case .outputs: !outputs.isEmpty
+            case .skills: !skills.isEmpty
             case .notes: true
             case .tools: !(ThreadTools.shared.chips(for: session) ?? []).isEmpty
             case .runs: !runs.isEmpty || !automations.isEmpty
@@ -154,6 +159,7 @@ struct ThreadSidebar: View {
         case .place: Text(placeSummary)
         case .work: Text(workSummary)
         case .outputs: Text(outputsSummary)
+        case .skills: Text(skillsSummary)
         case .notes: Text(notesSummary)
         case .tools: Text(toolsSummary)
         case .runs: Text(runsSummary)
@@ -166,6 +172,7 @@ struct ThreadSidebar: View {
         case .place: placeDetail
         case .work: workDetail
         case .outputs: outputsDetail
+        case .skills: skillsDetail
         case .notes: notesDetail
         case .tools: toolsDetail
         case .runs: runsDetail
@@ -414,6 +421,32 @@ struct ThreadSidebar: View {
             ChatPins(chat: session.id, agentName: session.record.backend == .codex ? "Codex" : "Claude",
                      panelWidth: Self.width - 32, jump: actions.jumpToPin)
         }
+    }
+
+    // MARK: - Skills used
+
+    /// "concept-to-indesign, vispix +2": the newest first.
+    private var skillsSummary: String {
+        let names = skills.prefix(2).map(\.name)
+        return names.joined(separator: ", ") + (skills.count > 2 ? " +\(skills.count - 2)" : "")
+    }
+
+    private var skillsDetail: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(skills) { skill in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Image(systemName: "sparkles").font(.caption).foregroundStyle(.secondary).frame(width: 14)
+                    Text(skill.name).font(.callout.weight(.medium)).lineLimit(1).truncationMode(.middle)
+                    Spacer(minLength: 6)
+                    Text((skill.count > 1 ? "\(skill.count)\u{00D7} \u{00B7} " : "") + (skill.last.map { ShortAge.string(since: $0) } ?? ""))
+                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary).lineLimit(1)
+                }
+                .help("\(skill.name): used \(skill.count) time\(skill.count == 1 ? "" : "s") in this session")
+                .accessibilityElement(children: .combine)
+            }
+        }
+        .padding(.leading, 22)
+        .background(ColumnProbe(role: "threadSidebar:skillsList"))
     }
 
     // MARK: - Tools
@@ -817,6 +850,52 @@ struct ThreadOutput: Identifiable, Hashable {
     var title: String
     var url: URL?
     var text: String? = nil
+}
+
+/// A skill this session used: Claude's Skill tool, or Codex reading a skill's SKILL.md.
+struct ThreadSkillUse: Identifiable, Equatable {
+    let name: String
+    var count: Int
+    var last: Date?
+    var id: String { name }
+
+    /// Each skill once, the most recently used first.
+    static func collect(_ items: [DisplayItem]) -> [ThreadSkillUse] {
+        var uses: [String: ThreadSkillUse] = [:]
+        var order: [String] = []
+        for item in items where item.kind == .tool || item.kind == .shell {
+            for name in names(in: item) {
+                if uses[name] == nil { order.append(name); uses[name] = ThreadSkillUse(name: name, count: 0, last: nil) }
+                uses[name]!.count += 1
+                if let time = item.timestamp, time > (uses[name]!.last ?? .distantPast) { uses[name]!.last = time }
+            }
+        }
+        return order.compactMap { uses[$0] }.sorted { ($0.last ?? .distantPast) > ($1.last ?? .distantPast) }
+    }
+
+    /// The skills one tool row used.
+    static func names(in item: DisplayItem) -> [String] {
+        if item.tool == "Skill" {
+            // "Using the dev-plan skill"
+            let text = item.text
+            guard let start = text.range(of: "Using the "), let end = text.range(of: " skill", options: .backwards),
+                  start.upperBound < end.lowerBound else { return [] }
+            return [String(text[start.upperBound..<end.lowerBound])]
+        }
+        // Codex (or a shell) reading a skill: …/skills/<name>/SKILL.md, or …/skills/.system/<name>/SKILL.md.
+        let text = (item.detail ?? "") + "\n" + item.text
+        guard text.contains("SKILL.md") else { return [] }
+        var found: [String] = []
+        let pattern = #"skills/(?:\.system/|[A-Za-z0-9_.-]+:)?([A-Za-z0-9_.-]+)/SKILL\.md"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        for match in regex.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+            if let range = Range(match.range(at: 1), in: text) {
+                let name = String(text[range])
+                if !found.contains(name) { found.append(name) }
+            }
+        }
+        return found
+    }
 }
 
 enum ThreadOutputs {
