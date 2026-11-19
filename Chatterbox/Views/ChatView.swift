@@ -69,6 +69,10 @@ struct ChatView: View {
     @State private var threadSidebarOverlay = false
     @State private var chatAreaWidth: CGFloat = 1200
     @State private var showingAutomations = false
+    /// Renaming in place from the title (double-click).
+    @State private var editingTitle = false
+    @State private var titleDraft = ""
+    @FocusState private var titleFieldFocused: Bool
     /// A peek (PeekPanel.swift) takes the same column while it's open; Back brings About back.
     private var peeking: Bool { !PeekStore.shared.panel(of: session.id).tabs.isEmpty }
     private var threadSidebarDocked: Bool { hasThreadSidebar && !peeking && threadSidebarOpen && chatAreaWidth >= Self.threadSidebarDockWidth }
@@ -1101,12 +1105,27 @@ struct ChatView: View {
                 .fill(appearance.style.agentColor(for: session))
                 .frame(width: 10, height: 10)
                 .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 6 }
-            Text(session.title)
-                .font(.title2.weight(.semibold))
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .textSelection(.enabled)
-                .accessibilityIdentifier("chat-title-header")
+            if editingTitle {
+                // Double-click the name to rename: Return saves, Esc cancels, clicking away saves.
+                TextField("Session name", text: $titleDraft)
+                    .textFieldStyle(.plain)
+                    .font(.title2.weight(.semibold))
+                    .focused($titleFieldFocused)
+                    .onSubmit { commitTitle() }
+                    .onExitCommand { editingTitle = false }
+                    .onChange(of: titleFieldFocused) { _, focused in if !focused && editingTitle { commitTitle() } }
+                    .onAppear { titleFieldFocused = true }
+                    .accessibilityIdentifier("chat-title-field")
+            } else {
+                Text(session.title)
+                    .font(.title2.weight(.semibold))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .contentShape(Rectangle())
+                    .onTapGesture(count: 2) { beginTitleEdit() }
+                    .accessibilityIdentifier("chat-title-header")
+                    .accessibilityAction(named: "Rename") { beginTitleEdit() }
+            }
             if let place = titlePlace, place != session.title {
                 Text(place)
                     .font(.callout)
@@ -1126,7 +1145,23 @@ struct ChatView: View {
         .padding(.top, 12)
         .padding(.bottom, 10)
         .overlay(alignment: .bottom) { Divider().opacity(0.6) }
-        .help(session.title)
+        .help(editingTitle ? "" : session.title + " (double-click to rename)")
+        // Another session opened in this view: drop an unfinished rename.
+        .onChange(of: session.id) { _, _ in editingTitle = false }
+    }
+
+    private func beginTitleEdit() {
+        titleDraft = session.title
+        editingTitle = true
+    }
+
+    private func commitTitle() {
+        editingTitle = false
+        let name = titleDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name != session.title else { return }
+        session.setTitle(name)
+        // As Rename Session… does: a project's row shows the project's name, so rename both.
+        if session.record.projectFolder != nil { session.setProjectNickname(name) }
     }
 
     /// The Studio or project the thread belongs to, if any.

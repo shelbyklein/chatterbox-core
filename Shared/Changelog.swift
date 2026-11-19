@@ -22,6 +22,7 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-19", changes: [
+            "On the Mac, double-click a session's name at the top of the chat to rename it; Return saves, Esc cancels.",
             "Settings → Diagnostics: a \u{201C}request timed out\u{201D} now says which session and what it was doing, and how long the background service really took.",
             "Mac sidebar: the Archive and Delete buttons on a temporary session no longer flicker when you move the pointer onto them.",
             "On the phone, a session's sidequests are a row of small icons at the top of the chat and under the session in a Studio, instead of a full row each; tap one for its task and Open.",
