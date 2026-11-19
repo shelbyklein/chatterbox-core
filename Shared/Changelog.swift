@@ -22,6 +22,7 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-19", changes: [
+            "The background service saves its state off its main thread, so it answers the app and phone promptly while replies stream.",
             "The Mac app uses much less CPU while replies stream: it's now an optimized build, and the sidebar no longer rescans every session's tags and the archive on each update.",
             "Desk card titles show in full, on as many lines as they need, instead of ending in an ellipsis.",
             "Link a thread on the Mac's Desk has a search box and shows at least five threads at a time.",

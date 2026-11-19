@@ -317,7 +317,8 @@ struct CommandReceipt: Codable {
         persistScheduled=true
         DispatchQueue.main.asyncAfter(deadline:.now()+0.5) { [weak self] in
             guard let self else{return};self.persistScheduled=false
-            do{try self.persistState()}catch{RuntimeHooks.note("Runtime save failed: \(error.localizedDescription)")}
+            // Drafts and events, nothing a reply waits on: written in the background.
+            self.persistStateInBackground()
         }
     }
     /// Receipts let a retried request be recognised. Old completed ones are never retried,
@@ -426,7 +427,7 @@ struct CommandReceipt: Codable {
             }
         }
         finishFlush()
-        do { try persistState() } catch { RuntimeHooks.note("Runtime save failed: \(error.localizedDescription)") }
+        persistStateInBackground()
         onFlushTimed?(Double(took-start)/1e9,Double(DispatchTime.now().uptimeNanoseconds-start)/1e9)
     }
 
@@ -507,8 +508,25 @@ struct CommandReceipt: Codable {
     /// The save queue's own encoder (JSONEncoder isn't safe to share across threads).
     private let saveEncoder: JSONEncoder = { let e=JSONEncoder();e.dateEncodingStrategy = .iso8601;return e }()
     /// Waits for every queued session save (tests, and before the service exits).
-    func waitForSaves() { saveQueue.sync {} }
-    private func persistState() throws { try encoder.encode(state).write(to:root.appendingPathComponent("runtime-state.json"),options:.atomic) }
+    func waitForSaves() { saveQueue.sync {}; stateQueue.sync {} }
+    /// runtime-state.json: command receipts, events, drafts (about 1 MB). Written on its own
+    /// serial queue, so every write lands in the order it was asked for. A receipt that must be
+    /// on disk before its reply waits for its write (persistState); the saves while replies
+    /// stream don't (persistStateInBackground): encoding it took 8% of the main thread then.
+    private let stateQueue=DispatchQueue(label:"chatterbox.runtime.state",qos:.utility)
+    private let stateEncoder: JSONEncoder = { let e=JSONEncoder();e.dateEncodingStrategy = .iso8601;return e }()
+    private var stateFile: URL { root.appendingPathComponent("runtime-state.json") }
+    private func persistState() throws {
+        let snapshot=state,file=stateFile
+        try stateQueue.sync { [stateEncoder] in try stateEncoder.encode(snapshot).write(to:file,options:.atomic) }
+    }
+    private func persistStateInBackground() {
+        let snapshot=state,file=stateFile
+        stateQueue.async { [stateEncoder] in
+            do { try stateEncoder.encode(snapshot).write(to:file,options:.atomic) }
+            catch { DispatchQueue.main.async { RuntimeHooks.note("Runtime save failed: \(error.localizedDescription)") } }
+        }
+    }
     private func attach(_ session: ChatSession) {
         session.onChange = { [weak self] s in self?.changed(s,streamed:false) }
         session.onStreamed = { [weak self] s in self?.changed(s,streamed:true) }
