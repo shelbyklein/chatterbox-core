@@ -347,7 +347,8 @@ struct ChatListView: View {
                 // New Chat into an overflow menu.
                 // One ⋯, not two: while the open Duo's rail shows its own, the list's goes.
                 if !MobileRail.shared.isDrawn { ToolbarItem(placement: .topBarTrailing) { pageMenu } }
-                ToolbarItem(placement: .topBarTrailing) { FeedbackButton() }
+                // The rail has Feedback too on the open Duo: one, not two.
+                if !MobileRail.shared.isDrawn { ToolbarItem(placement: .topBarTrailing) { FeedbackButton() } }
                 // New Chat beside the title, in the title's own place: on a closed iPhone Duo
                 // every bar button (leading or trailing) runs down the side rail, leaving the
                 // title row empty; this one stays up top, by the page's name.
