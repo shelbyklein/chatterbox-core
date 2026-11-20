@@ -4,7 +4,7 @@ import SwiftUI
 // itself; open, it doesn't (the list's buttons sit over the list, and a session's were folded
 // into a pill), so the top of the rail stood empty under the clock. Shelby (2026-11-20) wanted
 // buttons there: this column, drawn in the rail's strip (the window's trailing safe area).
-// A session shows Back, its sidebar, its ⋯ menu and Feedback; no session open, the page's
+// A session shows Back, its ⋯ menu and Feedback; no session open, the page's
 // ⋯ menu and Feedback.
 
 @MainActor @Observable
@@ -93,7 +93,7 @@ struct MobileRailColumn: View {
                     railButton("chevron.left", label: "Back", id: "rail-back", action: session.back)
                     // No model button: the model line under the session's name opens Session
                     // Settings (Shelby, 2026-11-20: "the model picker can go away here").
-                    railButton("sidebar.right", label: "Session Sidebar", id: "rail-sidebar", action: session.about)
+                    // The sidebar's button is in the chat's bar now, right of the model pill.
                 }
                 // One ⋯: the session's items, then the page's (Settings, Archived, layout…).
                 Menu {

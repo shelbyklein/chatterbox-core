@@ -211,7 +211,20 @@ struct ChatDetailView: View {
         .navigationTitle(chatNavigationTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { chatToolbar }
-        .modifier(WideChatHeader(column: aboutColumn) { titleButton } trailing: { modelButton(pill: true) })
+        .modifier(WideChatHeader(column: aboutColumn) { titleButton } trailing: {
+            HStack(spacing: 10) {
+                modelButton(pill: true)
+                // The session's sidebar, right of the model (Shelby, 2026-11-20; was in the rail).
+                Button { toggleAbout() } label: {
+                    Image(systemName: "sidebar.right").font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(aboutShown ? Color.accentColor : Color.primary)
+                        .frame(width: 36, height: 36).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(aboutShown ? "Hide Session Sidebar" : "Session Sidebar")
+                .accessibilityIdentifier("header-sidebar")
+            }
+        })
         .alert("Restart Thread?", isPresented: $confirmingRestart) {
             Button("Restart Thread") { controlSession(restart: true) }
             Button("Cancel", role: .cancel) {}

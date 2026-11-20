@@ -33,6 +33,8 @@ final class MobileAboutColumn {
         didSet {
             UserDefaults.standard.set(isOpen, forKey: Self.openKey)
             if !isOpen { peek = nil }
+            // Upright, one side panel at a time (Shelby, 2026-11-20): About in, the list out.
+            if isOpen, listShelf, listShown { listShown = false }
         }
     }
     /// A work thread or sidechat of the open session, shown live in the column in About's place
@@ -41,7 +43,10 @@ final class MobileAboutColumn {
     /// Wide and upright (an open Duo in portrait): the session list is a shelf that slides in
     /// over the conversation, which has the whole width. `listShown`: it's out now.
     var listShelf = false
-    var listShown = false
+    var listShown = false {
+        // …and the list in, About out.
+        didSet { if listShown, listShelf, isOpen { isOpen = false } }
+    }
     /// The newest request, numbered so the same action twice still arrives.
     private(set) var request: (number: Int, action: MobileAboutAction)?
     func send(_ action: MobileAboutAction) { request = ((request?.number ?? 0) + 1, action) }
@@ -318,16 +323,6 @@ struct MobileAboutPanel: View {
                         }
                     }
                     .accessibilityIdentifier("about-task")
-                } else if tasksKept, let followed = store.latestDesk?.followed {
-                    // No task: its questions show in the Desk's Needs you only when switched on.
-                    Toggle(isOn: Binding(get: { followed.contains(summary.id) },
-                                         set: { on in Task { try? await store.followDesk(summary.id, on) } })) {
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text("Show on the Desk")
-                            Text("Its questions and approvals in Needs you, without a task.").font(.caption).foregroundStyle(Color.metadata)
-                        }
-                    }
-                    .accessibilityIdentifier("about-show-on-desk")
                 }
                 if let front = summary.workOf {
                     let listed = chats.first { $0.id == front }
@@ -372,6 +367,14 @@ struct MobileAboutPanel: View {
                         if let task = carriedTask {
                             actionChip("Unlink Task", "Unlink from Task", "link", "about-unlink-task") { perform(.unlinkTask(task.id)) }
                         } else {
+                            // No task: its questions show in the Desk's Needs you only when on.
+                            if let followed = store.latestDesk?.followed {
+                                let on = followed.contains(summary.id)
+                                actionChip(on ? "On Desk" : "Show on Desk", on ? "Shown on the Desk, on" : "Show on the Desk, off",
+                                           on ? "checkmark.circle.fill" : "rectangle.stack", "about-show-on-desk", active: on) {
+                                    Task { try? await store.followDesk(summary.id, !on) }
+                                }
+                            }
                             actionChip("Make Task", "Make This a Task", "checklist", "about-make-task") { perform(.makeTask) }
                             if !(store.latestDesk?.incoming ?? []).isEmpty {
                                 actionChip("Link Task", "Link to a Task", "link.badge.plus", "about-link-task") { perform(.linkTask) }
@@ -428,12 +431,13 @@ struct MobileAboutPanel: View {
     }
 
     /// A short label that fits half a narrow column; the full name for VoiceOver.
-    private func actionChip(_ title: String, _ full: String, _ icon: String, _ id: String, action: @escaping () -> Void) -> some View {
+    private func actionChip(_ title: String, _ full: String, _ icon: String, _ id: String, active: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Label(title, systemImage: icon).font(.caption.weight(.medium)).lineLimit(1).minimumScaleFactor(0.8)
+                .foregroundStyle(active ? Color.white : Color.primary)
                 .frame(maxWidth: .infinity)
                 .padding(.horizontal, 8).padding(.vertical, 8)
-                .background(Capsule().fill(Color(uiColor: .tertiarySystemFill)))
+                .background(Capsule().fill(active ? Color.accentColor : Color(uiColor: .tertiarySystemFill)))
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)

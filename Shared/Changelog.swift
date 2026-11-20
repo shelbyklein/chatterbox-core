@@ -22,6 +22,7 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-20", changes: [
+            "On the phone, Show on the Desk is a button beside Make Task (filled while on). On the open Duo, the session sidebar's button sits right of the model pill, and upright only one side panel opens at a time.",
             "On the phone, opening a session's sidebar puts the keyboard away.",
             "On the phone, a session's Notes show just your note (or Add a note), plus a link to its Studio's instructions.",
             "On the phone, a session's sidebar starts with Notes, then what it made, then Actions (its Desk task, Work Thread, Sidequest, Fork, and Rename, Restart, Pin, Archive and more), then Tools and Where. Swipe in from the right edge to open it.",
@@ -34,7 +35,7 @@ enum Changelog {
             "On the open Duo, search is a field at the top of the session list that scrolls away with it, instead of a button that opened off the edge of the screen.",
             "On the open Duo, a session's name sits at the left of its bar and the model is a pill at the right in the agent's color; tap the pill for Session Settings.",
             "On the phone, tapping the model line under a session's name (\u{201C}Opus 5.5 \u{00B7} High\u{201D}) opens Session Settings; the name still opens About. On the open Duo, the rail has a sidebar button that opens and closes the session's sidebar.",
-            "On the open Duo, the side rail under the clock has buttons again: Back, the session sidebar, ••• and Feedback in a session, ••• and Feedback otherwise. Its ••• has the session's items and the page's (Settings, Archived, layout), so there's no second ••• over the list.",
+            "On the open Duo, the side rail under the clock has buttons again: Back, ••• and Feedback in a session, ••• and Feedback otherwise. Its ••• has the session's items and the page's (Settings, Archived, layout), so there's no second ••• over the list.",
             "On the phone, marking up a picture or PDF puts each note in a bubble right where you tapped, and the picture keeps the whole screen; Review at the top lists every note and the overall note.",
             "On the phone, tapping a sidequest icon shows its short title and Open, not its whole instructions.",
             "A warning on your Mac and iPhone when Claude or Codex has 50%, 20% and then 5% of a usage limit left, with how fast you're using it and when it would run out.",
