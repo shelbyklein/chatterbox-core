@@ -56,6 +56,10 @@ extension ProjectAutomation {
 struct AutomationRunState: Codable {
     var lastRun: Date?
     var threadID: UUID?
+    /// When a scheduled run was skipped because its project or session was gone, and why.
+    /// Cleared by the next run that starts.
+    var skippedAt: Date?
+    var problem: String?
 }
 
 enum ProjectAutomations {
@@ -160,7 +164,8 @@ enum ProjectAutomations {
     /// missed while the Mac slept happens once when it wakes, not once per missed week.
     static func isDue(_ automation: ProjectAutomation, state: AutomationRunState?, now: Date = Date()) -> Bool {
         guard automation.enabled, let latest = latestOccurrence(of: automation, before: now) else { return false }
-        return latest > max(state?.lastRun ?? automation.createdAt, automation.createdAt)
+        let handled = [state?.lastRun, state?.skippedAt].compactMap { $0 }.max() ?? automation.createdAt
+        return latest > max(handled, automation.createdAt)
     }
 
     // MARK: - Routines

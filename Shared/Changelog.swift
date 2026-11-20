@@ -22,6 +22,7 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-20", changes: [
+            "An automation whose project chat was closed no longer retries every minute: it skips that run, says why in Automations, and tries again at its next time.",
             "The Desk's Check for updates works again after its routine was renamed: it remembers its ClickUp and Outlook routine whatever it's called.",
             "On the phone, an up arrow at the bottom left jumps to the start of the latest reply.",
             "On the phone, PDFs can show as spreads (two pages side by side, cover alone) from the book button at the top of the viewer.",

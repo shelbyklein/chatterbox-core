@@ -331,6 +331,12 @@ struct AutomationsCenter: View {
                                             if let last = latestRun(routine)?.lastRun {
                                                 Text("Last run: \(last.formatted(date: .abbreviated, time: .shortened))").font(.caption).foregroundStyle(.secondary)
                                             }
+                                            if routine.enabled, let skip = skipped(routine) {
+                                                Label("Can't run: \(skip.problem) Skipped \(skip.at.formatted(date: .abbreviated, time: .shortened)); it tries again at its next time.",
+                                                      systemImage: "exclamationmark.triangle.fill")
+                                                    .font(.caption).foregroundStyle(.orange)
+                                                    .accessibilityIdentifier("automation-problem")
+                                            }
                                         }
                                         Spacer()
                                         Button { pickingModel = routine.id } label: {
@@ -379,6 +385,15 @@ struct AutomationsCenter: View {
     private func latestRun(_ routine: ProjectAutomation) -> AutomationRunState? {
         let days = ProjectAutomations.routines(in: ProjectAutomations.load()).first { $0.contains { $0.id == routine.id } } ?? [routine]
         return days.compactMap { runs[$0.id.uuidString] }.max { ($0.lastRun ?? .distantPast) < ($1.lastRun ?? .distantPast) }
+    }
+    /// Its latest skipped run, when no run has started since (its project or session is gone).
+    private func skipped(_ routine: ProjectAutomation) -> (at: Date, problem: String)? {
+        let days = ProjectAutomations.routines(in: ProjectAutomations.load()).first { $0.contains { $0.id == routine.id } } ?? [routine]
+        let states = days.compactMap { runs[$0.id.uuidString] }
+        let lastRun = states.compactMap(\.lastRun).max() ?? .distantPast
+        guard let skip = states.filter({ $0.skippedAt != nil && $0.problem != nil }).max(by: { $0.skippedAt! < $1.skippedAt! }),
+              let at = skip.skippedAt, let problem = skip.problem, at > lastRun else { return nil }
+        return (at, problem)
     }
     private func openReport(_ routine: ProjectAutomation, report: UUID) {
         Task {
