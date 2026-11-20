@@ -338,6 +338,15 @@ struct ChatListView: View {
             // opened into a field running off the column's left edge (Shelby, 2026-11-20), and
             // the bar's drawer stopped short of the column. Narrow, iOS's drawer.
             .modifier(ListSearch(wide: sizeClass == .regular, text: $search, prompt: fixedPage.map { "Search \($0.title)" } ?? "Search sessions"))
+            // The open Duo: our own header at the chat bar's height, so the page's name lines up
+            // with the session's (Shelby, 2026-11-20); iOS's bar is taller.
+            .modifier(WideListHeader(on: MobileRail.shared.isDrawn) {
+                HStack(spacing: 10) {
+                    pageTitle
+                    Spacer(minLength: 8)
+                    newChatMenu
+                }
+            })
             .sheet(item: $editingStudio) { group in
                 if let id = group.studioID {
                     StudioInstructionsEditor(title: group.title, studio: id, initial: group.instructions ?? "")
@@ -356,17 +365,24 @@ struct ChatListView: View {
                 // title row empty; this one stays up top, by the page's name.
                 // The name is a control of its own that does nothing: with New Chat the only
                 // control in the item, iOS made the whole item New Chat, name included.
-                ToolbarItem(placement: .principal) {
-                    HStack(spacing: 10) {
-                        Button {} label: {
-                            Text(fixedPage?.title ?? store.connection?.macName ?? "Chatterbox").font(.headline).lineLimit(1)
+                // The open Duo draws its own header (WideListHeader): name left, New Chat right.
+                if !MobileRail.shared.isDrawn {
+                    ToolbarItem(placement: .principal) {
+                        HStack(spacing: 10) {
+                            pageTitle
+                            newChatMenu
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityRemoveTraits(.isButton).accessibilityAddTraits(.isHeader)
-                        newChatMenu
                     }
                 }
             }
+    }
+
+    private var pageTitle: some View {
+        Button {} label: {
+            Text(fixedPage?.title ?? store.connection?.macName ?? "Chatterbox").font(.headline).lineLimit(1)
+        }
+        .buttonStyle(.plain)
+        .accessibilityRemoveTraits(.isButton).accessibilityAddTraits(.isHeader)
     }
 
     /// The reserved division is expressed in the probe's coordinates, matching this view.
@@ -1734,6 +1750,27 @@ private struct ListSearch: ViewModifier {
             }
         } else {
             content.searchable(text: $text, placement: .navigationBarDrawer(displayMode: .always), prompt: prompt)
+        }
+    }
+}
+
+/// The open Duo's list header, at the chat bar's height in place of iOS's taller bar.
+private struct WideListHeader<Header: View>: ViewModifier {
+    let on: Bool
+    @ViewBuilder var header: Header
+
+    func body(content: Content) -> some View {
+        if on {
+            content
+                .toolbar(.hidden, for: .navigationBar)
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    header
+                        .padding(.horizontal, 16)
+                        .frame(height: ChatListView.conversationBarHeight)
+                        .frame(maxWidth: .infinity)
+                }
+        } else {
+            content
         }
     }
 }

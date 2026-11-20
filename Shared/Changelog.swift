@@ -22,6 +22,7 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-20", changes: [
+            "On the open Duo, the list's name sits at the left of its header, level with the session's name, and New Chat at the right.",
             "On the open Duo, search is a field across the top of the session list instead of a button that opened off the edge of the screen.",
             "On the open Duo, a session's name sits at the left of its bar and the model is a pill at the right in the agent's color; tap the pill for Session Settings.",
             "On the phone, tapping the model line under a session's name (\u{201C}Opus 5.5 \u{00B7} High\u{201D}) opens Session Settings; the name still opens About. On the open Duo, the rail has a sidebar button that opens and closes the session's sidebar.",
