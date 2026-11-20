@@ -61,15 +61,33 @@ struct AutomationRunState: Codable {
 enum ProjectAutomations {
     /// The configured intake used by this Desk. Exact identity only: never run an unrelated
     /// maintenance routine because its instructions happen to mention mail or tasks.
+    /// The routine the Desk's Check for updates runs: the one it used last (remembered, so a
+    /// rename doesn't lose it: "ClickUp + Outlook morning priorities" became "USAA Updates" on
+    /// 2026-11-19 and the check stopped), else the one by that name, else the one that reads
+    /// ClickUp and Outlook.
+    static let deskSourceKey = "deskSourceRoutineID"
     static func deskSourceRoutine(in automations: [ProjectAutomation]) throws -> [ProjectAutomation] {
-        let matches = routines(in: automations).filter {
+        let all = routines(in: automations)
+        let defaults = AppPreferences.defaults
+        if let saved = defaults.string(forKey: deskSourceKey),
+           let routine = all.first(where: { $0.contains { $0.id.uuidString == saved } }) {
+            return routine
+        }
+        var matches = all.filter {
             $0.first?.title.trimmingCharacters(in: .whitespacesAndNewlines)
                 .caseInsensitiveCompare("ClickUp + Outlook morning priorities") == .orderedSame
         }
-        guard matches.count == 1, let routine = matches.first else {
-            throw NSError(domain: "DeskSources", code: 1, userInfo: [NSLocalizedDescriptionKey:
-                matches.isEmpty ? "Set up the ClickUp + Outlook morning priorities routine in Automations first." : "More than one morning-priorities routine is configured. Keep one source-check routine before checking from the Desk."])
+        if matches.isEmpty {
+            matches = all.filter { routine in
+                let text = routine.first?.instructions ?? ""
+                return text.localizedCaseInsensitiveContains("ClickUp") && text.localizedCaseInsensitiveContains("Outlook")
+            }
         }
+        guard matches.count == 1, let routine = matches.first, let first = routine.first else {
+            throw NSError(domain: "DeskSources", code: 1, userInfo: [NSLocalizedDescriptionKey:
+                matches.isEmpty ? "Set up a routine in Automations that reads ClickUp and Outlook first." : "More than one routine reads ClickUp and Outlook. Keep one source-check routine before checking from the Desk."])
+        }
+        defaults.set(first.id.uuidString, forKey: deskSourceKey)
         return routine
     }
 
