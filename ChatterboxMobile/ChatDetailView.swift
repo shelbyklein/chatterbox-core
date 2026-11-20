@@ -209,7 +209,7 @@ struct ChatDetailView: View {
         .navigationTitle(chatNavigationTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { chatToolbar }
-        .modifier(WideChatHeader(column: aboutColumn) { chatTitle })
+        .modifier(WideChatHeader(column: aboutColumn) { titleButton } trailing: { modelButton(pill: true) })
         .alert("Restart Thread?", isPresented: $confirmingRestart) {
             Button("Restart Thread") { controlSession(restart: true) }
             Button("Cancel", role: .cancel) {}
@@ -448,17 +448,17 @@ struct ChatDetailView: View {
     /// Wide (an open Duo, beside the list): the chat's bar is the app's own, with the list
     /// shelf's button and the title. The system bar's title came out blank in an open Duo's
     /// portrait split (the button was there, its text wasn't), glass or no glass.
-    private struct WideChatHeader<Title: View>: ViewModifier {
+    private struct WideChatHeader<Title: View, Trailing: View>: ViewModifier {
         let column: MobileAboutColumn?
         @ViewBuilder var title: Title
+        @ViewBuilder var trailing: Trailing
         func body(content: Content) -> some View {
             if let column {
                 content
                     .safeAreaInset(edge: .top, spacing: 0) {
-                        // The title centered on the bar; the shelf's button at its left edge.
-                        ZStack {
-                            title
-                            HStack {
+                        // The shelf's button, then the name on the left; the model pill at the
+                        // right end (Shelby, 2026-11-20).
+                        HStack(spacing: 8) {
                             if column.listShelf {
                                 Button { withAnimation(.snappy(duration: 0.25)) { column.listShown.toggle() } } label: {
                                     Image(systemName: "sidebar.left").font(.system(size: 18, weight: .medium))
@@ -468,8 +468,9 @@ struct ChatDetailView: View {
                                 .accessibilityLabel("Sessions")
                                 .accessibilityIdentifier("list-shelf-button")
                             }
-                            Spacer(minLength: 0)
-                            }
+                            title
+                            Spacer(minLength: 12)
+                            trailing
                         }
                         .padding(.horizontal, 12)
                         .frame(height: ChatListView.conversationBarHeight)
@@ -483,36 +484,49 @@ struct ChatDetailView: View {
         }
     }
 
+    /// Narrow: the name over the model line, centered on the bar.
     private var chatTitle: some View {
-            // Tap the title for About this thread: its status and model, where it works,
-            // its task and work threads, what it made, its notes and tools.
-            VStack(spacing: 0) {
-                Button { toggleAbout() } label: {
-                    HStack(spacing: 4) {
-                        Text(summary.project ?? summary.title).font(.headline).lineLimit(1).foregroundStyle(.primary)
-                        Image(systemName: aboutShown ? "chevron.up" : "chevron.down")
-                            .font(.system(size: 8, weight: .bold)).foregroundStyle(.secondary)
-                    }
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("\(summary.project ?? summary.title), About this session")
-                .accessibilityHint(workingCount > 0 ? "\(workingCount) work threads working" : "")
-                .accessibilityIdentifier("chat-title")
-                // The model and effort, as the Mac's chip says them: tap for the model panel
-                // (Session Settings; Shelby, 2026-11-20).
-                Button { if detail?.options != nil { showingSettings = true } } label: {
-                    HStack(spacing: 4) {
-                        if let line = ChatSettingsLabels.chip(detail?.options) ?? detail?.settings { Text(line).lineLimit(1) }
-                        MobileWorkingPill(count: workingCount)
-                    }
-                    .font(.caption2).foregroundStyle(.secondary)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Model: " + (ChatSettingsLabels.chip(detail?.options) ?? detail?.settings ?? ""))
-                .accessibilityHint("Opens Session Settings")
-                .accessibilityIdentifier("chat-model-line")
+        VStack(spacing: 0) {
+            titleButton
+            modelButton(pill: false)
+        }
+    }
+
+    /// Tap the name for About this thread: its status and model, where it works, its task
+    /// and work threads, what it made, its notes and tools.
+    private var titleButton: some View {
+        Button { toggleAbout() } label: {
+            HStack(spacing: 4) {
+                Text(summary.project ?? summary.title).font(.headline).lineLimit(1).foregroundStyle(.primary)
+                Image(systemName: aboutShown ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 8, weight: .bold)).foregroundStyle(.secondary)
             }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(summary.project ?? summary.title), About this session")
+        .accessibilityHint(workingCount > 0 ? "\(workingCount) work threads working" : "")
+        .accessibilityIdentifier("chat-title")
+    }
+
+    /// The model and effort, as the Mac's chip says them: tap for the model panel (Session
+    /// Settings; Shelby, 2026-11-20). Wide, a pill at the bar's right end.
+    private func modelButton(pill: Bool) -> some View {
+        Button { if detail?.options != nil { showingSettings = true } } label: {
+            HStack(spacing: 4) {
+                if let line = ChatSettingsLabels.chip(detail?.options) ?? detail?.settings { Text(line).lineLimit(1) }
+                MobileWorkingPill(count: workingCount)
+            }
+            .font(pill ? .footnote.weight(.medium) : .caption2)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, pill ? 12 : 0).padding(.vertical, pill ? 6 : 0)
+            .background { if pill { Capsule().fill(Color(uiColor: .tertiarySystemFill)) } }
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Model: " + (ChatSettingsLabels.chip(detail?.options) ?? detail?.settings ?? ""))
+        .accessibilityHint("Opens Session Settings")
+        .accessibilityIdentifier("chat-model-line")
     }
 
     @ToolbarContentBuilder

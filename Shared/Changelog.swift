@@ -22,6 +22,7 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-20", changes: [
+            "On the open Duo, a session's name sits at the left of its bar and the model is a pill at the right; tap the pill for Session Settings.",
             "On the phone, tapping the model line under a session's name (\u{201C}Opus 5.5 \u{00B7} High\u{201D}) opens Session Settings; the name still opens About. On the open Duo, the rail has a sidebar button that opens and closes the session's sidebar.",
             "On the open Duo, the side rail under the clock has buttons again: Back, the session sidebar, ••• and Feedback in a session, ••• and Feedback otherwise. Its ••• has the session's items and the page's (Settings, Archived, layout), so there's no second ••• over the list.",
             "On the phone, Feedback is also in the ••• menu, for when the open Duo has no room for its button.",
