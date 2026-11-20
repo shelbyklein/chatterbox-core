@@ -49,6 +49,10 @@ struct ChatListView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.railTab) private var railTab
+    /// Wide (the open Duo): the search field at the top of what scrolls (ListSearch).
+    private var listSearchField: AnyView? {
+        sizeClass == .regular ? AnyView(ListSearchField(text: $search, prompt: fixedPage.map { "Search \($0.title)" } ?? "Search sessions")) : nil
+    }
     /// Settings: Notifications, Appearance and Unpair, in one sheet.
     @State private var showingSettings = false
     @State private var showingAutomations = false
@@ -615,6 +619,7 @@ struct ChatListView: View {
     private var chatCards: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 18) {
+                if let listSearchField { listSearchField }
                 loadingStatus
                 if let problem = store.problem { MobileProblemCard(problem, updated: store.chatsUpdatedAt) { await store.loadChats() } }
                 if let list = store.chatList {
@@ -765,6 +770,7 @@ struct ChatListView: View {
     private var studioWorkspace: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 16) {
+                if let listSearchField { listSearchField }
                 loadingStatus
                 if let problem = store.problem { MobileProblemCard(problem, updated: store.chatsUpdatedAt) { await store.loadChats() } }
                 if let list = store.chatList {
@@ -853,6 +859,10 @@ struct ChatListView: View {
 
     private var chatList: some View {
         List {
+            if let listSearchField {
+                listSearchField.listRowBackground(Color.clear).listRowSeparator(.hidden)
+                    .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+            }
             loadingStatus.listRowBackground(Color.clear)
             if let problem = store.problem {
                 MobileProblemCard(problem, updated: store.chatsUpdatedAt) { await store.loadChats() }
@@ -1725,36 +1735,42 @@ private struct ListSearch: ViewModifier {
     let wide: Bool
     @Binding var text: String
     let prompt: String
-    @FocusState private var focused: Bool
 
     func body(content: Content) -> some View {
         if wide {
-            content.safeAreaInset(edge: .top, spacing: 0) {
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                    TextField(prompt, text: $text)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .submitLabel(.search)
-                        .focused($focused)
-                        .accessibilityIdentifier("list-search")
-                    if !text.isEmpty {
-                        Button { text = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("Clear text")
-                    }
-                }
-                .padding(.horizontal, 12).padding(.vertical, 9)
-                .background(Capsule().fill(Color(uiColor: .tertiarySystemFill)))
-                .padding(.horizontal, 16).padding(.vertical, 6)
-            }
+            // The field is the first thing in the list itself (\.listSearchField), so it
+            // scrolls with the sessions.
+            content.environment(\.listSearchField, AnyView(ListSearchField(text: $text, prompt: prompt)))
         } else {
             content.searchable(text: $text, placement: .navigationBarDrawer(displayMode: .always), prompt: prompt)
         }
     }
 }
 
-/// The open Duo's list header, at the chat bar's height in place of iOS's taller bar.
+/// The open Duo's search field: a capsule the width of the list.
+struct ListSearchField: View {
+    @Binding var text: String
+    let prompt: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            TextField(prompt, text: $text)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .submitLabel(.search)
+                .accessibilityIdentifier("list-search")
+            if !text.isEmpty {
+                Button { text = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Clear text")
+            }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 9)
+        .background(Capsule().fill(Color(uiColor: .tertiarySystemFill)))
+    }
+}
+
 private struct WideListHeader<Header: View>: ViewModifier {
     let on: Bool
     @ViewBuilder var header: Header
@@ -1768,6 +1784,8 @@ private struct WideListHeader<Header: View>: ViewModifier {
                         .padding(.horizontal, 16)
                         .frame(height: ChatListView.conversationBarHeight)
                         .frame(maxWidth: .infinity)
+                        // Solid, so the list scrolling under it doesn't show through.
+                        .background(Color(uiColor: .systemBackground))
                 }
         } else {
             content

@@ -118,6 +118,8 @@ final class MobileActivityDismissals {
 /// Working sessions first, then three unread replies. Swipes affect this Activity list only
 /// unless the person explicitly chooses Archive or confirms Delete.
 struct MobileNewReplies: View {
+    /// The open Duo's search field, at the top of what scrolls (ChatListView's ListSearch).
+    @Environment(\.listSearchField) private var listSearchField
     let activity: [Companion.TurnCompletion]
     var chats: [Companion.ChatSummary] = []
     let summary: (UUID) -> Companion.ChatSummary?
@@ -246,6 +248,7 @@ struct MobileNewReplies: View {
     private func dedicatedContent(entries: [MobileActivityEntry], recent: [Companion.ChatSummary], workingCount: Int, replyCount: Int, pressure: Companion.Pressure?) -> some View {
         if entries.isEmpty && recent.isEmpty {
             VStack(alignment: .leading, spacing: 16) {
+                if let listSearchField { listSearchField.padding(.horizontal, 16) }
                 dedicatedHeader(workingCount: workingCount, replyCount: replyCount, pressure: pressure).padding(.horizontal, 16)
                 ContentUnavailableView(query.isEmpty ? "All caught up" : "No matching activity", systemImage: "checkmark.circle",
                     description: Text(query.isEmpty ? "Working sessions, requests for you and new replies appear here." : "Try another session name or tag."))
@@ -254,6 +257,7 @@ struct MobileNewReplies: View {
         } else if cards {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    if let listSearchField { listSearchField }
                     dedicatedHeader(workingCount: workingCount, replyCount: replyCount, pressure: pressure)
                     // A session's sidequests and Sidechats sit inside its card, as in the lists.
                     VStack(alignment: .leading, spacing: 10) {
@@ -300,7 +304,11 @@ struct MobileNewReplies: View {
                             }
                     }
                 } header: {
-                    dedicatedHeader(workingCount: workingCount, replyCount: replyCount, pressure: pressure).textCase(nil)
+                    VStack(alignment: .leading, spacing: 10) {
+                        if let listSearchField { listSearchField }
+                        dedicatedHeader(workingCount: workingCount, replyCount: replyCount, pressure: pressure)
+                    }
+                    .textCase(nil)
                 }
                 if !recent.isEmpty {
                     Section {

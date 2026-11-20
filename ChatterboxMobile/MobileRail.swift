@@ -35,6 +35,16 @@ final class MobileRail {
     func setPageMenu(_ menu: AnyView, in tab: String) { pageMenus[tab] = menu }
 }
 
+/// The open Duo's search field, placed by each list page at the top of what scrolls, so it
+/// scrolls away with the sessions (Shelby, 2026-11-20). Nil elsewhere (iOS's search there).
+private struct ListSearchFieldKey: EnvironmentKey { static let defaultValue: AnyView? = nil }
+extension EnvironmentValues {
+    var listSearchField: AnyView? {
+        get { self[ListSearchFieldKey.self] }
+        set { self[ListSearchFieldKey.self] = newValue }
+    }
+}
+
 /// Which tab a view is in, so its rail buttons go to that tab.
 private struct RailTabKey: EnvironmentKey { static let defaultValue = "" }
 extension EnvironmentValues {
