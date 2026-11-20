@@ -337,42 +337,10 @@ struct ChatListView: View {
                 }
             }
             .toolbar {
-                if page == .studios {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Menu {
-                            connectionItems
-                            // The open Studio's instructions (its header has New Session instead).
-                            if search.isEmpty, let group = visibleStudios.first, group.studioID != nil {
-                                Button { editingStudio = group } label: { Label("Studio Instructions\u{2026}", systemImage: "text.book.closed") }
-                            }
-                            Picker("Sort", selection: $sortName) {
-                                ForEach(Sort.allCases.filter { $0 != .tag }) { Text($0.title).tag($0.rawValue) }
-                            }
-                            Button { withAnimation { studioListMode.toggle() } } label: {
-                                Label(studioListMode ? "Show as Cards" : "Show as List", systemImage: studioListMode ? "square.grid.2x2" : "list.bullet")
-                            }
-                        } label: { Image(systemName: "ellipsis") }
-                        .accessibilityLabel("Studio options")
-                    }
-                } else {
-                    // Sort and layout live in the menu, so the bar keeps to three buttons:
-                    // on a closed iPhone Duo it runs down the side, and more would push
-                    // New Chat into an overflow menu.
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Menu {
-                            connectionItems
-                            if page != .activity {
-                            Picker("Sort", selection: Binding(get: { sort }, set: { new in withAnimation(.easeOut(duration: 0.2)) { sortName = new.rawValue } })) {
-                                ForEach(Sort.allCases) { Label($0.title, systemImage: $0.icon).tag($0) }
-                            }
-                            }
-                            Button { withAnimation(.easeOut(duration: 0.2)) { showsCards.toggle() } } label: {
-                                Label(showsCards ? "Show as List" : "Show as Cards", systemImage: showsCards ? "list.bullet" : "square.grid.2x2")
-                            }
-                        } label: { Image(systemName: "ellipsis") }
-                        .accessibilityLabel("Connection")
-                    }
-                }
+                // Sort and layout live in the menu, so the bar keeps to three buttons:
+                // on a closed iPhone Duo it runs down the side, and more would push
+                // New Chat into an overflow menu.
+                ToolbarItem(placement: .topBarTrailing) { pageMenu }
                 ToolbarItem(placement: .topBarTrailing) { FeedbackButton() }
                 // New Chat beside the title, in the title's own place: on a closed iPhone Duo
                 // every bar button (leading or trailing) runs down the side rail, leaving the
@@ -913,6 +881,40 @@ struct ChatListView: View {
         }
     }
 
+    /// The page's ••• menu: in the bar over the list, and in the rail on the open Duo when no
+    /// session is open (the placeholder's own buttons; Shelby wanted buttons there).
+    @ViewBuilder private var pageMenu: some View {
+        if page == .studios {
+            Menu {
+                connectionItems
+                // The open Studio's instructions (its header has New Session instead).
+                if search.isEmpty, let group = visibleStudios.first, group.studioID != nil {
+                    Button { editingStudio = group } label: { Label("Studio Instructions\u{2026}", systemImage: "text.book.closed") }
+                }
+                Picker("Sort", selection: $sortName) {
+                    ForEach(Sort.allCases.filter { $0 != .tag }) { Text($0.title).tag($0.rawValue) }
+                }
+                Button { withAnimation { studioListMode.toggle() } } label: {
+                    Label(studioListMode ? "Show as Cards" : "Show as List", systemImage: studioListMode ? "square.grid.2x2" : "list.bullet")
+                }
+            } label: { Image(systemName: "ellipsis") }
+            .accessibilityLabel("Studio options")
+        } else {
+            Menu {
+                connectionItems
+                if page != .activity {
+                Picker("Sort", selection: Binding(get: { sort }, set: { new in withAnimation(.easeOut(duration: 0.2)) { sortName = new.rawValue } })) {
+                    ForEach(Sort.allCases) { Label($0.title, systemImage: $0.icon).tag($0) }
+                }
+                }
+                Button { withAnimation(.easeOut(duration: 0.2)) { showsCards.toggle() } } label: {
+                    Label(showsCards ? "Show as List" : "Show as Cards", systemImage: showsCards ? "list.bullet" : "square.grid.2x2")
+                }
+            } label: { Image(systemName: "ellipsis") }
+            .accessibilityLabel("Connection")
+        }
+    }
+
     @ViewBuilder
     private var connectionItems: some View {
         if let connection = store.connection { Text("Connected to \(connection.macName)") }
@@ -967,6 +969,12 @@ struct ChatListView: View {
                     Button("Show Sessions") { withAnimation(.snappy(duration: 0.25)) { aboutColumn.listShown = true } }
                         .accessibilityIdentifier("list-shelf-show")
                 }
+            }
+            // No session open: the page's ••• and Feedback, so the open Duo's rail (which
+            // shows this column's buttons) isn't empty.
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) { pageMenu.accessibilityIdentifier("placeholder-menu") }
+                ToolbarItem(placement: .topBarTrailing) { FeedbackButton() }
             }
         }
     }
