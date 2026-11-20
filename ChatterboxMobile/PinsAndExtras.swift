@@ -148,6 +148,19 @@ struct ImageViewer: View {
     @State private var note: String?
 
     var body: some View {
+        if let onComment {
+            // Opens ready to comment (Shelby, 2026-11-20): tap to note, with Draw, Save, Share
+            // and Copy in its bar; the plain viewer is for places with nothing to comment into.
+            MobileReviewView(source: .image(image, name: name),
+                             extras: MobileReviewExtras(image: image, draw: onMarkUp.map { markUp in { dismiss(); markUp(image) } })) { result in
+                onComment(result)
+            }
+        } else {
+            viewer
+        }
+    }
+
+    private var viewer: some View {
         NavigationStack {
             GeometryReader { proxy in
                 Image(uiImage: image)
@@ -216,18 +229,22 @@ struct ImageViewer: View {
         lastOffset = .zero
     }
 
-    /// Asks once for permission to add to Photos, then saves.
-    private func save() {
+    private func save() { MobilePhotos.save(image) { note = $0 } }
+}
+
+/// Adds a picture to Photos, asking once for permission; says how it went.
+enum MobilePhotos {
+    @MainActor static func save(_ image: UIImage, done: @escaping @MainActor (String) -> Void) {
         PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
             Task { @MainActor in
                 guard status == .authorized || status == .limited else {
-                    note = "Chatterbox can't add to Photos. Allow it in Settings → Chatterbox → Photos."
+                    done("Chatterbox can't add to Photos. Allow it in Settings → Chatterbox → Photos.")
                     return
                 }
                 PHPhotoLibrary.shared().performChanges {
                     PHAssetChangeRequest.creationRequestForAsset(from: image)
                 } completionHandler: { ok, error in
-                    Task { @MainActor in note = ok ? "Saved to Photos." : (error?.localizedDescription ?? "Couldn't save.") }
+                    Task { @MainActor in done(ok ? "Saved to Photos." : (error?.localizedDescription ?? "Couldn't save.")) }
                 }
             }
         }

@@ -13,6 +13,13 @@ enum MobileReviewSource {
     case pdf(PDFDocument, name: String, page: Int)
 }
 
+/// A chat picture opened to comment on: what else its bar offers.
+struct MobileReviewExtras {
+    let image: UIImage
+    /// Draw on it (Mark Up), when the place it came from allows it.
+    var draw: (() -> Void)?
+}
+
 struct MobileReviewRequest: Identifiable {
     let id = UUID()
     var source: MobileReviewSource
@@ -40,7 +47,9 @@ extension MobileComposerDraft where Image == PendingImage {
 /// puts it in the session's message box.
 struct MobileReviewView: View {
     let source: MobileReviewSource
+    let extras: MobileReviewExtras?
     let onAdd: (MobileReviewResult) -> Void
+    @State private var extrasNote: String?
 
     private struct Mark: Identifiable {
         let id = UUID()
@@ -72,8 +81,9 @@ struct MobileReviewView: View {
     @State private var bubbleHeight: CGFloat = 110
     @FocusState private var focus: Field?
 
-    init(source: MobileReviewSource, onAdd: @escaping (MobileReviewResult) -> Void) {
+    init(source: MobileReviewSource, extras: MobileReviewExtras? = nil, onAdd: @escaping (MobileReviewResult) -> Void) {
         self.source = source
+        self.extras = extras
         self.onAdd = onAdd
         if case .pdf(let document, _, let page) = source {
             _pageIndex = State(initialValue: min(max(page, 0), max(document.pageCount - 1, 0)))
@@ -197,12 +207,35 @@ struct MobileReviewView: View {
                     .font(.subheadline).foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
-            // Balances Undo, so the page stays centered.
-            Color.clear.frame(width: 44, height: 44)
+            if let extras {
+                // A chat picture: draw on it, save, share or copy it, as the viewer did.
+                if let draw = extras.draw {
+                    barButton("pencil.tip.crop.circle", "Draw", action: draw)
+                }
+                barButton("square.and.arrow.down", "Save to Photos") { MobilePhotos.save(extras.image) { extrasNote = $0 } }
+                ShareLink(item: Image(uiImage: extras.image), preview: SharePreview(name, image: Image(uiImage: extras.image))) {
+                    Image(systemName: "square.and.arrow.up").frame(width: 44, height: 44).contentShape(Rectangle())
+                }
+                .accessibilityLabel("Share")
+                barButton("doc.on.doc", "Copy") { UIPasteboard.general.image = extras.image; extrasNote = "Copied." }
+            } else {
+                // Balances Undo, so the page stays centered.
+                Color.clear.frame(width: 44, height: 44)
+            }
         }
         .font(.body.weight(.semibold))
         .padding(.horizontal, 8)
         .background(.bar)
+        .alert(extrasNote ?? "", isPresented: Binding(get: { extrasNote != nil }, set: { if !$0 { extrasNote = nil } })) {
+            Button("OK", role: .cancel) {}
+        }
+    }
+
+    private func barButton(_ symbol: String, _ label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol).frame(width: 44, height: 44).contentShape(Rectangle())
+        }
+        .accessibilityLabel(label)
     }
 
     private func showPage() async {
