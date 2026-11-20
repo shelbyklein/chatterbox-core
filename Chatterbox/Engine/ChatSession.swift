@@ -197,6 +197,7 @@ final class ChatSession: Identifiable {
         !awaitingHostResume && !isRestartingThread && !isRunning && !hasBackgroundWork && !wantsRemoteControl && remoteURL == nil
         && claudeAwaitingEcho.isEmpty && codexRunningCommands.isEmpty
         && (claudeProcess?.canReleaseIdleProcess ?? true)
+        && (geminiProcess?.canReleaseIdleProcess ?? true) && geminiQueue.isEmpty && geminiStarting == nil
         && !items.contains(where: { $0.approvalState == .pending || $0.queued == true })
     }
     var remoteURL: URL?

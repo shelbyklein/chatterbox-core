@@ -234,6 +234,14 @@ extension ChatSession {
         onChange?(self)
     }
 
+    /// Ends an idle process; its session stays, for the next message's process to resume.
+    func releaseGeminiProcess() {
+        geminiProcess?.terminate()
+        geminiProcess = nil
+        geminiSessionReady = false
+        record.geminiHost = nil
+    }
+
     /// A new folder means a new agy session, caught up on the conversation so far.
     func geminiWorkingFolderChanged() {
         guard record.gemini?.sessionId != nil || geminiProcess != nil else { return }

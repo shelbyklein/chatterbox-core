@@ -221,7 +221,8 @@ struct CommandReceipt: Codable {
     /// All checks and retirement happen on the runtime's main actor, alongside message dispatch.
     func releaseIdleAgents(now: Date = Date()) {
         for session in sessions {
-            guard session.canReleaseIdleAgent, session.claudeProcess?.isRunning == true else {
+            let claude = session.claudeProcess?.isRunning == true, gemini = session.geminiProcess?.isRunning == true
+            guard session.canReleaseIdleAgent, claude || gemini else {
                 agentIdleSince[session.id] = nil
                 continue
             }
@@ -230,11 +231,18 @@ struct CommandReceipt: Codable {
             // A work thread that has reported (or a returned sidequest) goes at once (ChatSession+Pressure).
             let early = session.releasesAgentWhenDone
             guard early || now.timeIntervalSince(since) >= agentIdleTimeout else { continue }
-            session.restartClaudeForNewTools()
-            session.record.claudeHost = nil
+            if claude {
+                session.restartClaudeForNewTools()
+                session.record.claudeHost = nil
+            }
+            if gemini {
+                // Its agy session stays: the next message starts a process that resumes it.
+                session.releaseGeminiProcess()
+            }
             agentIdleSince[session.id] = nil
             dirty.insert(session.id)
-            RuntimeHooks.note(early ? "Released \u{201C}\(session.title)\u{201D}'s Claude process: its work is reported" : "Released idle Claude tool process")
+            let agent = claude ? "Claude" : "Gemini"
+            RuntimeHooks.note(early ? "Released \u{201C}\(session.title)\u{201D}'s \(agent) process: its work is reported" : "Released idle \(agent) tool process")
         }
         for codex in CodexAppServer.all { releaseIdleCodex(codex, now: now) }
         if !dirty.isEmpty { flushNow() }
