@@ -152,10 +152,9 @@ struct ChatDetailView: View {
             }
         }
         // Opening a chat here, from anywhere, clears it from New replies.
-        .onAppear { MobileSeenReplies.shared.markSeen(chat.id); sendIfPending(); registerRail() }
+        .onAppear { MobileSeenReplies.shared.markSeen(chat.id); sendIfPending() }
         // The open Duo: this session's buttons in the rail (MobileRail.swift).
-        .onChange(of: aboutColumn == nil) { registerRail() }
-        .onDisappear { MobileRail.shared.hide(chat.id, in: railTab) }
+        .modifier(RailHooks(chat: chat.id, tab: railTab, wide: aboutColumn != nil, register: registerRail))
         // A review's Send filled the box: send it now, as the send button would.
         .onChange(of: composerState.sendPending) { _, pending in if pending { sendIfPending() } }
         // The Desk says which task this session carries (its menu's task items).
@@ -487,22 +486,33 @@ struct ChatDetailView: View {
     private var chatTitle: some View {
             // Tap the title for About this thread: its status and model, where it works,
             // its task and work threads, what it made, its notes and tools.
-            Button { toggleAbout() } label: {
-                VStack(spacing: 0) {
-                    Text(summary.project ?? summary.title).font(.headline).lineLimit(1).foregroundStyle(.primary)
+            VStack(spacing: 0) {
+                Button { toggleAbout() } label: {
                     HStack(spacing: 4) {
-                        // The model and effort, as the Mac's chip says them; its agent's color marks whose.
+                        Text(summary.project ?? summary.title).font(.headline).lineLimit(1).foregroundStyle(.primary)
+                        Image(systemName: aboutShown ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 8, weight: .bold)).foregroundStyle(.secondary)
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(summary.project ?? summary.title), About this session")
+                .accessibilityHint(workingCount > 0 ? "\(workingCount) work threads working" : "")
+                .accessibilityIdentifier("chat-title")
+                // The model and effort, as the Mac's chip says them: tap for the model panel
+                // (Session Settings; Shelby, 2026-11-20).
+                Button { if detail?.options != nil { showingSettings = true } } label: {
+                    HStack(spacing: 4) {
                         if let line = ChatSettingsLabels.chip(detail?.options) ?? detail?.settings { Text(line).lineLimit(1) }
-                        Image(systemName: aboutShown ? "chevron.up" : "chevron.down").font(.system(size: 8, weight: .bold))
                         MobileWorkingPill(count: workingCount)
                     }
                     .font(.caption2).foregroundStyle(.secondary)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Model: " + (ChatSettingsLabels.chip(detail?.options) ?? detail?.settings ?? ""))
+                .accessibilityHint("Opens Session Settings")
+                .accessibilityIdentifier("chat-model-line")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("\(summary.project ?? summary.title), About this session")
-            .accessibilityHint(workingCount > 0 ? "\(workingCount) work threads working" : "")
-            .accessibilityIdentifier("chat-title")
     }
 
     @ToolbarContentBuilder
@@ -822,7 +832,7 @@ struct ChatDetailView: View {
 
     private func registerRail() {
         guard aboutColumn != nil, !railTab.isEmpty else { MobileRail.shared.hide(chat.id, in: railTab); return }
-        MobileRail.shared.show(.init(chat: chat.id, back: closeChat, settings: { showingSettings = true },
+        MobileRail.shared.show(.init(chat: chat.id, back: closeChat, settings: { showingSettings = true }, about: { toggleAbout() },
                                      backend: summary.backend, menu: AnyView(chatMenuItems.environment(store))), in: railTab)
     }
 
@@ -1566,3 +1576,22 @@ private struct MobileBriefEditor: View {
 }
 
 
+
+/// Keeps the open Duo's rail showing this session's buttons while it's on screen: registered
+/// on appearing and when the layout turns wide, taken away on leaving, and put back if the
+/// rail ever loses them meanwhile.
+private struct RailHooks: ViewModifier {
+    let chat: UUID
+    let tab: String
+    let wide: Bool
+    let register: () -> Void
+    @State private var shown = false
+
+    func body(content: Content) -> some View {
+        content
+            .onAppear { shown = true; register() }
+            .onChange(of: wide) { register() }
+            .onDisappear { shown = false; MobileRail.shared.hide(chat, in: tab) }
+            .onChange(of: MobileRail.shared.sessions[tab]?.chat) { _, now in if now == nil, shown { register() } }
+    }
+}

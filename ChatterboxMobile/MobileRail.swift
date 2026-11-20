@@ -15,6 +15,8 @@ final class MobileRail {
         let chat: UUID
         let back: () -> Void
         let settings: () -> Void
+        /// Opens or closes the session's sidebar (About).
+        let about: () -> Void
         let backend: String
         /// Its ⋯ items (the menu itself is the rail's, with the page's items after them).
         let menu: AnyView
@@ -90,6 +92,7 @@ struct MobileRailColumn: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("Session Settings")
                     .accessibilityIdentifier("rail-open-settings")
+                    railButton("sidebar.right", label: "Session Sidebar", id: "rail-sidebar", action: session.about)
                 }
                 // One ⋯: the session's items, then the page's (Settings, Archived, layout…).
                 Menu {
