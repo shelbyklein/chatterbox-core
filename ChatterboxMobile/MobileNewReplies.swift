@@ -120,6 +120,8 @@ final class MobileActivityDismissals {
 struct MobileNewReplies: View {
     /// The open Duo's search field, at the top of what scrolls (ChatListView's ListSearch).
     @Environment(\.listSearchField) private var listSearchField
+    /// The same setting the list's own layout follows (ChatListView's showsCards).
+    @AppStorage("mobileChatListCards") private var cardsSetting = false
     let activity: [Companion.TurnCompletion]
     var chats: [Companion.ChatSummary] = []
     let summary: (UUID) -> Companion.ChatSummary?
@@ -388,6 +390,8 @@ struct MobileNewReplies: View {
                     .accessibilityLabel("\(pressure.label)\(store.isStale ? ", last seen" : ""). Show readings")
                     .accessibilityIdentifier("mac-pressure")
             }
+            // The open Duo: list or cards here, not in the ⋯ menu (Shelby, 2026-11-20).
+            if listSearchField != nil { ListLayoutToggle(cards: $cardsSetting) }
         }
     }
 

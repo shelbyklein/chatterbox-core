@@ -83,10 +83,8 @@ final class MobileStore {
         }
         composer(for: chat.id).images.append(PendingImage(preview: image, upload: .init(name: "Feedback", data: data)))
         if !notes.isEmpty { composer(for: chat.id).add(MobileReviewResult(text: notes, images: [])) }
-        // What the chat's image boxes did lately, for pictures that won't load.
-        if let trace = MobileImageTrace.recent() {
-            composer(for: chat.id).add(MobileReviewResult(text: "Image log from the phone:\n```\n" + trace + "\n```", images: []))
-        }
+        // The image log (MobileImageTrace) no longer rides along (Shelby, 2026-11-20): the
+        // picture loading it was for works now.
         MobilePushNotifications.shared.pendingChat = chat.id
     }
 

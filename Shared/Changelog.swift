@@ -22,12 +22,13 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-20", changes: [
+            "On the open Duo, list and cards buttons sit by the search field (on Activity, at the end of its active and new count). The phone's ••• menu has Usage again; Feedback has its own button.",
+            "Phone feedback no longer attaches the image log.",
             "On the open Duo, the list's name sits at the left of its header, level with the session's name, and New Chat at the right.",
             "On the open Duo, search is a field at the top of the session list that scrolls away with it, instead of a button that opened off the edge of the screen.",
             "On the open Duo, a session's name sits at the left of its bar and the model is a pill at the right in the agent's color; tap the pill for Session Settings.",
             "On the phone, tapping the model line under a session's name (\u{201C}Opus 5.5 \u{00B7} High\u{201D}) opens Session Settings; the name still opens About. On the open Duo, the rail has a sidebar button that opens and closes the session's sidebar.",
             "On the open Duo, the side rail under the clock has buttons again: Back, the session sidebar, ••• and Feedback in a session, ••• and Feedback otherwise. Its ••• has the session's items and the page's (Settings, Archived, layout), so there's no second ••• over the list.",
-            "On the phone, Feedback is also in the ••• menu, for when the open Duo has no room for its button.",
             "On the phone, marking up a picture or PDF puts each note in a bubble right where you tapped, and the picture keeps the whole screen; Review at the top lists every note and the overall note.",
             "On the phone, tapping a sidequest icon shows its short title and Open, not its whole instructions.",
             "A warning on your Mac and iPhone when Claude or Codex has 50%, 20% and then 5% of a usage limit left, with how fast you're using it and when it would run out.",

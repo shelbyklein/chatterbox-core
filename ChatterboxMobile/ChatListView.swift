@@ -51,7 +51,13 @@ struct ChatListView: View {
     @Environment(\.railTab) private var railTab
     /// Wide (the open Duo): the search field at the top of what scrolls (ListSearch).
     private var listSearchField: AnyView? {
-        sizeClass == .regular ? AnyView(ListSearchField(text: $search, prompt: fixedPage.map { "Search \($0.title)" } ?? "Search sessions")) : nil
+        guard sizeClass == .regular else { return nil }
+        let cards = page == .studios ? Binding(get: { !studioListMode }, set: { studioListMode = !$0 }) : $showsCards
+        return AnyView(HStack(spacing: 10) {
+            ListSearchField(text: $search, prompt: fixedPage.map { "Search \($0.title)" } ?? "Search sessions")
+            // List or cards, here on the open Duo instead of in the ⋯ menu (Shelby, 2026-11-20).
+            ListLayoutToggle(cards: cards)
+        })
     }
     /// Settings: Notifications, Appearance and Unpair, in one sheet.
     @State private var showingSettings = false
@@ -938,8 +944,11 @@ struct ChatListView: View {
             Picker("Sort", selection: $sortName) {
                 ForEach(Sort.allCases.filter { $0 != .tag }) { Text($0.title).tag($0.rawValue) }
             }
-            Button { withAnimation { studioListMode.toggle() } } label: {
-                Label(studioListMode ? "Show as Cards" : "Show as List", systemImage: studioListMode ? "square.grid.2x2" : "list.bullet")
+            // Wide, the list/cards buttons beside the search field do this.
+            if sizeClass != .regular {
+                Button { withAnimation { studioListMode.toggle() } } label: {
+                    Label(studioListMode ? "Show as Cards" : "Show as List", systemImage: studioListMode ? "square.grid.2x2" : "list.bullet")
+                }
             }
         } else {
             if page != .activity {
@@ -947,8 +956,10 @@ struct ChatListView: View {
                     ForEach(Sort.allCases) { Label($0.title, systemImage: $0.icon).tag($0) }
                 }
             }
-            Button { withAnimation(.easeOut(duration: 0.2)) { showsCards.toggle() } } label: {
-                Label(showsCards ? "Show as List" : "Show as Cards", systemImage: showsCards ? "list.bullet" : "square.grid.2x2")
+            if sizeClass != .regular {
+                Button { withAnimation(.easeOut(duration: 0.2)) { showsCards.toggle() } } label: {
+                    Label(showsCards ? "Show as List" : "Show as Cards", systemImage: showsCards ? "list.bullet" : "square.grid.2x2")
+                }
             }
         }
     }
@@ -959,10 +970,9 @@ struct ChatListView: View {
         Button { showingAutomations = true } label: { Label("Automations", systemImage: "clock.arrow.circlepath") }
         Button { showingArchived = true } label: { Label("Archived", systemImage: "archivebox") }
         Button { showingSettings = true } label: { Label("Settings", systemImage: "gearshape") }
-        // Also the bar's own button; on the open Duo iOS fits only two buttons over the list
-        // (its search takes one), and Feedback was the one left out.
-        Button { store.startFeedback() } label: { Label("Feedback", systemImage: "exclamationmark.bubble") }
-            .accessibilityIdentifier("menu-feedback")
+        // Feedback has its own button (the bar's, or the open Duo's rail).
+        Button { store.showingUsage = true } label: { Label("Usage", systemImage: "gauge.with.dots.needle.50percent") }
+            .accessibilityIdentifier("menu-usage")
     }
 
     /// About the open session, as a column on its right: its sections, and Close.
@@ -1790,5 +1800,34 @@ private struct WideListHeader<Header: View>: ViewModifier {
         } else {
             content
         }
+    }
+}
+
+/// List or cards: two small buttons, the chosen one filled.
+struct ListLayoutToggle: View {
+    @Binding var cards: Bool
+
+    var body: some View {
+        HStack(spacing: 2) {
+            option(false, "list.bullet", "Show as List")
+            option(true, "square.grid.2x2", "Show as Cards")
+        }
+        .padding(3)
+        .background(Capsule().fill(Color(uiColor: .tertiarySystemFill)))
+    }
+
+    private func option(_ value: Bool, _ symbol: String, _ label: String) -> some View {
+        Button { withAnimation(.easeOut(duration: 0.2)) { cards = value } } label: {
+            Image(systemName: symbol)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(cards == value ? Color.white : .secondary)
+                .frame(width: 34, height: 28)
+                .background(Capsule().fill(cards == value ? Color.accentColor : .clear))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityAddTraits(cards == value ? .isSelected : [])
+        .accessibilityIdentifier(value ? "layout-cards" : "layout-list")
     }
 }
