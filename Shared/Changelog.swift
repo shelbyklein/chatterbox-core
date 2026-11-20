@@ -22,6 +22,7 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-19", changes: [
+            "On the phone, when notes sit beside the picture (the open Duo, or a phone on its side), a button at the top hides the notes panel so the picture gets the whole width; placing a note brings it back.",
             "On the phone, pictures in a chat load when you come back to it, without scrolling or leaving and coming back again.",
             "On the Mac, double-click a session's name at the top of the chat to rename it; Return saves, Esc cancels.",
             "Settings → Diagnostics: a \u{201C}request timed out\u{201D} now says which session and what it was doing, and how long the background service really took.",

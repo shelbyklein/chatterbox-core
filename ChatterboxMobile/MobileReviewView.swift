@@ -62,6 +62,9 @@ struct MobileReviewView: View {
     @State private var confirmingCancel = false
     @State private var window: CGSize = .zero
     @State private var panelHeight: CGFloat = 120
+    /// Side by side, the notes panel can be put away so the picture takes the whole width
+    /// (remembered). Placing or picking a note brings it back: that's where you type.
+    @AppStorage("mobileReviewNotesHidden") private var notesHidden = false
     @FocusState private var focus: Field?
 
     init(source: MobileReviewSource, onAdd: @escaping (MobileReviewResult) -> Void) {
@@ -100,8 +103,11 @@ struct MobileReviewView: View {
                 if sideBySide {
                     HStack(spacing: 0) {
                         canvasArea
-                        Divider()
-                        sidebar.frame(width: min(360, max(280, window.width * 0.36)))
+                        if !notesHidden {
+                            Divider()
+                            sidebar.frame(width: min(360, max(280, window.width * 0.36)))
+                                .transition(.move(edge: .trailing))
+                        }
                     }
                 } else {
                     // The space left above the keyboard, so the picture keeps a share of it.
@@ -121,6 +127,23 @@ struct MobileReviewView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { if hasFeedback { confirmingCancel = true } else { dismiss() } }
                         .keyboardShortcut(.cancelAction)
+                }
+                if sideBySide {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button { withAnimation(.easeOut(duration: 0.2)) { notesHidden.toggle() } } label: {
+                            Label(notesHidden ? "Show Notes" : "Hide Notes", systemImage: "sidebar.trailing")
+                                .labelStyle(.iconOnly)
+                                .overlay(alignment: .topTrailing) {
+                                    if notesHidden, !marks.isEmpty {
+                                        Text("\(marks.count)").font(.caption2.bold()).foregroundStyle(.white)
+                                            .padding(.horizontal, 4).background(Capsule().fill(Color.accentColor))
+                                            .offset(x: 8, y: -6)
+                                    }
+                                }
+                        }
+                        .accessibilityLabel(notesHidden ? "Show Notes" + (marks.isEmpty ? "" : ", \(marks.count)") : "Hide Notes")
+                        .accessibilityIdentifier("reviewNotesToggle")
+                    }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Add to Message") { add() }
@@ -157,7 +180,8 @@ struct MobileReviewView: View {
                     onMark: addMark,
                     onSelect: { index in
                         let current = pageMarks
-                        if current.indices.contains(index) { focus = .mark(current[index].id) }
+                        guard current.indices.contains(index) else { return }
+                        focusNote(current[index].id)
                     },
                     onTurn: { turn($0) })
                 if picture == nil { ProgressView() }
@@ -234,7 +258,15 @@ struct MobileReviewView: View {
         marks.append(mark)
         edits.append(.added(mark.id))
         problem = nil
-        focus = .mark(mark.id)
+        focusNote(mark.id)
+    }
+
+    /// A note needs its panel to be typed in: a put-away panel comes back first, and the
+    /// note takes the keyboard once its field is there.
+    private func focusNote(_ id: UUID) {
+        guard notesHidden, sideBySide else { focus = .mark(id); return }
+        withAnimation(.easeOut(duration: 0.2)) { notesHidden = false }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { focus = .mark(id) }
     }
 
     private func remove(_ mark: Mark) {
