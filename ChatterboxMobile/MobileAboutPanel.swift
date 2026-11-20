@@ -144,6 +144,13 @@ struct MobileAboutPanel: View {
     @State private var showingImages = false
     /// The project's issue board (MobileIssueBoard.swift).
     @State private var showingIssues = false
+    @State private var editingInstructions: StudioInstructions?
+    struct StudioInstructions: Identifiable { var id: UUID; var title: String; var text: String
+        init(title: String, id: UUID, text: String) { self.title = title; self.id = id; self.text = text } }
+    /// The Studio the session belongs to, from the list (its instructions are there).
+    private var studioGroup: Companion.ChatGroup? {
+        store.chatList?.groups.first { $0.kind == .studio && $0.studioID != nil && $0.chats.contains { $0.id == summary.id } }
+    }
 
     private struct ViewedImage: Identifiable { let id = UUID(); var image: UIImage; var name: String }
     private var outputs: [MobileAboutOutputs.Output] { MobileAboutOutputs.collect(detail?.items ?? []) }
@@ -171,6 +178,7 @@ struct MobileAboutPanel: View {
         .fullScreenCover(item: $reviewingPDF) { file in MobilePDFViewer(file: file, chat: summary.id) }
         .sheet(item: $page) { SafariView(url: $0.url).ignoresSafeArea() }
         .sheet(isPresented: $showingIssues) { MobileIssueBoardView(chat: summary.id).environment(store) }
+        .sheet(item: $editingInstructions) { StudioInstructionsEditor(title: $0.title, studio: $0.id, initial: $0.text).environment(store) }
         .sheet(isPresented: $showingImages) {
             MobileAboutImages(chat: summary.id, files: images) { file, image in showingImages = false; viewing = .init(image: image, name: file.name) }
         }
@@ -500,20 +508,30 @@ struct MobileAboutPanel: View {
         let brief = (summary.brief ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let pins = summary.pins ?? []
         card(.notes, "Notes") {
+            // Just the note (Shelby, 2026-11-20): no label, no description.
             Button { perform(.brief) } label: {
-                row(icon: brief.isEmpty ? "doc.text" : "doc.text.fill") {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("Brief").font(.caption).foregroundStyle(Color.metadata)
-                        Text(brief.isEmpty ? "Add a brief: what this session is for, the tools to use, the key files" : brief)
-                            .lineLimit(3).foregroundStyle(brief.isEmpty ? Color.metadata : Color.primary)
-                    }
+                row(icon: brief.isEmpty ? "square.and.pencil" : "note.text") {
+                    Text(brief.isEmpty ? "Add a note" : brief)
+                        .lineLimit(3).foregroundStyle(brief.isEmpty ? Color.metadata : Color.primary)
                     Spacer(minLength: 4)
                     Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
                 }
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(brief.isEmpty ? "Brief, not set" : "Brief: \(brief)")
+            .accessibilityLabel(brief.isEmpty ? "Note, not set" : "Note: \(brief)")
             .accessibilityIdentifier("about-brief")
+            // The instructions the session follows: its Studio's, readable and editable here.
+            if let studio = studioGroup, let id = studio.studioID {
+                Button { editingInstructions = .init(title: studio.title, id: id, text: studio.instructions ?? "") } label: {
+                    row(icon: "text.book.closed") {
+                        Text("\(studio.title) instructions").lineLimit(1)
+                        Spacer(minLength: 4)
+                        Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("about-studio-instructions")
+            }
             if !pins.isEmpty { MobilePinPills(pins: pins) }
         }
     }
