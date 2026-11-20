@@ -12,6 +12,7 @@ enum MobileAppearance {
 
     /// The color you picked for an agent, or nil for its built-in one.
     static func chosen(for backend: String) -> Color? {
+        guard backend != "gemini" else { return nil }
         let id = backend == "codex" ? codexColor : claudeColor
         let builtIn = backend == "codex" ? ReaderStyle.codexDefault : ReaderStyle.claudeDefault
         return id == builtIn ? nil : ReaderStyle.bubbleColor(id)

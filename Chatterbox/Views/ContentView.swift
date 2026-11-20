@@ -247,7 +247,7 @@ struct ContentView: View {
         .sheet(item: $model.namingNewSession) { request in NewSessionSheet(request: request).environment(model) }
         .sheet(item: $model.pinSheet) { AddPinSheet(request: $0) }
         .sheet(item: $sidequestFrom) { parent in
-            SidequestForm(agent: parent.record.backend == .claude ? "Codex" : "Claude", from: parent.record.backend.label, task: $sidequestTask) {
+            SidequestForm(agent: parent.record.backend.other.label, from: parent.record.backend.label, task: $sidequestTask) {
                 model.newSidequest(of: parent, task: sidequestTask)
                 sidequestFrom = nil
             }
@@ -699,7 +699,7 @@ extension ContentView {
             }
             ThreadTaskMenu(session: session)
             if !session.isSidequest {
-                Button("Sidequest to \(session.record.backend == .claude ? "Codex" : "Claude")\u{2026}", systemImage: "point.topleft.down.to.point.bottomright.curvepath") {
+                Button("Sidequest to \(session.record.backend.other.label)\u{2026}", systemImage: "point.topleft.down.to.point.bottomright.curvepath") {
                     sidequestTask = ""; sidequestFrom = session
                 }
                 Button("Do on \(RemoteMachine.pc.name)\u{2026}", systemImage: "desktopcomputer") {

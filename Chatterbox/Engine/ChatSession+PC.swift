@@ -21,6 +21,7 @@ extension ChatSession {
         if let remoteCommand { remoteCommand("settings", ["runOn": machine.map(JSON.string) ?? .null]); return }
         guard machine != record.runOn, !isRunning else { return }
         claudeWorkingFolderChanged()
+        geminiWorkingFolderChanged()
         if let thread = record.codex?.threadId { Task { await codexServer.unsubscribeIdleThread(thread) } }
         record.codex?.threadId = nil
         record.codexHost = nil

@@ -1204,7 +1204,7 @@ struct ChatRow: View {
                         }
                     }
                     .foregroundStyle(.secondary)
-                    .accessibilityLabel(chat.backend == "codex" ? "Codex" : "Claude")
+                    .accessibilityLabel(Backend.label(chat.backend))
                     VStack(alignment: .leading, spacing: 3) {
                         Text(chat.worktreeBranch ?? chat.project ?? chat.title).lineLimit(1)
                         if let subtitle = chat.subtitle ?? (chat.project != nil ? chat.title : nil) {

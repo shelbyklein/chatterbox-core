@@ -192,7 +192,8 @@ enum ToolDiscovery {
     /// config's (switched off by Chatterbox or in the config itself), then what Chatterbox adds.
     /// One Chatterbox adds under a name the agent already has takes that one's place.
     static func loadedServers(_ backend: Backend, projectFolder: String?, tools: EffectiveTools) -> [LoadedServer] {
-        let own = backend == .claude ? claudeServers(projectFolder: projectFolder) : codexServers(projectFolder: projectFolder)
+        let own = backend == .claude ? claudeServers(projectFolder: projectFolder)
+            : backend == .codex ? codexServers(projectFolder: projectFolder) : []
         let added = tools.servers(for: backend)
         let replaced = Set(added.map(\.name))
         return own.filter { !replaced.contains($0.name) }.map { item in

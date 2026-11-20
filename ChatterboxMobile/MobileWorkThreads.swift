@@ -113,9 +113,10 @@ struct MobileWorkStartSheet: View {
                 }
                 Section("Agent") {
                     Picker("Agent", selection: $agent) {
-                        Text("\(summary.backend == "codex" ? "Codex" : "Claude"), as this session").tag("")
+                        Text("\(Backend.label(summary.backend)), as this session").tag("")
                         Text("Claude").tag("claude")
                         Text("Codex").tag("codex")
+                        Text("Gemini").tag("gemini")
                     }
                     .pickerStyle(.inline).labelsHidden()
                 }

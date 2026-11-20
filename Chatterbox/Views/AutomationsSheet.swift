@@ -430,8 +430,9 @@ struct AutomationModelPicker: View {
         let model: String = switch backend {
         case .claude: automation.model.flatMap { m in ClaudeModels.shared.models.first { $0.value == m }?.displayName } ?? automation.model ?? "Default model"
         case .codex: automation.model.flatMap { m in CodexAppServer.shared.models.first { $0.model == m }?.displayName } ?? automation.model ?? "Default model"
+        case .gemini: automation.model.map { GeminiModels.shared.name($0) } ?? "Default model"
         }
-        return ([backend == .claude ? "Claude" : "Codex", model] + [automation.effort.map(RuntimePaths.effortLabel)].compactMap { $0 })
+        return ([backend.label, model] + [automation.effort.map(RuntimePaths.effortLabel)].compactMap { $0 })
             .joined(separator: " \u{00B7} ")
     }
     private var claudeModels: [ClaudeCodeModel] { ClaudeModels.shared.models }
@@ -440,6 +441,7 @@ struct AutomationModelPicker: View {
         switch backend {
         case .claude: claudeModels.first { $0.value == (automation.model ?? "default") }?.efforts ?? []
         case .codex: codexModels.first { $0.model == automation.model }?.efforts ?? codexModels.first(where: \.isDefault)?.efforts ?? []
+        case .gemini: GeminiModels.shared.efforts
         }
     }
 
@@ -449,6 +451,7 @@ struct AutomationModelPicker: View {
         })) {
             Text("Claude").tag(Backend.claude)
             Text("Codex").tag(Backend.codex)
+            Text("Gemini").tag(Backend.gemini)
         }
         .pickerStyle(.segmented)
         Picker("Model", selection: Binding(get: { automation.model ?? "" }, set: { new in
@@ -458,6 +461,7 @@ struct AutomationModelPicker: View {
             switch backend {
             case .claude: ForEach(claudeModels.filter { $0.value != "default" }) { Text($0.displayName).tag($0.value) }
             case .codex: ForEach(codexModels) { Text($0.displayName).tag($0.model) }
+            case .gemini: ForEach(GeminiModels.shared.models) { Text($0.name).tag($0.id) }
             }
         }
         if !efforts.isEmpty {

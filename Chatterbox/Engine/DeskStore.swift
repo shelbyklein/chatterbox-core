@@ -710,7 +710,7 @@ final class DeskStore {
             let settings = Companion.SettingsRequest(backend: Self.clean(body.agent)?.lowercased(), model: Self.clean(body.model),
                                                      effort: Self.clean(body.effort), openModel: Self.clean(body.openModel))
             if let agent = settings.backend {
-                guard let chosen = Backend(rawValue: agent) else { throw Failure(status: 400, message: "The agent is claude or codex.") }
+                guard let chosen = Backend(rawValue: agent) else { throw Failure(status: 400, message: "The agent is claude, codex or gemini.") }
                 // Its agent changes only between replies.
                 if chosen != session.record.backend, session.isRunning {
                     throw Failure(status: 409, message: "That session is working. Its agent can change once it's done.")
@@ -731,7 +731,7 @@ final class DeskStore {
         }
         var backend: Backend?
         if let agent = Self.clean(body.agent) {
-            guard let chosen = Backend(rawValue: agent.lowercased()) else { throw Failure(status: 400, message: "The agent is claude or codex.") }
+            guard let chosen = Backend(rawValue: agent.lowercased()) else { throw Failure(status: 400, message: "The agent is claude, codex or gemini.") }
             backend = chosen
         }
         let server = CompanionServer.shared
@@ -925,7 +925,7 @@ final class DeskStore {
         guard brief.count <= 100_000 else { throw Failure(status: 400, message: "That brief is too long.") }
         var backend: Backend?
         if let agent = Self.clean(body.agent) {
-            guard let chosen = Backend(rawValue: agent.lowercased()) else { throw Failure(status: 400, message: "The agent is claude or codex.") }
+            guard let chosen = Backend(rawValue: agent.lowercased()) else { throw Failure(status: 400, message: "The agent is claude, codex or gemini.") }
             backend = chosen
         }
         let session = try newWorkThread(of: front, title: Self.title(title))

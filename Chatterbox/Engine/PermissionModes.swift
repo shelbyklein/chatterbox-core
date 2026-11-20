@@ -28,8 +28,22 @@ enum PermissionModes {
         PermissionMode(id: "fullAccess", title: "Full access", detail: "Unrestricted access to the internet and any file on your computer", systemImage: "exclamationmark.shield", isUnrestricted: true),
     ]
 
+    /// agy's own modes (`session/set_mode`), plus Bypass: Chatterbox approves each request
+    /// itself (agy's own bypass is only a launch flag).
+    static let gemini: [PermissionMode] = [
+        PermissionMode(id: "auto", title: "Auto", detail: "Approves edits and safe commands; asks before anything irreversible", systemImage: "wand.and.stars", isRecommended: true),
+        PermissionMode(id: "default", title: "Manual", detail: "Asks before edits and commands", systemImage: "hand.raised"),
+        PermissionMode(id: "accept-edits", title: "Accept edits", detail: "Approves file edits in the workspace without asking", systemImage: "pencil"),
+        PermissionMode(id: "plan", title: "Plan", detail: "Plans carefully before making changes", systemImage: "list.bullet.clipboard"),
+        PermissionMode(id: "bypass", title: "Bypass permissions", detail: "Accepts all permissions", systemImage: "exclamationmark.shield", isUnrestricted: true),
+    ]
+
     static func modes(for backend: Backend) -> [PermissionMode] {
-        backend == .claude ? claude : codex
+        switch backend {
+        case .claude: claude
+        case .codex: codex
+        case .gemini: gemini
+        }
     }
 
     static func mode(_ id: String, for backend: Backend) -> PermissionMode {
@@ -50,6 +64,8 @@ enum PermissionModes {
         } else {
             record.codex?.mode = "fullAccess"
         }
+        if record.gemini == nil { record.gemini = GeminiSettings() }
+        record.gemini?.mode = "bypass"
         // Adding Codex settings must not implicitly switch a Claude chat to Codex.
         record.activeBackend = backend
     }
@@ -57,6 +73,10 @@ enum PermissionModes {
     /// Defaults for new chats, from Settings: unrestricted unless you choose otherwise.
     static var defaultClaude: String {
         AppPreferences.defaults.string(forKey: "claudeDefaultMode") ?? "bypassPermissions"
+    }
+
+    static var defaultGemini: String {
+        AppPreferences.defaults.string(forKey: "geminiDefaultMode") ?? "bypass"
     }
 
     static var defaultCodex: String {

@@ -1243,6 +1243,10 @@ enum CompanionMapper {
             Companion.ModelOption(id: $0, name: $0, detail: $0 == PCModels.recommended ? "On \(RemoteMachine.pc.name); fits its graphics card, fastest" : "On \(RemoteMachine.pc.name)",
                                   efforts: [], defaultEffort: nil)
         }
+        let gemini = GeminiModels.shared.models.map {
+            Companion.ModelOption(id: $0.id, name: $0.name, detail: $0.id == GeminiModels.shared.defaultModel ? "Gemini's default" : "",
+                                  efforts: GeminiModels.shared.efforts, defaultEffort: GeminiModels.shared.defaultEffort)
+        }
         let modes = PermissionModes.modes(for: session.record.backend).map {
             Companion.ModeOption(id: $0.id, title: $0.title, detail: $0.detail, systemImage: $0.systemImage, isUnrestricted: $0.isUnrestricted)
         }
@@ -1250,11 +1254,15 @@ enum CompanionMapper {
         return .init(backend: session.record.backend.rawValue,
                      // The phone matches by id: name the chat's model as the list does
                      // ("claude-opus-5-5" and "opus" can be the same entry).
-                     model: isCodex ? (session.record.codex?.model ?? "") : claudeOptionID(session.record.model),
-                     effort: isCodex ? (session.record.codex?.effort ?? "") : session.record.effort,
+                     model: isCodex ? (session.record.codex?.model ?? "")
+                        : session.record.backend == .gemini ? (session.record.gemini?.model ?? GeminiModels.shared.defaultModel)
+                        : claudeOptionID(session.record.model),
+                     effort: isCodex ? (session.record.codex?.effort ?? "")
+                        : session.record.backend == .gemini ? (session.record.gemini?.effort ?? "") : session.record.effort,
                      claudeModels: claude, codexModels: codex, modes: modes, mode: session.mode.id, presets: presets,
                      fastMode: session.supportsFastMode ? session.fastMode : nil,
-                     openModels: PCModels.enabled ? open : nil, openModel: session.record.openModel)
+                     openModels: PCModels.enabled ? open : nil, openModel: session.record.openModel,
+                     geminiModels: gemini)
     }
 
     /// A chat that's never saved, set up as a new one would be, then with `picks` applied:
@@ -1308,6 +1316,7 @@ enum CompanionMapper {
         record.items = []
         record.claudeSessionID = nil
         record.codex?.threadId = nil
+        record.gemini?.sessionId = nil
         let draft = ChatSession(record: record)
         apply(picks, to: draft)
         return draft
@@ -1323,12 +1332,16 @@ enum CompanionMapper {
         } else if change.model != nil, session.record.openModel != nil {
             session.setOpenModel(nil)
         }
-        let isCodex = session.record.backend == .codex
-        if let model = change.model {
-            if isCodex { session.setCodexModel(model.isEmpty ? nil : model) } else if !model.isEmpty { session.setModel(model) }
-        }
-        if let effort = change.effort {
-            if isCodex { session.setCodexEffort(effort.isEmpty ? nil : effort) } else { session.setEffort(effort) }
+        switch session.record.backend {
+        case .codex:
+            if let model = change.model { session.setCodexModel(model.isEmpty ? nil : model) }
+            if let effort = change.effort { session.setCodexEffort(effort.isEmpty ? nil : effort) }
+        case .claude:
+            if let model = change.model, !model.isEmpty { session.setModel(model) }
+            if let effort = change.effort { session.setEffort(effort) }
+        case .gemini:
+            if let model = change.model, !model.isEmpty { session.setGeminiModel(model) }
+            if let effort = change.effort { session.setGeminiEffort(effort) }
         }
         if let mode = change.mode { session.setMode(mode) }
         if let fast = change.fastMode { session.setFastMode(fast) }

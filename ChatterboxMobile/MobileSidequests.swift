@@ -5,7 +5,7 @@ import SwiftUI
 /// listed with the chat that started them, never as chats of their own.
 extension Companion.ChatSummary {
     var isSidequest: Bool { sidequestOf != nil }
-    var otherAgentLabel: String { backend == "codex" ? "Claude" : "Codex" }
+    var otherAgentLabel: String { (Backend(rawValue: backend) ?? .claude).other.label }
 }
 
 enum MobileSidequests {
@@ -33,7 +33,7 @@ enum MobileSidequests {
     /// "Codex is working on: Render four options" in a card's or row's own words.
     static func line(_ quests: [Companion.ChatSummary]) -> String? {
         guard let first = quests.first else { return nil }
-        let agent = first.backend == "codex" ? "Codex" : "Claude"
+        let agent = Backend.label(first.backend)
         let task = first.sidequestTask ?? first.title
         let more = quests.count > 1 ? " +\(quests.count - 1)" : ""
         return (first.isWaitingOnYou ? "\(agent) needs you: " : first.isRunning ? "\(agent): " : "\(agent) finished: ") + task + more
@@ -67,7 +67,7 @@ struct MobileSidequestRow: View {
             .contentShape(RoundedRectangle(cornerRadius: 10))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Sidequest to \(quest.backend == "codex" ? "Codex" : "Claude"): \(quest.sidequestTask ?? quest.title)\(quest.isRunning ? ", working" : quest.isWaitingOnYou ? ", needs you" : "")")
+        .accessibilityLabel("Sidequest to \(Backend.label(quest.backend)): \(quest.sidequestTask ?? quest.title)\(quest.isRunning ? ", working" : quest.isWaitingOnYou ? ", needs you" : "")")
     }
 }
 
@@ -80,7 +80,7 @@ struct MobileSidequestIcon: View {
     @State private var showing = false
 
     private var task: String { quest.sidequestTask ?? quest.title }
-    private var agent: String { quest.backend == "codex" ? "Codex" : "Claude" }
+    private var agent: String { Backend.label(quest.backend) }
     private var state: String { quest.isWaitingOnYou ? "Needs you" : quest.isRunning ? "Working" : "Finished" }
 
     var body: some View {

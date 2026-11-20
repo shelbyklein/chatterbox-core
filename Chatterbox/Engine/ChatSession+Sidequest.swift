@@ -1,6 +1,7 @@
 import Foundation
 
-/// Sidequests: hand a task from a chat to the other agent (Claude ↔ Codex). The sidequest is a
+/// Sidequests: hand a task from a chat to another agent (by default Claude ↔ Codex; Gemini
+/// hands to Claude; `sidequest --agent` picks one). The sidequest is a
 /// Sidechat on that agent, caught up on the chat it came from; when its turn finishes, its
 /// final reply goes back to that chat, whose agent carries on from it. The background service
 /// runs both ends, so the return happens even with the app closed.
@@ -27,6 +28,12 @@ extension ChatSession {
         }
         record.codex?.canEdit = true
         if backend == .claude, ["default", "plan"].contains(record.claudeModeID) { record.claudeMode = "acceptEdits" }
+        if backend == .gemini {
+            if record.gemini == nil { record.gemini = GeminiSettings.newChat() }
+            // Its own agy session, not the parent's.
+            record.gemini?.sessionId = nil
+            if ["default", "plan"].contains(record.gemini?.mode ?? "") { record.gemini?.mode = "accept-edits" }
+        }
         record.prepareParentContext(from: parent)
         return record
     }
@@ -89,13 +96,21 @@ extension ChatSession {
 
     /// Once its record is in: the automation's model and effort (or its preset), then its task.
     func startAutomationRun(_ automation: ProjectAutomation, from project: ChatSession) {
-        let codex = record.backend == .codex
         if automation.backend == nil, automation.model == nil,
            let preset = automation.preset.flatMap({ id in ModelPresets.shared.presets.first { $0.id == id } }) {
             ModelPresets.shared.apply(preset, to: self)
         }
-        if let model = automation.model { codex ? setCodexModel(model.isEmpty ? nil : model) : setModel(model) }
-        if let effort = automation.effort { codex ? setCodexEffort(effort.isEmpty ? nil : effort) : setEffort(effort) }
+        switch record.backend {
+        case .codex:
+            if let model = automation.model { setCodexModel(model.isEmpty ? nil : model) }
+            if let effort = automation.effort { setCodexEffort(effort.isEmpty ? nil : effort) }
+        case .claude:
+            if let model = automation.model { setModel(model) }
+            if let effort = automation.effort { setEffort(effort) }
+        case .gemini:
+            if let model = automation.model, !model.isEmpty { setGeminiModel(model) }
+            if let effort = automation.effort { setGeminiEffort(effort) }
+        }
         beginSidequest(from: project, label: "Automation \u{201C}\(automation.title)\u{201D}")
         if let index = record.items.lastIndex(where: { $0.kind == .user }) {
             record.items[index].automatic = true

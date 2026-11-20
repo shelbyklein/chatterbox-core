@@ -36,6 +36,26 @@ struct CodexSettings: Codable, Equatable {
     var modeID: String { mode ?? (canEdit ? "ask" : "readOnly") }
 }
 
+/// Per-chat settings for Gemini (Antigravity CLI, `agy acp`). agy keeps the history itself,
+/// under `sessionId`. The folder is the chat's working folder, as for Claude.
+struct GeminiSettings: Codable, Equatable {
+    var sessionId: String?
+    /// A model from agy's list ("gemini-4-neon"); nil means agy's default.
+    var model: String?
+    /// agy's thought level: low, medium, high or xhigh; nil means its default.
+    var effort: String?
+    /// One of `PermissionModes.gemini`.
+    var mode: String?
+
+    /// A chat's first Gemini settings, from Settings' defaults.
+    static func newChat() -> GeminiSettings {
+        let defaults = AppPreferences.defaults
+        return GeminiSettings(model: defaults.string(forKey: "geminiDefaultModel").flatMap { $0.isEmpty ? nil : $0 },
+                              effort: defaults.string(forKey: "geminiDefaultEffort").flatMap { $0.isEmpty ? nil : $0 },
+                              mode: PermissionModes.defaultGemini)
+    }
+}
+
 /// One question an agent asks you: from Claude Code's AskUserQuestion tool or Codex's
 /// request_user_input. Answered in a card, one question at a time.
 struct AgentQuestion: Codable, Equatable, Hashable, Identifiable {
@@ -167,6 +187,8 @@ struct ConversationRecord: Codable {
     /// Codex settings, present once this chat has used Codex. Kept when switching back to
     /// Claude so the Codex thread can resume.
     var codex: CodexSettings?
+    /// Gemini's settings, once the chat has used Gemini. Optional so older chats still decode.
+    var gemini: GeminiSettings?
     /// Which agent answers next. Older records leave this unset: Codex if `codex` exists.
     var activeBackend: Backend?
 
@@ -243,6 +265,7 @@ struct ConversationRecord: Codable {
     /// just the part of the conversation the new one missed.
     var claudeSeenThrough: UUID?
     var codexSeenThrough: UUID?
+    var geminiSeenThrough: UUID?
     /// Transcript of what the incoming agent missed, delivered with its next message.
     var pendingHandoff: String?
     /// When the reply in progress started, so its running time survives a restart.
@@ -257,6 +280,22 @@ struct ConversationRecord: Codable {
     var pendingShellContext: String?
 
     var backend: Backend { activeBackend ?? (codex == nil ? .claude : .codex) }
+
+    /// The last row each agent saw.
+    func seenThrough(for backend: Backend) -> UUID? {
+        switch backend {
+        case .claude: claudeSeenThrough
+        case .codex: codexSeenThrough
+        case .gemini: geminiSeenThrough
+        }
+    }
+    mutating func setSeenThrough(_ id: UUID?, for backend: Backend) {
+        switch backend {
+        case .claude: claudeSeenThrough = id
+        case .codex: codexSeenThrough = id
+        case .gemini: geminiSeenThrough = id
+        }
+    }
 
     /// Model provider can differ from the agent when Codex runs Claude through a proxy.
     var provider: Backend {
@@ -292,6 +331,7 @@ struct ConversationRecord: Codable {
     /// a reply that kept going while the app was closed. Older records leave these unset.
     var claudeHost: HostLink?
     var codexHost: HostLink?
+    var geminiHost: HostLink?
     /// Subagents and background commands still running (see BackgroundTasks.swift).
     var backgroundTasks: [BackgroundTask]?
 
@@ -349,6 +389,18 @@ struct HostLink: Codable, Equatable {
     var running: Bool
     var claude: ClaudeTurnState?
     var codex: CodexTurnState?
+    var gemini: GeminiTurnState?
+}
+
+/// The Gemini side's per-turn bookkeeping (see ChatSession+Gemini).
+struct GeminiTurnState: Codable, Equatable {
+    var sessionReady: Bool
+    var textItem: UUID?
+    var thoughtItem: UUID?
+    var textItems: [UUID]
+    var toolItems: [String: UUID]
+    var planItem: UUID?
+    var stopRequested: Bool
 }
 
 /// The Claude side's per-turn bookkeeping (see ChatSession+Claude).

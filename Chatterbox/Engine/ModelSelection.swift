@@ -49,6 +49,8 @@ final class ModelSelection {
         case .codex:
             let models = CodexAppServer.shared.models
             return choice.model.map { CodexModelCatalog.name($0, models: models) } ?? "Codex default"
+        case .gemini:
+            return GeminiModels.shared.name(choice.model)
         }
     }
 
@@ -61,6 +63,8 @@ final class ModelSelection {
             let models = CodexAppServer.shared.models
             let model = models.first { $0.model == choice.model } ?? models.first(where: \.isDefault)
             return model?.efforts ?? ["low", "medium", "high"]
+        case .gemini:
+            return GeminiModels.shared.efforts
         }
     }
 
@@ -77,13 +81,19 @@ final class ModelSelection {
     // MARK: - A session's model
 
     static func current(_ session: ChatSession) -> ModelChoice {
-        session.record.backend == .claude
-            ? ModelChoice(backend: .claude, model: session.record.model)
-            : ModelChoice(backend: .codex, model: session.record.codex?.model)
+        switch session.record.backend {
+        case .claude: ModelChoice(backend: .claude, model: session.record.model)
+        case .codex: ModelChoice(backend: .codex, model: session.record.codex?.model)
+        case .gemini: ModelChoice(backend: .gemini, model: session.record.gemini?.model)
+        }
     }
 
     static func effort(_ session: ChatSession) -> String {
-        session.record.backend == .claude ? session.record.effort : session.record.codex?.effort ?? ""
+        switch session.record.backend {
+        case .claude: session.record.effort
+        case .codex: session.record.codex?.effort ?? ""
+        case .gemini: session.record.gemini?.effort ?? ""
+        }
     }
 
     /// Switches the session to `choice`, keeping the closest effort, and remembers it for
@@ -99,6 +109,7 @@ final class ModelSelection {
         switch session.record.backend {
         case .claude: session.setEffort(effort)
         case .codex: session.setCodexEffort(effort.isEmpty ? nil : effort)
+        case .gemini: session.setGeminiEffort(effort)
         }
         let choice = Self.current(session)
         remember(LastModel(backend: choice.backend, model: choice.model, effort: effort.isEmpty ? nil : effort), for: session)
@@ -113,6 +124,9 @@ final class ModelSelection {
         case .codex:
             session.setCodexModel(choice.model)
             session.setCodexEffort(effort.isEmpty ? nil : effort)
+        case .gemini:
+            session.setGeminiModel(choice.model ?? GeminiModels.shared.defaultModel)
+            session.setGeminiEffort(effort)
         }
     }
 

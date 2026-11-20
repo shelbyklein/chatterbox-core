@@ -92,6 +92,7 @@ struct CompactModelPicker: View {
         switch provider {
         case "open": "Open models"
         case "codex": "Codex"
+        case "gemini": "Gemini"
         default: "Claude"
         }
     }
@@ -102,8 +103,7 @@ struct CompactModelPicker: View {
     private var shownModels: [Companion.ModelOption] {
         switch shownProvider {
         case "open": options.openModels ?? []
-        case "codex": options.codexModels
-        default: options.claudeModels
+        default: options.models(for: shownProvider)
         }
     }
     /// The model in use, when the menu lists its provider's.
@@ -116,6 +116,7 @@ struct CompactModelPicker: View {
         switch shownProvider {
         case "open": "No open models: the PC is off or still being checked."
         case "codex": "Models load once Codex starts on the Mac."
+        case "gemini": options.geminiModels == nil ? "Update Chatterbox on the Mac to use Gemini." : "Install Antigravity CLI (agy) on the Mac to use Gemini."
         default: "Models load once Claude Code starts on the Mac."
         }
     }
@@ -130,7 +131,7 @@ struct CompactModelPicker: View {
 
     private func detail(for model: Companion.ModelOption) -> String {
         shownProvider == "open" || shownProvider == options.backend ? model.detail
-            : "switches to \(shownProvider == "codex" ? "Codex" : "Claude")"
+            : "switches to \(Backend.label(shownProvider))"
     }
 
     var body: some View {
@@ -141,6 +142,7 @@ struct CompactModelPicker: View {
             Picker("Provider", selection: Binding(get: { shownProvider }, set: { browsing = $0 == provider ? nil : $0 })) {
                 Text("Claude").tag("claude")
                 Text("Codex").tag("codex")
+                if options.geminiModels != nil { Text("Gemini").tag("gemini") }
                 if options.openModels != nil { Text("Open models").tag("open") }
             }
             .pickerStyle(.segmented)
@@ -210,7 +212,7 @@ enum ChatSettingsLabels {
     static func chip(_ options: Companion.ChatOptions?) -> String? {
         guard let options else { return nil }
         if let open = options.openModel { return "\(open) \u{00B7} PC" }
-        let models = options.backend == "codex" ? options.codexModels : options.claudeModels
+        let models = options.models(for: options.backend)
         guard let model = models.first(where: { $0.id == options.model }) else { return nil }
         guard !model.efforts.isEmpty else { return model.name }
         // With none chosen, the level the model uses by default.

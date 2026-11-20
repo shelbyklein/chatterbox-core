@@ -187,7 +187,7 @@ private struct MobileAgentIcon: View {
         Image((Backend(rawValue: agent) ?? .claude).iconName)
             .resizable().scaledToFit().frame(width: 16, height: 16)
             .foregroundStyle(MobileConversationStyle.accent(for: agent))
-            .accessibilityLabel(agent == "codex" ? "Codex" : "Claude")
+            .accessibilityLabel(Backend.label(agent))
     }
 }
 

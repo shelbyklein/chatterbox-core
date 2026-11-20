@@ -48,7 +48,7 @@ final class EasyCLIProxy {
     /// The proxy to use for this agent right now, if it's turned on and answering.
     func active(for backend: Backend) -> Endpoint? {
         refreshIfStale()
-        guard isRunning, let endpoint, backend == .claude ? claudeOn : codexOn else { return nil }
+        guard isRunning, let endpoint, backend != .gemini, backend == .claude ? claudeOn : codexOn else { return nil }
         return endpoint
     }
 

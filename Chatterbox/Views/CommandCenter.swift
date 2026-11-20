@@ -203,7 +203,7 @@ struct CommandCenterTile: View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 Image(session.record.backend.iconName).resizable().scaledToFit().frame(width: 15, height: 15)
-                    .foregroundStyle(session.record.backend == .codex ? Color.green : Color.orange)
+                    .foregroundStyle(session.record.backend == .codex ? Color.green : session.record.backend == .gemini ? Color.blue : Color.orange)
                 Button(action: switchThread) {
                     HStack(spacing: 6) {
                         Text(title).font(.headline).lineLimit(1)
@@ -216,7 +216,7 @@ struct CommandCenterTile: View {
                     #endif
                 Spacer(minLength: 4)
                 if session.isWaitingOnYou { Image(systemName: "questionmark.circle.fill").foregroundStyle(.orange).help("Needs you") }
-                else if session.isRunning { ActivitySpinner(color: session.record.backend == .codex ? .green : .orange).frame(width: 12, height: 12) }
+                else if session.isRunning { ActivitySpinner(color: session.record.backend == .codex ? .green : session.record.backend == .gemini ? .blue : .orange).frame(width: 12, height: 12) }
                 Button { move(-1) } label: { Image(systemName: "arrow.left") }
                     .disabled(!canMoveEarlier).help("Move this session one position earlier")
                     .accessibilityLabel("Move \(title) earlier")

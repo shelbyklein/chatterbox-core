@@ -93,7 +93,8 @@ final class UsageLimits {
     static let warningLevels: [Double] = [0.5, 0.2, 0.05]
     private static let warnedKey = "usageWarnedLevels"
 
-    func windows(for backend: Backend) -> [UsageWindow] { backend == .claude ? claude : codex }
+    /// Gemini (agy) doesn't report its account limits.
+    func windows(for backend: Backend) -> [UsageWindow] { backend == .claude ? claude : backend == .codex ? codex : [] }
 
     /// The Mac app with the background service: the service's numbers, as they are (the
     /// service keeps the readings and warns; the app only shows them).

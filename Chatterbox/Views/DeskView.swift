@@ -1466,8 +1466,7 @@ final class DeskStartStep {
     func models(of provider: String) -> [Companion.ModelOption] {
         switch provider {
         case "open": options?.openModels ?? []
-        case "codex": options?.codexModels ?? []
-        default: options?.claudeModels ?? []
+        default: options?.models(for: provider) ?? []
         }
     }
 
@@ -1576,6 +1575,7 @@ struct DeskStartPopover: View {
                 Picker("Agent", selection: Binding(get: { shown }, set: { browsing = $0 == step.provider ? nil : $0 })) {
                     Text("Claude").tag("claude")
                     Text("Codex").tag("codex")
+                    if options.geminiModels != nil { Text("Gemini").tag("gemini") }
                     if options.openModels != nil { Text("Open models").tag("open") }
                 }
                 .pickerStyle(.segmented)
@@ -1596,7 +1596,7 @@ struct DeskStartPopover: View {
                 if let detail = current?.detail, !detail.isEmpty {
                     Text(detail).font(.caption).foregroundStyle(.secondary)
                 } else if current == nil, shown != step.provider {
-                    Text("Picking one switches to \(shown == "open" ? "an open model" : shown == "codex" ? "Codex" : "Claude").").font(.caption).foregroundStyle(.secondary)
+                    Text("Picking one switches to \(shown == "open" ? "an open model" : Backend.label(shown)).").font(.caption).foregroundStyle(.secondary)
                 }
                 if shown == step.provider, options.openModel == nil, let model = current, !model.efforts.isEmpty {
                     Picker("Effort", selection: Binding(get: { options.effort.isEmpty ? model.defaultEffort ?? "" : options.effort }, set: { effort in

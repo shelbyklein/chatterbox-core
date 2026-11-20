@@ -25,7 +25,15 @@ struct ReaderStyle: Equatable {
     static let claudeDefault = "#D97757"
     static let codexDefault = "#10A37F"
 
-    func color(for backend: Backend) -> Color { backend == .claude ? claudeColor : codexColor }
+    var geminiColor: Color = ReaderStyle.bubbleColor(ReaderStyle.geminiDefault)
+    static let geminiDefault = "#4C8DF6"
+    func color(for backend: Backend) -> Color {
+        switch backend {
+        case .claude: claudeColor
+        case .codex: codexColor
+        case .gemini: geminiColor
+        }
+    }
     /// A session on Shelby-PC (an open model there, or its agent running there) is grey,
     /// so it never looks like a Claude or Codex session on the Mac.
     static let pcColor = Color.gray

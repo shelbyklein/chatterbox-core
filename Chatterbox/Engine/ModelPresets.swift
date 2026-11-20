@@ -109,6 +109,9 @@ final class ModelPresets {
         case .codex:
             resolved.model = defaults.string(forKey: "codexDefaultModel").flatMap { $0.isEmpty ? nil : $0 }
             resolved.effort = defaults.string(forKey: "codexDefaultEffort").flatMap { $0.isEmpty ? nil : $0 }
+        case .gemini:
+            resolved.model = defaults.string(forKey: "geminiDefaultModel").flatMap { $0.isEmpty ? nil : $0 }
+            resolved.effort = defaults.string(forKey: "geminiDefaultEffort").flatMap { $0.isEmpty ? nil : $0 }
         }
         resolved.title = followingTitle(resolved)
         return resolved
@@ -128,6 +131,8 @@ final class ModelPresets {
             let models = CodexAppServer.shared.models
             model = preset.model.map { CodexModelCatalog.name($0, models: models) }
                 ?? models.first(where: \.isDefault)?.displayName ?? "Codex"
+        case .gemini:
+            model = GeminiModels.shared.name(preset.model)
         }
         return model + (preset.effort.map { " \u{00B7} " + RuntimePaths.effortLabel($0) } ?? "")
     }
@@ -156,6 +161,9 @@ final class ModelPresets {
         case .codex:
             session.setCodexModel(preset.model)
             session.setCodexEffort(preset.effort)
+        case .gemini:
+            if let model = preset.model { session.setGeminiModel(model) }
+            session.setGeminiEffort(preset.effort ?? "")
         }
     }
 
@@ -167,15 +175,20 @@ final class ModelPresets {
                 && (preset.effort ?? "") == session.record.effort
         case .codex:
             return preset.model == session.record.codex?.model && preset.effort == session.record.codex?.effort
+        case .gemini:
+            return preset.model == session.record.gemini?.model && preset.effort == session.record.gemini?.effort
         }
     }
 
     /// Saves the chat's current agent, model, and effort as a new preset.
     func saveCurrent(_ session: ChatSession, title: String) {
         let record = session.record
-        let preset = record.backend == .claude
-            ? ModelPreset(title: title, backend: .claude, model: record.model, effort: record.effort.isEmpty ? nil : record.effort)
-            : ModelPreset(title: title, backend: .codex, model: record.codex?.model, effort: record.codex?.effort)
+        let preset: ModelPreset
+        switch record.backend {
+        case .claude: preset = ModelPreset(title: title, backend: .claude, model: record.model, effort: record.effort.isEmpty ? nil : record.effort)
+        case .codex: preset = ModelPreset(title: title, backend: .codex, model: record.codex?.model, effort: record.codex?.effort)
+        case .gemini: preset = ModelPreset(title: title, backend: .gemini, model: record.gemini?.model, effort: record.gemini?.effort)
+        }
         guard !presets.contains(where: { $0.backend == preset.backend && $0.model == preset.model && $0.effort == preset.effort }) else { return }
         saved.append(preset)
         save()
@@ -210,6 +223,7 @@ final class ModelPresets {
         switch preset.backend {
         case .claude: model = preset.model.map { ClaudeModels.shared.info($0).displayName } ?? "Claude"
         case .codex: model = preset.model.map { CodexModelCatalog.name($0, models: CodexAppServer.shared.models) } ?? "Codex"
+        case .gemini: model = GeminiModels.shared.name(preset.model)
         }
         return model + " \u{00B7} " + (preset.effort.map { RuntimePaths.effortLabel($0) } ?? "Default")
     }

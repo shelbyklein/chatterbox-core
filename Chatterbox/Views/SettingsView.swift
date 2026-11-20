@@ -816,9 +816,11 @@ struct BackgroundServiceSection: View {
                 .accessibilityIdentifier("idle-simulator-shutdown")
             Text("Booted simulators no build, test or Simulator window has used for 30 minutes are shut down (never deleted) to free their memory. Logged in chatterboxd.log.")
                 .font(.caption).foregroundStyle(.secondary)
-            Toggle("Offer open models on \(RemoteMachine.pc.name)", isOn: $openModelsEnabled)
-                .help("Show the Open models choice in model pickers on the Mac and the phone. Turn it off while the PC is down; chats already on an open model keep theirs.")
-                .accessibilityIdentifier("open-models-enabled")
+            if !PCModels.hiddenForNow {
+                Toggle("Offer open models on \(RemoteMachine.pc.name)", isOn: $openModelsEnabled)
+                    .help("Show the Open models choice in model pickers on the Mac and the phone. Turn it off while the PC is down; chats already on an open model keep theirs.")
+                    .accessibilityIdentifier("open-models-enabled")
+            }
             Toggle("Start Desk tasks that can run without you", isOn: $deskAutoStart)
                 .help("Tasks brought onto the Desk are scored Yes or No: can an agent finish this without you? Yes tasks with a place start by themselves, two at a time, and their cards say Started automatically. Off: the scores still show, nothing starts.")
                 .accessibilityIdentifier("desk-auto-start")

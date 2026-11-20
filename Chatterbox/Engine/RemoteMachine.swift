@@ -185,7 +185,11 @@ final class PCModels {
 
     /// Open models offered at all (Settings → Background service): off while the PC is down, so
     /// pickers don't offer them and nothing reaches for the PC to list them.
-    nonisolated static var enabled: Bool { AppPreferences.defaults.object(forKey: "openModelsEnabled") as? Bool ?? true }
+    nonisolated static var enabled: Bool { !hiddenForNow && AppPreferences.defaults.object(forKey: "openModelsEnabled") as? Bool ?? true }
+    /// Open models are put away for now (Shelby, 2026-11-20, with Gemini's arrival): no picker
+    /// offers them and Settings hides the switch. Chats already on one keep it. False brings
+    /// them back as they were (plans/gemini-agent.md, T9).
+    nonisolated static let hiddenForNow = true
 
     func refresh(force: Bool = false) async {
         guard Self.enabled else { models = []; reachable = nil; checkedAt = nil; return }

@@ -228,8 +228,14 @@ extension ChatSession {
         }
     }
 
-    var fastMode: Bool { record.backend == .codex ? record.codex?.fastMode == true : record.claudeFastMode == true && supportsClaudeFastMode }
-    var supportsFastMode: Bool { record.backend == .codex || supportsClaudeFastMode }
+    var fastMode: Bool {
+        switch record.backend {
+        case .codex: record.codex?.fastMode == true
+        case .claude: record.claudeFastMode == true && supportsClaudeFastMode
+        case .gemini: false
+        }
+    }
+    var supportsFastMode: Bool { record.backend == .codex || record.backend == .claude && supportsClaudeFastMode }
     var fastModeNote: String {
         record.backend == .claude
             ? "Requires usage credits and account support; billed outside your subscription allowance. Applies after the current reply."

@@ -866,7 +866,7 @@ struct ChatDetailView: View {
     }
 
     private func rateLimitRetry(_ offer: Companion.RateLimitRetry) -> some View {
-        let target = offer.backend == "codex" ? "Codex" : "Claude"
+        let target = Backend.label(offer.backend)
         let source = offer.backend == "codex" ? "Claude" : "Codex"
         return VStack(alignment: .leading, spacing: 10) {
             Text("\(source) is rate-limited. Try \(target) instead.")

@@ -383,7 +383,7 @@ final class AppModel {
         let anchor = parent.record.sidechatOf.flatMap { id in sessions.first { $0.id == id } } ?? parent
         let number = sessions.filter { $0.record.sidechatOf == anchor.id }.count + 1
         let quest = insertSession(ChatSession.sidequestRecord(of: parent, anchor: anchor, number: number,
-                                                              backend: parent.record.backend == .claude ? .codex : .claude, task: task))
+                                                              backend: parent.record.backend.other, task: task))
         quest.beginSidequest(from: parent)
     }
 

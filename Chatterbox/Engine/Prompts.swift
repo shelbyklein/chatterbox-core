@@ -32,9 +32,11 @@ enum Prompts {
     /// other agent's file across, so one set of project instructions reaches both.
     static func crossAgentProjectFile(for backend: Backend, folder: String?) -> String {
         guard let folder else { return "" }
-        let name = backend == .claude ? "AGENTS.md" : "CLAUDE.md"
-        let own = backend == .claude ? "CLAUDE.md" : "AGENTS.md"
         let dir = URL(fileURLWithPath: folder)
+        // Gemini reads GEMINI.md: it gets the project's AGENTS.md, or CLAUDE.md when there's none.
+        let name = backend == .claude ? "AGENTS.md" : backend == .codex ? "CLAUDE.md"
+            : FileManager.default.fileExists(atPath: dir.appendingPathComponent("AGENTS.md").path) ? "AGENTS.md" : "CLAUDE.md"
+        let own = backend.instructionsFile
         guard let text = try? String(contentsOf: dir.appendingPathComponent(name), encoding: .utf8), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return "" }
         // A CLAUDE.md that's just `@AGENTS.md` already brings the file in, so Claude would get it
         // twice, and Codex would get only the import line.

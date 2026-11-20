@@ -268,7 +268,7 @@ struct MobileAboutPanel: View {
     }
 
     private func settingsLine(_ options: Companion.ChatOptions) -> String {
-        let models = options.backend == "codex" ? options.codexModels : options.claudeModels
+        let models = options.models(for: options.backend)
         let model = models.first { $0.id == options.model }
         var parts: [String] = []
         if options.openModel == nil, let model, !model.efforts.isEmpty {

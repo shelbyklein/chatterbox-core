@@ -89,12 +89,13 @@ struct ModelPopover: View {
     @State private var showHidden = false
     @FocusState private var focused: Bool
 
-    enum ModelProvider: String, CaseIterable { case claude, codex, open }
+    enum ModelProvider: String, CaseIterable { case claude, codex, gemini, open }
 
     init(session: ChatSession, close: @escaping () -> Void) {
         self.session = session
         self.close = close
-        _provider = State(initialValue: session.record.openModel != nil ? .open : session.record.backend == .claude ? .claude : .codex)
+        _provider = State(initialValue: session.record.openModel != nil ? .open
+                          : ModelProvider(rawValue: session.record.backend.rawValue) ?? .claude)
     }
 
     /// One size whatever the lists: NSPopover resizing after it's on screen can leave the
@@ -120,7 +121,8 @@ struct ModelPopover: View {
                     Picker("Provider", selection: $provider) {
                         Text("Claude").tag(ModelProvider.claude)
                         Text("Codex").tag(ModelProvider.codex)
-                        if PCModels.enabled || session.record.openModel != nil { Text("Open models").tag(ModelProvider.open) }
+                        Text("Gemini").tag(ModelProvider.gemini)
+                        if PCModels.enabled { Text("Open models").tag(ModelProvider.open) }
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
@@ -128,6 +130,7 @@ struct ModelPopover: View {
                     switch provider {
                     case .claude: claudeRows
                     case .codex: codexRows
+                    case .gemini: geminiRows
                     case .open: openModelRows
                     }
                 }
@@ -228,6 +231,18 @@ struct ModelPopover: View {
         }
     }
 
+    @ViewBuilder
+    private var geminiRows: some View {
+        if GeminiACPProcess.locateBinary() == nil {
+            Text("Install Antigravity CLI (`agy`) to use Gemini: antigravity.google/cli")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 8).padding(.bottom, 2)
+        }
+        ForEach(GeminiModels.shared.models) { m in
+            row(ModelChoice(backend: .gemini, model: m.id), detail: m.id == GeminiModels.shared.defaultModel ? "agy's default" : nil)
+        }
+    }
+
     /// A model: click to pick it.
     private func row(_ choice: ModelChoice, detail: String?) -> some View {
         let selected = choice == current && session.record.openModel == nil
@@ -238,7 +253,8 @@ struct ModelPopover: View {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Image(systemName: "checkmark").font(.caption.weight(.bold))
                         .foregroundStyle(Color.highlight).opacity(selected ? 1 : 0)
-                    Image(choice.backend == .claude || (choice.model ?? "").lowercased().hasPrefix("claude") ? Backend.claude.iconName : Backend.codex.iconName)
+                    Image(choice.backend == .gemini ? Backend.gemini.iconName
+                          : choice.backend == .claude || (choice.model ?? "").lowercased().hasPrefix("claude") ? Backend.claude.iconName : Backend.codex.iconName)
                         .resizable().scaledToFit().frame(width: 12, height: 12)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(ModelSelection.name(choice))
@@ -405,11 +421,11 @@ struct ComposerEffortSlider: View {
             let models = CodexAppServer.shared.models
             let current = models.first { $0.model == codex.model } ?? models.first(where: \.isDefault)
             return [""] + (current?.efforts ?? ["low", "medium", "high"])
+        case .gemini:
+            return [""] + GeminiModels.shared.efforts
         }
     }
-    private var effort: String {
-        session.record.backend == .claude ? session.record.effort : session.record.codex?.effort ?? ""
-    }
+    private var effort: String { ModelSelection.effort(session) }
     private func set(_ value: String) { ModelSelection.shared.setEffort(value, for: session) }
     private func name(_ stop: String) -> String { stop.isEmpty ? "Default" : ChatView.effortLabel(stop) }
 

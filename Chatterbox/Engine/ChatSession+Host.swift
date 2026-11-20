@@ -22,6 +22,18 @@ extension ChatSession {
                                         running: isRunning && record.backend == .codex, codex: codexTurnState)
         }
         // Otherwise Codex isn't running: the old link is kept, and found gone on the next launch.
+        if let process = geminiProcess, process.isRunning, let id = process.hostID {
+            record.geminiHost = HostLink(processID: id, offset: process.offset,
+                                         running: isRunning && record.backend == .gemini, gemini: geminiTurnState)
+        } else {
+            record.geminiHost = nil
+        }
+    }
+
+    private var geminiTurnState: GeminiTurnState {
+        GeminiTurnState(sessionReady: geminiSessionReady, textItem: geminiTextItem, thoughtItem: geminiThoughtItem,
+                        textItems: geminiTextItems, toolItems: geminiToolItems, planItem: claudePlanItem,
+                        stopRequested: geminiStopRequested)
     }
 
     private var claudeTurnState: ClaudeTurnState {
@@ -37,7 +49,7 @@ extension ChatSession {
     }
 
     /// True when this chat's saved record points at processes in the host.
-    var hasHostLinks: Bool { record.claudeHost != nil || record.codexHost != nil }
+    var hasHostLinks: Bool { record.claudeHost != nil || record.codexHost != nil || record.geminiHost != nil }
 
     /// Reattaches to this chat's processes after launch. `processes` is the host's list (empty
     /// when no host is running). A process that ended while the app was closed still replays
@@ -48,7 +60,7 @@ extension ChatSession {
         awaitingHostResume = false
         defer { resumeBackgroundWatches() }
         let ids = Set(processes.map(\.id))
-        var claudeAlive = false, codexAlive = false
+        var claudeAlive = false, codexAlive = false, geminiAlive = false
 
         if let link = record.claudeHost {
             if ids.contains(link.processID) {
@@ -93,7 +105,38 @@ extension ChatSession {
             }
         }
 
-        if !(record.backend == .claude ? claudeAlive : codexAlive) { settleInterruptedWork() }
+        if let link = record.geminiHost {
+            if ids.contains(link.processID) {
+                if let state = link.gemini {
+                    geminiSessionReady = state.sessionReady
+                    geminiTextItem = state.textItem
+                    geminiThoughtItem = state.thoughtItem
+                    geminiTextItems = state.textItems
+                    geminiToolItems = state.toolItems
+                    if record.backend == .gemini { claudePlanItem = state.planItem }
+                    geminiStopRequested = state.stopRequested
+                }
+                let process = makeGeminiProcess()
+                geminiProcess = process
+                if link.running { isRunning = true }
+                do {
+                    try process.attach(id: link.processID, from: link.offset)
+                    geminiAlive = true
+                } catch {
+                    geminiProcess = nil
+                    isRunning = false
+                }
+            }
+            if !geminiAlive { record.geminiHost = nil }
+        }
+
+        let alive: Bool
+        switch record.backend {
+        case .claude: alive = claudeAlive
+        case .codex: alive = codexAlive
+        case .gemini: alive = geminiAlive
+        }
+        if !alive { settleInterruptedWork() }
         if codexAlive, record.backend == .codex, isRunning, codexTurnID == nil {
             Task { try? await codexReconcileMissingTurn() }
         }

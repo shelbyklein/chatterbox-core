@@ -342,7 +342,7 @@ enum Companion {
 
     /// A chat's settings and the choices for each, as on the Mac.
     struct ChatOptions: Codable, Hashable {
-        /// "claude" or "codex": who answers next.
+        /// "claude", "codex" or "gemini": who answers next.
         var backend: String
         /// The current model's id; for Codex, empty means Codex's default.
         var model: String
@@ -361,6 +361,8 @@ enum Companion {
         var openModels: [ModelOption]? = nil
         /// The open model in use; nil: the agent's own.
         var openModel: String? = nil
+        /// Gemini's models (Antigravity CLI); nil from a Mac without Gemini.
+        var geminiModels: [ModelOption]? = nil
     }
 
     struct ModelOption: Codable, Hashable, Identifiable {
@@ -1201,7 +1203,16 @@ extension Companion.SettingsRequest {
 extension Companion.ChatOptions {
     /// The model in use: an open model, or the agent's, among its models.
     var currentModel: Companion.ModelOption? {
-        openModel == nil ? (backend == "codex" ? codexModels : claudeModels).first { $0.id == model } : nil
+        openModel == nil ? models(for: backend).first { $0.id == model } : nil
+    }
+
+    /// One agent's model list.
+    func models(for backend: String) -> [Companion.ModelOption] {
+        switch backend {
+        case "codex": codexModels
+        case "gemini": geminiModels ?? []
+        default: claudeModels
+        }
     }
 
     /// Runs on the same agent, model and effort.

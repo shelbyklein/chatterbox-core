@@ -418,7 +418,7 @@ struct ThreadSidebar: View {
             BriefRow(session: session)
             ChatNotes(scope: noteScope, project: session.record.projectFolder != nil, panelWidth: Self.width - 32)
                 .id(noteScope)
-            ChatPins(chat: session.id, agentName: session.record.backend == .codex ? "Codex" : "Claude",
+            ChatPins(chat: session.id, agentName: session.record.backend.label,
                      panelWidth: Self.width - 32, jump: actions.jumpToPin)
         }
     }
@@ -681,7 +681,7 @@ private struct StartActions: View {
     @State private var errandFiles: [URL] = []
     @State private var errandAgent: Backend = .claude
     @State private var presets = false
-    private var other: Backend { session.record.backend == .claude ? .codex : .claude }
+    private var other: Backend { session.record.backend.other }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {

@@ -104,6 +104,22 @@ final class ChatSession: Identifiable {
     /// An explicit restart must not silently replace a provider session that cannot resume.
     @ObservationIgnored var preserveClaudeSessionOnResumeFailure = false
 
+    // Gemini state (see ChatSession+Gemini.swift).
+    @ObservationIgnored var geminiProcess: GeminiACPProcess?
+    /// The process has an open agy session (`session/new`, `resume` or `load` answered).
+    @ObservationIgnored var geminiSessionReady = false
+    /// Starting the process and its session, so two messages don't start two.
+    @ObservationIgnored var geminiStarting: Task<Void, Error>?
+    /// A `session/load` is replaying the old conversation: its updates aren't new.
+    @ObservationIgnored var geminiReplaying = false
+    @ObservationIgnored var geminiTextItem: UUID?
+    @ObservationIgnored var geminiThoughtItem: UUID?
+    @ObservationIgnored var geminiTextItems: [UUID] = []
+    @ObservationIgnored var geminiToolItems: [String: UUID] = [:]
+    @ObservationIgnored var geminiStopRequested = false
+    /// Messages sent while a reply runs: agy takes one prompt at a time, so they go next.
+    @ObservationIgnored var geminiQueue: [(message: UserMessage, item: UUID)] = []
+
     // Codex state (see ChatSession+Codex.swift).
     @ObservationIgnored var codexTurnID: String?
     @ObservationIgnored var codexStartInFlight = false
@@ -301,6 +317,7 @@ final class ChatSession: Identifiable {
         switch record.backend {
         case .codex: codexSend(message)
         case .claude: claudeSend(message)
+        case .gemini: geminiSend(message)
         }
     }
 
@@ -323,6 +340,10 @@ final class ChatSession: Identifiable {
             pendingSteering.append(message)
             pendingSteeringItems.append(item)
             codexInterrupt()
+        case .gemini:
+            // Queued first, so it goes as soon as the stopped reply ends.
+            geminiSend(message)
+            geminiInterrupt()
         }
         onChange?(self)
     }
@@ -336,6 +357,7 @@ final class ChatSession: Identifiable {
         switch record.backend {
         case .claude: claudeInterrupt()
         case .codex: codexInterrupt()
+        case .gemini: geminiInterrupt()
         }
     }
 
@@ -348,6 +370,7 @@ final class ChatSession: Identifiable {
         switch record.backend {
         case .codex: codexInterrupt()
         case .claude: claudeInterrupt()
+        case .gemini: geminiInterrupt()
         }
     }
 
@@ -369,6 +392,7 @@ final class ChatSession: Identifiable {
             switch record.backend {
             case .claude: try claudeRestartThread()
             case .codex: try await codexRestartThread()
+            case .gemini: try geminiRestartThread()
             }
             threadRestartStatus = "Thread restarted. History kept; send a message to continue."
         } catch {
@@ -381,6 +405,7 @@ final class ChatSession: Identifiable {
         switch record.backend {
         case .codex: codexResolveApproval(itemID, decision)
         case .claude: claudeResolveApproval(itemID, decision)
+        case .gemini: geminiResolveApproval(itemID, decision)
         }
     }
 
@@ -413,6 +438,7 @@ final class ChatSession: Identifiable {
         switch record.backend {
         case .codex: codexAnswer(itemID, answers: answers)
         case .claude: claudeAnswer(itemID, answers: answers)
+        case .gemini: break // agy asks through permission requests only
         }
     }
 
@@ -423,6 +449,8 @@ final class ChatSession: Identifiable {
         killShellJobs()
         claudeProcess?.terminate()
         claudeProcess = nil
+        geminiProcess?.terminate()
+        geminiProcess = nil
     }
 
     @discardableResult
@@ -487,6 +515,8 @@ final class ChatSession: Identifiable {
             let isSwitch = item.isSettingsChange == true && Self.isAgentSwitchNote(item.text)
             if isOldSwitch || isSwitch {
                 // Before this note, the other agent was answering.
+                // Older rows didn't record their agent: before a switch to Codex it was Claude,
+                // and before a switch to Claude or Gemini, most likely Codex.
                 let toCodex = item.text.hasPrefix("Switched to Codex") || item.text.hasPrefix("Now using Codex")
                 current = toCodex ? .claude : .codex
             }
@@ -516,8 +546,8 @@ final class ChatSession: Identifiable {
         let leaving = record.backend
         if !record.items.isEmpty {
             let last = record.items.last?.id
-            if leaving == .claude { record.claudeSeenThrough = last } else { record.codexSeenThrough = last }
-            let seen = backend == .claude ? record.claudeSeenThrough : record.codexSeenThrough
+            record.setSeenThrough(last, for: leaving)
+            let seen = record.seenThrough(for: backend)
             let start = seen.flatMap { id in record.items.firstIndex { $0.id == id } }.map { $0 + 1 } ?? 0
             let transcript = Self.transcript(record.items[start...])
             record.pendingHandoff = transcript.isEmpty ? nil
@@ -541,6 +571,7 @@ final class ChatSession: Identifiable {
             record.codex?.model = defaults.string(forKey: "codexDefaultModel").flatMap { $0.isEmpty ? nil : $0 }
             record.codex?.effort = defaults.string(forKey: "codexDefaultEffort").flatMap { $0.isEmpty ? nil : $0 }
         }
+        if backend == .gemini, record.gemini == nil { record.gemini = GeminiSettings.newChat() }
         record.activeBackend = backend
         // The incoming agent may not have seen the current tone.
         record.sentPersonality = nil
@@ -567,6 +598,9 @@ final class ChatSession: Identifiable {
                 ?? models.first(where: \.isDefault).map { "\($0.displayName) (default)" } ?? "default model"
             let effort = record.codex?.effort.map { "\(RuntimePaths.effortLabel($0)) effort" } ?? "default effort"
             return "Codex \u{00B7} \(name) \u{00B7} \(effort) \u{00B7} \(record.codex?.fastMode == true ? "Fast mode" : "Standard speed")"
+        case .gemini:
+            let effort = record.gemini?.effort.map { "\(RuntimePaths.effortLabel($0)) effort" } ?? "default effort"
+            return "Gemini \u{00B7} \(GeminiModels.shared.name(record.gemini?.model)) \u{00B7} \(effort)"
         }
     }
 
@@ -667,6 +701,7 @@ final class ChatSession: Identifiable {
         record.studioFolder = nil
         record.codex?.folder = folder
         claudeWorkingFolderChanged()
+        geminiWorkingFolderChanged()
         onChange?(self)
     }
 
@@ -711,6 +746,7 @@ final class ChatSession: Identifiable {
         if RuntimePaths.normalize(previousFolder) != RuntimePaths.normalize(folder) {
             if record.sidechatOf == nil { record.sidechatProjectFolder = nil }
             claudeWorkingFolderChanged()
+            geminiWorkingFolderChanged()
         }
         onChange?(self)
     }
@@ -720,14 +756,17 @@ final class ChatSession: Identifiable {
         record.projectFolder = nil
         record.githubRepo = nil
         claudeWorkingFolderChanged()
+        geminiWorkingFolderChanged()
         onChange?(self)
     }
 
     /// The active agent's permission mode.
     var mode: PermissionMode {
-        record.backend == .codex
-            ? PermissionModes.mode(record.codex?.modeID ?? PermissionModes.defaultCodex, for: .codex)
-            : PermissionModes.mode(record.claudeModeID, for: .claude)
+        switch record.backend {
+        case .codex: PermissionModes.mode(record.codex?.modeID ?? PermissionModes.defaultCodex, for: .codex)
+        case .claude: PermissionModes.mode(record.claudeModeID, for: .claude)
+        case .gemini: PermissionModes.mode(geminiModeID, for: .gemini)
+        }
     }
 
     /// Sets the permission mode for the active agent. Takes effect right away, even mid-turn.
@@ -739,6 +778,10 @@ final class ChatSession: Identifiable {
             claudeApplyPermissionMode()
         case .codex:
             record.codex?.mode = id
+        case .gemini:
+            if record.gemini == nil { record.gemini = GeminiSettings.newChat() }
+            record.gemini?.mode = id
+            geminiApplySettings()
         }
         onChange?(self)
     }

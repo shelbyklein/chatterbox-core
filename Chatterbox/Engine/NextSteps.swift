@@ -113,6 +113,7 @@ final class NextSteps {
     static func quick(_ prompt: String, system: String, backend: Backend, timeout: TimeInterval = 60) async -> String? {
         let claude = ClaudeCodeProcess.locateBinary()
         let codex = CodexAppServer.locateBinary()
+        let agy = GeminiACPProcess.locateBinary()
         let environment = BinaryLocator.environment
         return await Task.detached(priority: .utility) { () -> String? in
             // An empty folder of its own: there's nothing to read, and nothing is saved.
@@ -131,6 +132,10 @@ final class NextSteps {
                 process.executableURL = URL(fileURLWithPath: codex)
                 process.arguments = ["exec", "--ephemeral", "--skip-git-repo-check", "-s", "read-only", "-m", "gpt-6-luna",
                                      "-c", "model_reasoning_effort=low", system + "\n\n" + prompt]
+            case .gemini:
+                guard let agy else { return nil }
+                process.executableURL = URL(fileURLWithPath: agy)
+                process.arguments = ["-p", system + "\n\n" + prompt, "--model", "gemini-3.8-flash-low", "--mode", "plan"]
             }
             process.currentDirectoryURL = folder
             process.environment = environment
