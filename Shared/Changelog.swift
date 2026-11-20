@@ -22,6 +22,7 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-20", changes: [
+            "Phone Feedback waits in the Chatterbox session's message box for you to send, instead of sending by itself.",
             "On the open Duo, list and cards buttons sit by the search field (on Activity, at the end of its active and new count). The phone's ••• menu has Usage again; Feedback has its own button.",
             "Phone feedback no longer attaches the image log.",
             "On the open Duo, the list's name sits at the left of its header, level with the session's name, and New Chat at the right.",

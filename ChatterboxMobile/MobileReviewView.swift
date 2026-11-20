@@ -27,11 +27,11 @@ struct MobileReviewResult {
 extension MobileComposerDraft where Image == PendingImage {
     /// Puts review feedback in the box, after anything already typed there, and asks the
     /// chat to send it (Send in the review sends, Shelby 2026-11-19).
-    func add(_ review: MobileReviewResult) {
+    func add(_ review: MobileReviewResult, send: Bool = true) {
         let typed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if !review.text.isEmpty { text = typed.isEmpty ? review.text : typed + "\n\n" + review.text }
         images.append(contentsOf: review.images)
-        sendPending = true
+        if send { sendPending = true }
     }
 }
 

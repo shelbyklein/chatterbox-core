@@ -82,7 +82,9 @@ final class MobileStore {
             return
         }
         composer(for: chat.id).images.append(PendingImage(preview: image, upload: .init(name: "Feedback", data: data)))
-        if !notes.isEmpty { composer(for: chat.id).add(MobileReviewResult(text: notes, images: [])) }
+        // Waits in the box for you to add to it and send (Shelby, 2026-11-20); a review's Send
+        // is what sends at once.
+        if !notes.isEmpty { composer(for: chat.id).add(MobileReviewResult(text: notes, images: []), send: false) }
         // The image log (MobileImageTrace) no longer rides along (Shelby, 2026-11-20): the
         // picture loading it was for works now.
         MobilePushNotifications.shared.pendingChat = chat.id
