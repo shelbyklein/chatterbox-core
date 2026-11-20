@@ -695,48 +695,44 @@ private struct AboutFlow: Layout {
 struct MobileAboutDropDown<Content: View>: View {
     @Binding var isPresented: Bool
     @ViewBuilder var content: () -> Content
-    @State private var full = false
     @GestureState private var drag: CGFloat = 0
 
+    // A drawer from the right edge, the whole height (Shelby, 2026-11-20: it dropped from the
+    // top). Tap the dimmed chat or drag its left edge to the right to close it.
     var body: some View {
         GeometryReader { geometry in
-            let medium = geometry.size.height * 0.55, tall = geometry.size.height - 8
-            let height = min(tall, max(160, (full ? tall : medium) + drag))
-            ZStack(alignment: .top) {
+            let width = min(geometry.size.width * 0.88, 420)
+            ZStack(alignment: .trailing) {
                 Color.black.opacity(0.28).ignoresSafeArea()
                     .onTapGesture { close() }
                     .accessibilityLabel("Close About")
                     .accessibilityAddTraits(.isButton)
-                VStack(spacing: 0) {
-                    ScrollView { content() }
-                        .scrollBounceBehavior(.basedOnSize)
-                    // The handle: drag down for the whole screen, up to close.
-                    VStack(spacing: 0) {
-                        Capsule().fill(Color.secondary.opacity(0.6)).frame(width: 40, height: 5)
+                ScrollView { content() }
+                    .scrollBounceBehavior(.basedOnSize)
+                    .frame(width: width)
+                    .frame(maxHeight: .infinity)
+                    .background(Color(uiColor: .systemGroupedBackground))
+                    .clipShape(UnevenRoundedRectangle(topLeadingRadius: 18, bottomLeadingRadius: 18))
+                    // The left edge: drag it right to close (a swipe across the list scrolls it).
+                    .overlay(alignment: .leading) {
+                        Color.clear
+                            .frame(width: 22)
+                            .contentShape(Rectangle())
+                            .gesture(DragGesture(minimumDistance: 8)
+                                .updating($drag) { value, state, _ in state = max(0, value.translation.width) }
+                                .onEnded { value in
+                                    if value.predictedEndTranslation.width > width * 0.35 { close() }
+                                })
+                            .accessibilityElement()
+                            .accessibilityLabel("Close About")
+                            .accessibilityAddTraits(.isButton)
+                            .accessibilityAction { close() }
+                            .accessibilityIdentifier("about-handle")
                     }
-                    .frame(maxWidth: .infinity, minHeight: 28)
-                    .contentShape(Rectangle())
-                    .gesture(DragGesture()
-                        .updating($drag) { value, state, _ in state = value.translation.height }
-                        .onEnded { value in
-                            let end = (full ? tall : medium) + value.predictedEndTranslation.height
-                            withAnimation(.snappy(duration: 0.28)) {
-                                if end < medium * 0.6 { close() } else { full = end > (medium + tall) / 2 }
-                            }
-                        })
-                    .onTapGesture { withAnimation(.snappy(duration: 0.28)) { full.toggle() } }
-                    .accessibilityElement()
-                    .accessibilityLabel(full ? "Shrink About" : "Expand About")
-                    .accessibilityAddTraits(.isButton)
-                    .accessibilityAction { withAnimation(.snappy(duration: 0.28)) { full.toggle() } }
-                    .accessibilityIdentifier("about-handle")
-                }
-                .frame(height: height)
-                .frame(maxWidth: .infinity)
-                .background(Color(uiColor: .systemGroupedBackground))
-                .clipShape(UnevenRoundedRectangle(bottomLeadingRadius: 18, bottomTrailingRadius: 18))
-                .shadow(color: .black.opacity(0.25), radius: 12, y: 6)
-                .transition(.move(edge: .top).combined(with: .opacity))
+                    .shadow(color: .black.opacity(0.25), radius: 12, x: -4)
+                    .offset(x: drag)
+                    .animation(.snappy(duration: 0.2), value: drag)
+                    .transition(.move(edge: .trailing))
             }
         }
     }

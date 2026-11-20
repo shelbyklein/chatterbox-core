@@ -71,6 +71,9 @@ struct ChatDetailView: View {
     /// The chat's width, so the narrow bar's title row can span it (a principal toolbar item
     /// only takes the width it's given).
     @State private var barWidth: CGFloat = 0
+    /// A closed Duo: iOS runs Back, ⋯ and Feedback down a rail beside the window, so the bar
+    /// holds only the title row and the sidebar button.
+    @State private var hasSideRail = false
     /// Keep Open on this sidequest's archive request.
     @State private var sidequestKept = false
     @State private var promoting: ChatPromotionTarget?
@@ -214,6 +217,7 @@ struct ChatDetailView: View {
         .navigationTitle(chatNavigationTitle)
         .navigationBarTitleDisplayMode(.inline)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { barWidth = $0 }
+        .onGeometryChange(for: Bool.self) { $0.safeAreaInsets.trailing >= 40 } action: { hasSideRail = $0 }
         .toolbar { chatToolbar }
         .modifier(WideChatHeader(column: aboutColumn) { titleButton } trailing: {
             HStack(spacing: 10) {
@@ -520,16 +524,25 @@ struct ChatDetailView: View {
 
     /// Narrow: the name on the left and the model's pill on the right, across the bar (Shelby,
     /// 2026-11-20; they were stacked in the middle).
-    private var chatTitle: some View {
-        HStack(spacing: 8) {
-            titleButton.layoutPriority(1)
-            Spacer(minLength: 4)
-            // The same pill as the open Duo's (Shelby, 2026-11-20).
-            modelButton(pill: true)
+    @ViewBuilder private var chatTitle: some View {
+        if hasSideRail {
+            HStack(spacing: 8) {
+                titleButton.layoutPriority(1)
+                Spacer(minLength: 4)
+                // The same pill as the open Duo's (Shelby, 2026-11-20).
+                modelButton(pill: true)
+            }
+            // As wide as the bar allows: iOS starts it at the bar's leading margin, so this leaves
+            // room for the sidebar's button on the right (measured on the closed Duo, 2026-11-20).
+            .frame(width: barWidth > 160 ? barWidth - 88 : nil)
+        } else {
+            // A plain iPhone: Back and three buttons share the bar, so the name over the model,
+            // centered between them.
+            VStack(spacing: 0) {
+                titleButton
+                modelButton(pill: false)
+            }
         }
-        // As wide as the bar allows: iOS starts it at the bar's leading margin, so this leaves
-        // room for the sidebar's button on the right (measured on the closed Duo, 2026-11-20).
-        .frame(width: barWidth > 160 ? barWidth - 88 : nil)
     }
 
     /// Opens or closes the session's sidebar (About).

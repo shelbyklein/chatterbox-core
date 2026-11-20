@@ -22,6 +22,8 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-20", changes: [
+            "On the closed phone, a session's sidebar slides in from the right instead of dropping from the top; tap the chat beside it or drag its left edge to close it.",
+            "On an iPhone without the Duo's side rail, a session's name and model stay stacked in the middle of the bar, clear of the Back and menu buttons.",
             "On the phone, permissions in Session Settings and New Chat are one row of icons: the chosen one is highlighted, with its name and what it does shown with it.",
             "On the closed phone the model shows in the same colored pill as the open phone, and Session Settings titles Model inside its card like Effort.",
             "On the closed phone, a session's name sits on the left of its bar and the model on the right, and the sidebar button replaces the agent button (tap the model for Session Settings).",
