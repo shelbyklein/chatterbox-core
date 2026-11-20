@@ -22,6 +22,7 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-20", changes: [
+            "On the phone, opening a session's sidebar puts the keyboard away.",
             "On the phone, a session's Notes show just your note (or Add a note), plus a link to its Studio's instructions.",
             "On the phone, a session's sidebar starts with Notes, then what it made, then Actions (its Desk task, Work Thread, Sidequest, Fork, and Rename, Restart, Pin, Archive and more), then Tools and Where. Swipe in from the right edge to open it.",
             "On the phone, a sidequest's bubble has Open, Archive and Delete as one row of icons.",

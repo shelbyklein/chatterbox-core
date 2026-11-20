@@ -635,6 +635,8 @@ struct ChatDetailView: View {
     private var workingCount: Int { (detail?.work ?? []).filter { $0.state == "working" }.count }
 
     private func toggleAbout() {
+        // Opening the sidebar puts the keyboard away, so the panel has the room (Shelby, 2026-11-20).
+        if !aboutShown { UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil) }
         if let aboutColumn { withAnimation(.snappy(duration: 0.25)) { aboutColumn.isOpen.toggle() } }
         else { withAnimation(.snappy(duration: 0.28)) { showingAbout.toggle() } }
     }
