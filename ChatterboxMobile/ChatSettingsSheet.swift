@@ -61,8 +61,6 @@ struct ChatSettingsForm<Leading: View>: View {
                 if !options.modes.isEmpty {
                     Section {
                         PermissionsRow(modes: options.modes, selected: options.mode) { apply(.init(mode: $0)) }
-                    } header: {
-                        Text("Permissions")
                     } footer: {
                         // The risky choice says what it means, only once it's chosen.
                         if options.modes.first(where: { $0.id == options.mode })?.isUnrestricted == true {
@@ -290,39 +288,50 @@ private struct EffortSlider: View {
 /// The access levels as a list of named choices, each with what it means; the chosen one is
 /// checked. None is filled or loud: an unrestricted one is marked by its warning-tinted icon,
 /// and when chosen, its name takes the tint and the section's footer says what it means.
+/// The permission modes as one row of icons, titled in its card like Model and Effort
+/// (Shelby, 2026-11-20: five full-width rows were a screen's worth). The chosen one is filled
+/// in, and its name and what it does show under the row.
 private struct PermissionsRow: View {
     let modes: [Companion.ModeOption]
     let selected: String
     let choose: (String) -> Void
 
     var body: some View {
-        ForEach(modes) { mode in
-            let isOn = mode.id == selected
-            Button { if !isOn { choose(mode.id) } } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: mode.systemImage)
-                        .font(.body.weight(.medium))
-                        .foregroundStyle(mode.isUnrestricted ? Color.attention : Color.metadata)
-                        .frame(width: 24)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(mode.title)
-                            .foregroundStyle(isOn && mode.isUnrestricted ? Color.attention : Color.primary)
-                            .fontWeight(isOn ? .semibold : .regular)
-                        if !mode.detail.isEmpty {
-                            Text(mode.detail).font(.caption).foregroundStyle(Color.metadata).lineLimit(2)
-                        }
-                    }
-                    Spacer(minLength: 8)
-                    if isOn { Image(systemName: "checkmark").font(.body.weight(.semibold)).foregroundStyle(.tint) }
+        let current = modes.first { $0.id == selected }
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("Permissions", systemImage: "lock.shield")
+                Spacer()
+                if let current {
+                    Text(current.title)
+                        .foregroundStyle(current.isUnrestricted ? Color.attention : Color.secondary)
                 }
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel(mode.title)
-            .accessibilityHint(mode.detail)
-            .accessibilityAddTraits(isOn ? [.isButton, .isSelected] : .isButton)
-            .accessibilityIdentifier("permission-\(mode.id)")
+            HStack(spacing: 0) {
+                ForEach(modes) { mode in
+                    let isOn = mode.id == selected
+                    let color = mode.isUnrestricted ? Color.attention : Color.accentColor
+                    Button { if !isOn { choose(mode.id) } } label: {
+                        Image(systemName: mode.systemImage)
+                            .font(.title3.weight(.medium))
+                            .foregroundStyle(isOn ? color : (mode.isUnrestricted ? Color.attention : Color.metadata))
+                            .frame(width: 48, height: 48)
+                            .background(Circle().fill(isOn ? color.opacity(0.18) : Color.primary.opacity(0.06)))
+                            .overlay(Circle().strokeBorder(isOn ? color : .clear, lineWidth: 1.5))
+                            .frame(maxWidth: .infinity)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(mode.title)
+                    .accessibilityHint(mode.detail)
+                    .accessibilityAddTraits(isOn ? [.isButton, .isSelected] : .isButton)
+                    .accessibilityIdentifier("permission-\(mode.id)")
+                }
+            }
+            if let detail = current?.detail, !detail.isEmpty {
+                Text(detail).font(.caption).foregroundStyle(Color.metadata)
+            }
         }
+        .padding(.vertical, 4)
     }
 }

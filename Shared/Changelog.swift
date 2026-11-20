@@ -22,6 +22,7 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-20", changes: [
+            "On the phone, permissions in Session Settings and New Chat are one row of icons: the chosen one is highlighted, with its name and what it does shown with it.",
             "On the closed phone the model shows in the same colored pill as the open phone, and Session Settings titles Model inside its card like Effort.",
             "On the closed phone, a session's name sits on the left of its bar and the model on the right, and the sidebar button replaces the agent button (tap the model for Session Settings).",
             "An automation whose project chat was closed no longer retries every minute: it skips that run, says why in Automations, and tries again at its next time.",
