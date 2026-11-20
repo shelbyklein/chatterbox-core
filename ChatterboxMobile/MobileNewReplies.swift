@@ -250,6 +250,7 @@ struct MobileNewReplies: View {
     private func dedicatedContent(entries: [MobileActivityEntry], recent: [Companion.ChatSummary], workingCount: Int, replyCount: Int, pressure: Companion.Pressure?) -> some View {
         if entries.isEmpty && recent.isEmpty {
             VStack(alignment: .leading, spacing: 16) {
+                pressureRow(pressure).padding(.horizontal, 16)
                 if let listSearchField { listSearchField.padding(.horizontal, 16) }
                 dedicatedHeader(workingCount: workingCount, replyCount: replyCount, pressure: pressure).padding(.horizontal, 16)
                 ContentUnavailableView(query.isEmpty ? "All caught up" : "No matching activity", systemImage: "checkmark.circle",
@@ -259,6 +260,7 @@ struct MobileNewReplies: View {
         } else if cards {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    pressureRow(pressure)
                     if let listSearchField { listSearchField }
                     dedicatedHeader(workingCount: workingCount, replyCount: replyCount, pressure: pressure)
                     // A session's sidequests and Sidechats sit inside its card, as in the lists.
@@ -307,6 +309,7 @@ struct MobileNewReplies: View {
                     }
                 } header: {
                     VStack(alignment: .leading, spacing: 10) {
+                        pressureRow(pressure)
                         if let listSearchField { listSearchField }
                         dedicatedHeader(workingCount: workingCount, replyCount: replyCount, pressure: pressure)
                     }
@@ -380,16 +383,20 @@ struct MobileNewReplies: View {
         .disabled(busy.contains(chat.id))
     }
 
+    /// The Mac's pressure, when it's under some: a warning pill on its own row, above search.
+    @ViewBuilder private func pressureRow(_ pressure: Companion.Pressure?) -> some View {
+        if let pressure {
+            Button { showingPressure = true } label: { MobilePressurePill(pressure: pressure, stale: store.isStale) }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(pressure.label)\(store.isStale ? ", last seen" : ""). Show readings")
+                .accessibilityIdentifier("mac-pressure")
+        }
+    }
+
     private func dedicatedHeader(workingCount: Int, replyCount: Int, pressure: Companion.Pressure?) -> some View {
         HStack(spacing: 10) {
             Text("\(workingCount) active · \(replyCount) new").font(.subheadline).foregroundStyle(.secondary)
             Spacer(minLength: 0)
-            if let pressure {
-                Button { showingPressure = true } label: { MobilePressurePill(pressure: pressure, stale: store.isStale) }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("\(pressure.label)\(store.isStale ? ", last seen" : ""). Show readings")
-                    .accessibilityIdentifier("mac-pressure")
-            }
             // The open Duo: list or cards here, not in the ⋯ menu (Shelby, 2026-11-20).
             if listSearchField != nil { ListLayoutToggle(cards: $cardsSetting) }
         }

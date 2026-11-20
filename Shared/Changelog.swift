@@ -22,6 +22,10 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-20", changes: [
+            "On the phone, an up arrow at the bottom left jumps to the start of the latest reply.",
+            "On the phone, PDFs can show as spreads (two pages side by side, cover alone) from the book button at the top of the viewer.",
+            "On the phone, the Mac's pressure warning is a small pill of its readings on its own row above search.",
+            "On the open Duo, swipe right from the session sidebar's left edge to put it away.",
             "On the phone, Show on the Desk is a button beside Make Task (filled while on). On the open Duo, the session sidebar's button sits right of the model pill, and upright only one side panel opens at a time.",
             "On the phone, opening a session's sidebar puts the keyboard away.",
             "On the phone, a session's Notes show just your note (or Add a note), plus a link to its Studio's instructions.",

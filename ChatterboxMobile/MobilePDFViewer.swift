@@ -47,6 +47,8 @@ struct MobilePDFViewer: View {
     /// The open document, once loaded (and unlocked), for Comment.
     @State private var document: PDFDocument?
     @State private var commenting: MobileReviewRequest?
+    /// Pages two at a time, as a printed spread (cover alone, then 2–3, 4–5…); remembered.
+    @AppStorage("mobilePDFSpreads") private var spreads = false
     private var pageLabel: String { pageCount > 0 ? "\(page + 1) of \(pageCount)" : "" }
 
     var body: some View {
@@ -70,7 +72,7 @@ struct MobilePDFViewer: View {
                     }.padding()
                 }
                 if let entry {
-                    PDFReviewDocument(url: entry.url, revision: entry.savedAt,
+                    PDFReviewDocument(url: entry.url, revision: entry.savedAt, spreads: spreads,
                                       pageChanged: { page = $0; pageCount = $1 }, ready: { document = $0 })
                         .accessibilityIdentifier("pdfReviewSurface")
                 } else if !downloading && problem == nil {
@@ -81,6 +83,14 @@ struct MobilePDFViewer: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Done") { task?.cancel(); dismiss() } }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { spreads.toggle() } label: {
+                        Image(systemName: "book.pages").foregroundStyle(spreads ? Color.accentColor : Color.primary)
+                    }
+                    .accessibilityLabel(spreads ? "Show Single Pages" : "Show as Spreads")
+                    .accessibilityIdentifier("pdf-spreads")
+                    .disabled(entry == nil || pageCount < 2)
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { load(force: true) } label: { Image(systemName: "arrow.clockwise") }
                         .accessibilityLabel("Refresh PDF").disabled(downloading)
@@ -144,6 +154,7 @@ struct MobilePDFViewer: View {
 private struct PDFReviewDocument: View {
     let url: URL
     let revision: Date
+    var spreads = false
     /// The page showing (0-based) and the page count.
     let pageChanged: (Int, Int) -> Void
     /// The document once it's readable: loaded, and unlocked if it has a password.
@@ -164,7 +175,7 @@ private struct PDFReviewDocument: View {
                         else { incorrect = true }
                     }.buttonStyle(.borderedProminent)
                 }.padding().frame(maxWidth: 400).frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if let document { PDFReviewSurface(document: document, pageChanged: pageChanged) }
+            } else if let document { PDFReviewSurface(document: document, spreads: spreads, pageChanged: pageChanged) }
             else { ProgressView() }
         }
         .task(id: revision) {
@@ -178,6 +189,7 @@ private struct PDFReviewDocument: View {
 /// PDFKit supplies native pinch zoom, page scrolling and selection.
 private struct PDFReviewSurface: UIViewRepresentable {
     let document: PDFDocument
+    var spreads = false
     let pageChanged: (Int, Int) -> Void
     func makeCoordinator() -> Coordinator { Coordinator(pageChanged) }
     func makeUIView(context: Context) -> PDFView {
@@ -190,6 +202,14 @@ private struct PDFReviewSurface: UIViewRepresentable {
         return view
     }
     func updateUIView(_ view: PDFView, context: Context) {
+        let mode: PDFDisplayMode = spreads ? .twoUpContinuous : .singlePageContinuous
+        if view.displayMode != mode || view.displaysAsBook != spreads {
+            let page = view.currentPage
+            view.displayMode = mode
+            view.displaysAsBook = spreads   // the cover alone, then facing pages
+            view.autoScales = true
+            if let page { view.go(to: page) }
+        }
         guard view.document !== document else { return }
         view.document = document
         DispatchQueue.main.async { context.coordinator.report(view) }

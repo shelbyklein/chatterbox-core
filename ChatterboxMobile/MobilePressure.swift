@@ -12,9 +12,11 @@ struct MobilePressurePill: View {
     var stale = false
 
     var body: some View {
+        // Just the readings, as a warning pill (Shelby, 2026-11-20: no "Mac overloaded").
         HStack(spacing: 5) {
-            Circle().fill(stale ? Color.secondary : pressure.color).frame(width: 8, height: 8)
-            Text(pressure.isOK ? pressure.reading : "\(pressure.label) · \(pressure.reading)").monospacedDigit()
+            Image(systemName: pressure.isOK ? "circle.fill" : "exclamationmark.triangle.fill")
+                .font(.caption2).foregroundStyle(stale ? Color.secondary : pressure.color)
+            Text(pressure.reading).monospacedDigit().lineLimit(1)
         }
         .font(.footnote.weight(.semibold))
         .foregroundStyle(stale ? Color.secondary : pressure.color)

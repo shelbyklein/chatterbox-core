@@ -408,6 +408,28 @@ struct ChatDetailView: View {
                 }
                 .animation(.easeOut(duration: 0.18), value: atBottom)
             }
+            // Its counterpart on the left: up to the start of the latest reply (Shelby, 2026-11-20).
+            .overlay(alignment: .bottomLeading) {
+                if let start = latestReplyStart {
+                    Button {
+                        followingNewest = false
+                        scrollWork.generation += 1
+                        withAnimation(.easeInOut(duration: 0.3)) { proxy.scrollTo(start, anchor: .top) }
+                    } label: {
+                        Image(systemName: "arrow.up")
+                            .font(.system(size: 16, weight: .semibold))
+                            .frame(width: 44, height: 44)
+                            .background(.regularMaterial, in: Circle())
+                            .overlay(Circle().strokeBorder(Color.primary.opacity(0.12)))
+                            .shadow(color: .black.opacity(0.18), radius: 6, y: 2)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.leading, 16)
+                    .padding(.bottom, 12)
+                    .accessibilityLabel("Start of the latest reply")
+                    .accessibilityIdentifier("scroll-reply-start")
+                }
+            }
             .onChange(of: pinRequests) { pin(proxy, for: 1.5) }
             // About's Outputs: the message a file or draft is in.
             .onChange(of: revealRequest) { _, id in
@@ -867,6 +889,13 @@ struct ChatDetailView: View {
         guard aboutColumn != nil, !railTab.isEmpty else { MobileRail.shared.hide(chat.id, in: railTab); return }
         MobileRail.shared.show(.init(chat: chat.id, back: closeChat, settings: { showingSettings = true }, about: { toggleAbout() },
                                      backend: summary.backend, menu: AnyView(chatMenuItems.environment(store))), in: railTab)
+    }
+
+    /// The first part of the latest reply (what follows the last message you sent).
+    private var latestReplyStart: UUID? {
+        guard let items = detail?.items, let lastUser = items.lastIndex(where: { $0.kind == .user }),
+              lastUser + 1 < items.count else { return nil }
+        return items[(lastUser + 1)...].first { $0.kind == .assistant }?.id ?? items[lastUser + 1].id
     }
 
     private func sendIfPending() {
@@ -1598,7 +1627,7 @@ private struct MobileBriefEditor: View {
                     Section { Button("Clear Brief", role: .destructive) { save(""); dismiss() } }
                 }
             }
-            .navigationTitle("Session Brief").navigationBarTitleDisplayMode(.inline)
+            .navigationTitle("Note").navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) { Button("Save") { save(text); dismiss() } }

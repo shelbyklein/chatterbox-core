@@ -327,6 +327,19 @@ struct ChatListView: View {
                 .accessibilityIdentifier("peekColumn")
             } else {
                 NavigationStack { aboutColumnContent(chat) }
+                    // Swipe right from its left edge to put it away (Shelby, 2026-11-20): a thin
+                    // strip, so a swipe never lands on one of its buttons.
+                    .overlay(alignment: .leading) {
+                        Color.clear
+                            .frame(width: 22)
+                            .contentShape(Rectangle())
+                            .gesture(DragGesture(minimumDistance: 12).onEnded { drag in
+                                if drag.translation.width > 50, abs(drag.translation.height) < 80 {
+                                    withAnimation(.snappy(duration: 0.25)) { aboutColumn.isOpen = false }
+                                }
+                            })
+                            .accessibilityHidden(true)
+                    }
                     .accessibilityIdentifier("aboutColumn")
             }
         }
