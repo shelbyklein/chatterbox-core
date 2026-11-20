@@ -74,6 +74,7 @@ struct MobileSidequestRow: View {
 /// A sidequest as a small icon: its agent, with a mark for its state (a spinner while it
 /// works, yellow when it needs you, a check when done). Tapping shows its task, with Open.
 struct MobileSidequestIcon: View {
+    @Environment(MobileStore.self) private var store
     let quest: Companion.ChatSummary
     let open: () -> Void
     @State private var showing = false
@@ -109,11 +110,10 @@ struct MobileSidequestIcon: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text(MobileSidequests.shortTitle(quest)).font(.subheadline.weight(.semibold)).lineLimit(2)
                 Text("\(agent) · \(state)").font(.caption).foregroundStyle(.secondary)
-                Button { showing = false; open() } label: {
-                    Label("Open", systemImage: "arrow.up.right").frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .accessibilityIdentifier("sidequest-open")
+                QuestBubbleActions(openID: "sidequest-open", confirmsDelete: true,
+                    open: { showing = false; open() },
+                    archive: { showing = false; Task { _ = try? await store.setArchived(true, chat: quest.id); await store.loadChats() } },
+                    delete: { showing = false; Task { try? await store.deleteChat(quest.id); await store.loadChats() } })
             }
             .padding(14)
             .frame(width: 260)
@@ -175,6 +175,45 @@ struct MobileSidequestStrip: View {
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("sidequest-strip")
             }
+        }
+    }
+}
+
+/// A sidequest bubble's actions, one row of icons: Open, Archive and Delete (Shelby,
+/// 2026-11-20). Delete asks first unless the caller already does.
+struct QuestBubbleActions: View {
+    let openID: String
+    var confirmsDelete = true
+    let open: () -> Void
+    let archive: () -> Void
+    let delete: () -> Void
+    @State private var confirming = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Button(action: open) {
+                Image(systemName: "arrow.up.right").frame(maxWidth: .infinity, minHeight: 32)
+            }
+            .buttonStyle(.borderedProminent)
+            .accessibilityLabel("Open")
+            .accessibilityIdentifier(openID)
+            Button(action: archive) {
+                Image(systemName: "archivebox").frame(width: 32, height: 32)
+            }
+            .buttonStyle(.bordered)
+            .accessibilityLabel("Archive")
+            .accessibilityIdentifier("quest-archive")
+            Button(role: .destructive) { if confirmsDelete { confirming = true } else { delete() } } label: {
+                Image(systemName: "trash").frame(width: 32, height: 32)
+            }
+            .buttonStyle(.bordered)
+            .accessibilityLabel("Delete")
+            .accessibilityIdentifier("quest-delete")
+        }
+        .font(.body.weight(.semibold))
+        .confirmationDialog("Delete this sidequest?", isPresented: $confirming, titleVisibility: .visible) {
+            Button("Delete", role: .destructive, action: delete)
+            Button("Cancel", role: .cancel) {}
         }
     }
 }

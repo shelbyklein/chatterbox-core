@@ -822,11 +822,11 @@ private struct MobileQuestIcon: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text(MobileSidequests.shortTitle(chat)).font(.subheadline.weight(.semibold)).lineLimit(2)
                 Text(state).font(.caption).foregroundStyle(.secondary)
-                Button { showing = false; open() } label: {
-                    Label("Open", systemImage: "arrow.up.right").frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .accessibilityIdentifier("quest-open")
+                // Archive goes at once; Delete asks (Activity's own confirmation).
+                QuestBubbleActions(openID: "quest-open", confirmsDelete: false,
+                                   open: { showing = false; open() },
+                                   archive: { showing = false; archive() },
+                                   delete: { showing = false; delete() })
             }
             .padding(14)
             .frame(width: 260)
