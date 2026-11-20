@@ -151,13 +151,15 @@ struct MobileAboutPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
+            // Shelby's order (2026-11-20): notes, what it made, actions, tools, where it works;
+            // then its status and runs.
             header
-            status
-            place
-            work
-            outputsSection
             notes
+            outputsSection
+            work
             tools
+            place
+            status
             runs
         }
         .padding(.horizontal, 16).padding(.vertical, 12)
@@ -178,7 +180,6 @@ struct MobileAboutPanel: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            if sessionActions { actionsMenu }
             if !images.isEmpty { headerButton("Images", "photo.on.rectangle", "about-images") { showingImages = true } }
             // A project's issue board (plans/project-issues.md).
             if summary.project != nil, detail?.isArchived != true {
@@ -188,50 +189,6 @@ struct MobileAboutPanel: View {
                 headerButton("Terminal", "terminal", "about-terminal") { perform(.terminal) }
             }
         }
-    }
-
-    /// The session's actions, as the narrow layout's ⋯ Session Menu has them.
-    private var actionsMenu: some View {
-        Menu {
-            Button { perform(.refresh) } label: { Label("Refresh Session", systemImage: "arrow.clockwise") }
-            if summary.isRunning {
-                Button { perform(.stopReply) } label: { Label("Stop Reply", systemImage: "stop.circle") }
-            }
-            Button { perform(.restart) } label: { Label("Restart Thread", systemImage: "arrow.triangle.2.circlepath") }
-                .disabled(detail == nil)
-            if summary.worktreeBranch == nil, summary.sidechatOf == nil {
-                Button { perform(.togglePin) } label: {
-                    Label(summary.pinnedRank == nil ? "Pin to Top" : "Unpin", systemImage: summary.pinnedRank == nil ? "pin" : "pin.slash")
-                }
-            }
-            Button { perform(.rename) } label: { Label("Rename", systemImage: "pencil") }
-            if summary.canPromote == true, detail?.isArchived != true {
-                Button { perform(.moveToStudio) } label: { Label("Move to Studio\u{2026}", systemImage: "paintpalette") }
-                    .disabled(summary.isRunning)
-                Button { perform(.makeProject) } label: { Label("Make Project\u{2026}", systemImage: "folder.badge.plus") }
-                    .disabled(summary.isRunning)
-            }
-            if detail?.canFork == true {
-                Button { perform(.fork) } label: { Label("Fork", systemImage: "arrow.triangle.branch") }
-            }
-            Divider()
-            if detail?.isArchived == true {
-                Button { perform(.unarchive) } label: { Label("Unarchive", systemImage: "tray.and.arrow.up") }
-            } else {
-                Button(role: .destructive) { perform(.archive) } label: { Label("Archive", systemImage: "archivebox") }
-            }
-        } label: {
-            VStack(spacing: 3) {
-                Image(systemName: "ellipsis.circle").font(.body)
-                Text("Actions").font(.caption2)
-            }
-            .frame(maxWidth: .infinity, minHeight: 48)
-            .background(Color(uiColor: .tertiarySystemFill), in: RoundedRectangle(cornerRadius: 10))
-            .contentShape(RoundedRectangle(cornerRadius: 10))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Session Actions")
-        .accessibilityIdentifier("about-actions")
     }
 
     private func headerButton(_ title: String, _ icon: String, _ id: String, action: @escaping () -> Void) -> some View {
@@ -342,8 +299,9 @@ struct MobileAboutPanel: View {
 
     @ViewBuilder private var work: some View {
         let threads = detail?.work ?? []
-        if carriedTask != nil || summary.workOf != nil || !threads.isEmpty || canStartWork || tasksKept {
-            card(.work, "Task & work") {
+        // Its task and work threads, then everything you can do with the session: the Desk,
+        // starting work, and the session itself (what the ⋯ menu has).
+        card(.work, "Actions") {
                 if let task = carriedTask {
                     row(icon: "checklist") {
                         VStack(alignment: .leading, spacing: 1) {
@@ -400,14 +358,9 @@ struct MobileAboutPanel: View {
                     .accessibilityLabel("Work thread \(thread.title), \(thread.stateLabel)\(thread.status.map { ", \($0)" } ?? "")")
                     .accessibilityIdentifier("work-chip-\(thread.id.uuidString)")
                 }
-                // Starting things: a work thread, a sidequest, the Desk task.
                 // Two to a row, filling the width: a narrow column (an open Duo) never cuts one off.
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], alignment: .leading, spacing: 8) {
-                    if canStartWork { actionChip("Work Thread", "Start a Work Thread", "arrow.triangle.branch", "about-start-work") { perform(.startWork) } }
-                    if !summary.isSidequest, detail?.isArchived != true {
-                        actionChip("Sidequest", "Sidequest to \(summary.otherAgentLabel)", "point.topleft.down.to.point.bottomright.curvepath", "about-sidequest") { perform(.sidequest) }
-                    }
-                    if tasksKept {
+                if tasksKept {
+                    chipGroup("Desk") {
                         if let task = carriedTask {
                             actionChip("Unlink Task", "Unlink from Task", "link", "about-unlink-task") { perform(.unlinkTask(task.id)) }
                         } else {
@@ -418,8 +371,52 @@ struct MobileAboutPanel: View {
                         }
                     }
                 }
+                if canStartWork || (!summary.isSidequest && detail?.isArchived != true) || detail?.canFork == true {
+                    chipGroup("Start") {
+                        if canStartWork { actionChip("Work Thread", "Start a Work Thread", "arrow.triangle.branch", "about-start-work") { perform(.startWork) } }
+                        if !summary.isSidequest, detail?.isArchived != true {
+                            actionChip("Sidequest", "Sidequest to \(summary.otherAgentLabel)", "point.topleft.down.to.point.bottomright.curvepath", "about-sidequest") { perform(.sidequest) }
+                        }
+                        if detail?.canFork == true {
+                            actionChip("Fork", "Fork", "arrow.triangle.branch", "about-fork") { perform(.fork) }
+                        }
+                    }
+                }
+                chipGroup("Session") {
+                    actionChip("Rename", "Rename", "pencil", "about-rename") { perform(.rename) }
+                    actionChip("Refresh", "Refresh Session", "arrow.clockwise", "about-refresh") { perform(.refresh) }
+                    if summary.isRunning {
+                        actionChip("Stop Reply", "Stop Reply", "stop.circle", "about-stop") { perform(.stopReply) }
+                    }
+                    if detail != nil {
+                        actionChip("Restart", "Restart Thread", "arrow.triangle.2.circlepath", "about-restart") { perform(.restart) }
+                    }
+                    if summary.worktreeBranch == nil, summary.sidechatOf == nil {
+                        actionChip(summary.pinnedRank == nil ? "Pin" : "Unpin", summary.pinnedRank == nil ? "Pin to Top" : "Unpin",
+                                   summary.pinnedRank == nil ? "pin" : "pin.slash", "about-pin") { perform(.togglePin) }
+                    }
+                    if summary.canPromote == true, detail?.isArchived != true, !summary.isRunning {
+                        actionChip("To Studio", "Move to Studio", "paintpalette", "about-move-studio") { perform(.moveToStudio) }
+                        actionChip("Make Project", "Make Project", "folder.badge.plus", "about-make-project") { perform(.makeProject) }
+                    }
+                    if detail?.isArchived == true {
+                        actionChip("Unarchive", "Unarchive", "tray.and.arrow.up", "about-unarchive") { perform(.unarchive) }
+                    } else {
+                        actionChip("Archive", "Archive", "archivebox", "about-archive") { perform(.archive) }
+                    }
+                }
+            }
+    }
+
+    /// A small heading over two-to-a-row action chips.
+    private func chipGroup<Chips: View>(_ title: String, @ViewBuilder _ chips: () -> Chips) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.caption.weight(.medium)).foregroundStyle(Color.metadata)
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], alignment: .leading, spacing: 8) {
+                chips()
             }
         }
+        .padding(.top, 2)
     }
 
     /// A short label that fits half a narrow column; the full name for VoiceOver.

@@ -155,6 +155,8 @@ struct ChatDetailView: View {
         .onAppear { MobileSeenReplies.shared.markSeen(chat.id); sendIfPending() }
         // The open Duo: this session's buttons in the rail (MobileRail.swift).
         .modifier(RailHooks(chat: chat.id, tab: railTab, wide: aboutColumn != nil, register: registerRail))
+        // Swipe in from the right edge for the session's sidebar (About; Shelby, 2026-11-20).
+        .modifier(RightEdgeOpens(enabled: !aboutShown) { toggleAbout() })
         // A review's Send filled the box: send it now, as the send button would.
         .onChange(of: composerState.sendPending) { _, pending in if pending { sendIfPending() } }
         // The Desk says which task this session carries (its menu's task items).
@@ -1609,5 +1611,26 @@ private struct RailHooks: ViewModifier {
             .onChange(of: wide) { register() }
             .onDisappear { shown = false; MobileRail.shared.hide(chat, in: tab) }
             .onChange(of: MobileRail.shared.sessions[tab]?.chat) { _, now in if now == nil, shown { register() } }
+    }
+}
+
+/// A swipe that starts at the right edge and moves left runs `open` (the session's sidebar).
+/// A thin strip along the edge takes it, so taps and scrolling elsewhere are untouched.
+private struct RightEdgeOpens: ViewModifier {
+    let enabled: Bool
+    let open: () -> Void
+
+    func body(content: Content) -> some View {
+        content.overlay(alignment: .trailing) {
+            if enabled {
+                Color.clear
+                    .frame(width: 18)
+                    .contentShape(Rectangle())
+                    .gesture(DragGesture(minimumDistance: 12).onEnded { drag in
+                        if drag.translation.width < -50, abs(drag.translation.height) < 80 { open() }
+                    })
+                    .accessibilityHidden(true)
+            }
+        }
     }
 }

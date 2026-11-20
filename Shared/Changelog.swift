@@ -22,6 +22,7 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-20", changes: [
+            "On the phone, a session's sidebar starts with Notes, then what it made, then Actions (its Desk task, Work Thread, Sidequest, Fork, and Rename, Restart, Pin, Archive and more), then Tools and Where. Swipe in from the right edge to open it.",
             "On the phone, a sidequest's bubble has Open, Archive and Delete as one row of icons.",
             "On the phone, tapping a picture in a chat opens it ready to comment: tap to add a note, with Draw, Save, Share and Copy in its bottom bar.",
             "Phone Feedback waits in the Chatterbox session's message box for you to send, instead of sending by itself.",
