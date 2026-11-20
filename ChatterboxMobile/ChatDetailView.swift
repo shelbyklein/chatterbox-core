@@ -518,13 +518,14 @@ struct ChatDetailView: View {
         }
     }
 
-    /// Narrow: the name on the left and the model on the right, across the bar (Shelby,
+    /// Narrow: the name on the left and the model's pill on the right, across the bar (Shelby,
     /// 2026-11-20; they were stacked in the middle).
     private var chatTitle: some View {
         HStack(spacing: 8) {
             titleButton.layoutPriority(1)
             Spacer(minLength: 4)
-            modelButton(pill: false)
+            // The same pill as the open Duo's (Shelby, 2026-11-20).
+            modelButton(pill: true)
         }
         // As wide as the bar allows: iOS starts it at the bar's leading margin, so this leaves
         // room for the sidebar's button on the right (measured on the closed Duo, 2026-11-20).

@@ -34,8 +34,6 @@ struct ChatSettingsForm<Leading: View>: View {
                 leading()
                 Section {
                     CompactModelPicker(options: options, browsing: $browsing, apply: apply)
-                } header: {
-                    Text("Model")
                 } footer: {
                     if CompactModelPicker.shownProvider(options, browsing) == "open" {
                         Text("Run by \(isCodex ? "Codex" : "Claude Code") on the PC's graphics card, at medium effort.")
@@ -138,14 +136,21 @@ struct CompactModelPicker: View {
     }
 
     var body: some View {
-        // The provider first; its models drop down from the row under it.
-        Picker("Provider", selection: Binding(get: { shownProvider }, set: { browsing = $0 == provider ? nil : $0 })) {
-            Text("Claude").tag("claude")
-            Text("Codex").tag("codex")
-            if options.openModels != nil { Text("Open models").tag("open") }
+        // Titled inside its card like Effort's (Shelby, 2026-11-20: a header over the card
+        // looked off beside it). The provider first; its models drop down from the row under it.
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Model", systemImage: "cpu")
+            Picker("Provider", selection: Binding(get: { shownProvider }, set: { browsing = $0 == provider ? nil : $0 })) {
+                Text("Claude").tag("claude")
+                Text("Codex").tag("codex")
+                if options.openModels != nil { Text("Open models").tag("open") }
+            }
+            .pickerStyle(.segmented)
+            .accessibilityIdentifier("model-provider")
         }
-        .pickerStyle(.segmented)
-        .accessibilityIdentifier("model-provider")
+        .padding(.vertical, 4)
+        // The line under it runs the card's width, not from the label's text.
+        .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
         if shownModels.isEmpty {
             Text(emptyNote).foregroundStyle(.secondary)
         } else {
