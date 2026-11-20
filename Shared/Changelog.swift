@@ -22,6 +22,7 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-20", changes: [
+            "On the phone, Feedback is also in the ••• menu, for when the open Duo has no room for its button.",
             "On the phone, marking up a picture or PDF puts each note in a bubble right where you tapped, and the picture keeps the whole screen; Review at the top lists every note and the overall note.",
             "On the phone, tapping a sidequest icon shows its short title and Open, not its whole instructions.",
             "A warning on your Mac and iPhone when Claude or Codex has 50%, 20% and then 5% of a usage limit left, with how fast you're using it and when it would run out.",

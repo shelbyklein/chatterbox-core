@@ -919,6 +919,10 @@ struct ChatListView: View {
         Button { showingAutomations = true } label: { Label("Automations", systemImage: "clock.arrow.circlepath") }
         Button { showingArchived = true } label: { Label("Archived", systemImage: "archivebox") }
         Button { showingSettings = true } label: { Label("Settings", systemImage: "gearshape") }
+        // Also the bar's own button; on the open Duo iOS fits only two buttons over the list
+        // (its search takes one), and Feedback was the one left out.
+        Button { store.startFeedback() } label: { Label("Feedback", systemImage: "exclamationmark.bubble") }
+            .accessibilityIdentifier("menu-feedback")
     }
 
     /// About the open session, as a column on its right: its sections, and Close.
