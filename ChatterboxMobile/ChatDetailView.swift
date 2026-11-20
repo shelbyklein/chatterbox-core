@@ -1262,11 +1262,14 @@ private struct ImageVisibility: ViewModifier {
             guard let visible = proxy.bounds(of: .scrollView) else { return true }
             return visible.intersects(CGRect(origin: .zero, size: proxy.size))
         } action: { report($0) }
+        // Not "disappeared means off screen": coming back to a chat, iOS showed and removed
+        // its rows in the same instant (Duo log, 2026-11-19), the picture was marked off screen
+        // while it sat in view, and with its position unchanged nothing marked it back. Scrolled
+        // away is the position check's to say; a row iOS really removes takes its load with it.
         if #available(iOS 18, *) {
             measured.onScrollVisibilityChange(threshold: 0.01) { if $0 { report(true) } }
-                .onDisappear { report(false) }
         } else {
-            measured.onDisappear { report(false) }
+            measured
         }
     }
 }
