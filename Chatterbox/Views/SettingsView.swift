@@ -3,6 +3,11 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
     @State private var detectedCodex: String?
+    @State private var detectedAgy: String?
+    @AppStorage("agyPath") private var agyPath = ""
+    @AppStorage("geminiDefaultModel") private var geminiDefaultModel = ""
+    @AppStorage("geminiDefaultEffort") private var geminiDefaultEffort = ""
+    @AppStorage("geminiDefaultMode") private var geminiDefaultMode = PermissionModes.defaultGemini
     @State private var detectedClaude: String?
 
     @AppStorage("defaultBackend") private var defaultBackend = Backend.claude
@@ -171,6 +176,10 @@ struct SettingsView: View {
                                    effort: $codexDefaultEffort,
                                    efforts: CodexAppServer.shared.models.first { $0.model == codexDefaultModel }?.efforts
                                        ?? CodexAppServer.shared.models.first(where: \.isDefault)?.efforts ?? [])
+                defaultModelPicker(title: "Gemini", icon: "sparkles",
+                                   options: [ModelChoice(id: "", name: "Gemini's default", detail: GeminiModels.shared.name(nil))]
+                                       + GeminiModels.shared.models.map { ModelChoice(id: $0.id, name: $0.name, detail: "") },
+                                   model: $geminiDefaultModel, effort: $geminiDefaultEffort, efforts: GeminiModels.shared.efforts)
             } header: {
                 Text("Default models")
             } footer: {
@@ -205,6 +214,9 @@ struct SettingsView: View {
                 }
                 Picker("Codex permissions", selection: $codexDefaultMode) {
                     ForEach(PermissionModes.codex) { Text($0.title).tag($0.id) }
+                }
+                Picker("Gemini permissions", selection: $geminiDefaultMode) {
+                    ForEach(PermissionModes.gemini) { Text($0.title).tag($0.id) }
                 }
             }
         }
@@ -286,10 +298,23 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            Section {
+                TextField("agy path", text: $agyPath, prompt: Text(detectedAgy ?? "Auto-detect"))
+            } header: {
+                Text("Gemini")
+            } footer: {
+                Text(detectedAgy == nil
+                     ? "Couldn't find the `agy` command. Install Antigravity CLI (antigravity.google/cli), or enter its full path."
+                     : "Uses your installed Antigravity CLI (`agy`) and your Google sign-in. To sign in or switch accounts, run `agy` in Terminal.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(WideFormStyle())
         .frame(maxWidth: .infinity)
         .task(id: codexPath) { detectedCodex = CodexAppServer.locateBinary() }
+        .task(id: agyPath) { detectedAgy = GeminiACPProcess.locateBinary() }
         .task(id: claudePath) {
             detectedClaude = ClaudeCodeProcess.locateBinary()
             await ClaudeModels.shared.refresh(force: !claudePath.isEmpty)
