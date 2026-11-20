@@ -123,6 +123,7 @@ struct ChatDetailView: View {
     /// the list gives it a column instead, and this chat follows the column's requests.
     @State private var showingAbout = false
     @Environment(MobileAboutColumn.self) private var aboutColumn: MobileAboutColumn?
+    @Environment(\.railTab) private var railTab
     /// A message About asked to see (a file or draft in it).
     @State private var revealRequest: UUID?
 
@@ -151,7 +152,10 @@ struct ChatDetailView: View {
             }
         }
         // Opening a chat here, from anywhere, clears it from New replies.
-        .onAppear { MobileSeenReplies.shared.markSeen(chat.id); sendIfPending() }
+        .onAppear { MobileSeenReplies.shared.markSeen(chat.id); sendIfPending(); registerRail() }
+        // The open Duo: this session's buttons in the rail (MobileRail.swift).
+        .onChange(of: aboutColumn == nil) { registerRail() }
+        .onDisappear { MobileRail.shared.hide(chat.id, in: railTab) }
         // A review's Send filled the box: send it now, as the send button would.
         .onChange(of: composerState.sendPending) { _, pending in if pending { sendIfPending() } }
         // The Desk says which task this session carries (its menu's task items).
@@ -809,6 +813,12 @@ struct ChatDetailView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("rate-limit-suggestion")
+    }
+
+    private func registerRail() {
+        guard aboutColumn != nil, !railTab.isEmpty else { MobileRail.shared.hide(chat.id, in: railTab); return }
+        MobileRail.shared.show(.init(chat: chat.id, back: closeChat, settings: { showingSettings = true },
+                                     backend: summary.backend, menu: AnyView(chatMenu.environment(store))), in: railTab)
     }
 
     private func sendIfPending() {

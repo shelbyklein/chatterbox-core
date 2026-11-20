@@ -48,6 +48,7 @@ struct ChatListView: View {
     private var page: Page { fixedPage ?? Page(rawValue: pageName) ?? .projects }
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.railTab) private var railTab
     /// Settings: Notifications, Appearance and Unpair, in one sheet.
     @State private var showingSettings = false
     @State private var showingAutomations = false
@@ -138,6 +139,10 @@ struct ChatListView: View {
                                newProject: newChatStudio == nil && page == .projects).environment(store)
         }
         .sheet(isPresented: $showingSettings) { MobileSettingsSheet().environment(store) }
+        // This tab's ⋯ menu for the open Duo's rail (MobileRail.swift), kept current as the
+        // page, its Studio or its layout changes.
+        .onAppear { registerRailMenu() }
+        .onChange(of: "\(page)|\(isSelected)|\(showsCards)|\(studioListMode)|\(visibleStudios.first?.id ?? "")") { registerRailMenu() }
         .sheet(isPresented: $showingArchived, onDismiss: {
             if let chat = archivedPick { archivedPick = nil; open(chat) }
         }) { MobileArchivedSheet { archivedPick = $0 }.environment(store) }
@@ -881,8 +886,12 @@ struct ChatListView: View {
         }
     }
 
-    /// The page's ••• menu: in the bar over the list, and in the rail on the open Duo when no
-    /// session is open (the placeholder's own buttons; Shelby wanted buttons there).
+    private func registerRailMenu() {
+        guard !railTab.isEmpty else { return }
+        MobileRail.shared.setPageMenu(AnyView(pageMenu.environment(store)), in: railTab)
+    }
+
+    /// The page's ••• menu: in the bar over the list, and in the open Duo's rail (MobileRail).
     @ViewBuilder private var pageMenu: some View {
         if page == .studios {
             Menu {
@@ -969,12 +978,6 @@ struct ChatListView: View {
                     Button("Show Sessions") { withAnimation(.snappy(duration: 0.25)) { aboutColumn.listShown = true } }
                         .accessibilityIdentifier("list-shelf-show")
                 }
-            }
-            // No session open: the page's ••• and Feedback, so the open Duo's rail (which
-            // shows this column's buttons) isn't empty.
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) { pageMenu.accessibilityIdentifier("placeholder-menu") }
-                ToolbarItem(placement: .topBarTrailing) { FeedbackButton() }
             }
         }
     }
