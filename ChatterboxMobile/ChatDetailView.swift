@@ -540,8 +540,8 @@ struct ChatDetailView: View {
         .accessibilityIdentifier("rail-settings")
     }
 
-    private var chatMenu: some View {
-        Menu {
+    /// The session's ⋯ items: its menu here, and the open Duo's rail menu (MobileRail).
+    @ViewBuilder private var chatMenuItems: some View {
             Button { Task { await refresh(force: true) } } label: {
                 Label("Refresh Session", systemImage: "arrow.clockwise")
             }
@@ -589,6 +589,11 @@ struct ChatDetailView: View {
                     Label("Archive", systemImage: "archivebox")
                 }
             }
+    }
+
+    private var chatMenu: some View {
+        Menu {
+            chatMenuItems
         } label: {
             Image(systemName: "ellipsis")
         }
@@ -818,7 +823,7 @@ struct ChatDetailView: View {
     private func registerRail() {
         guard aboutColumn != nil, !railTab.isEmpty else { MobileRail.shared.hide(chat.id, in: railTab); return }
         MobileRail.shared.show(.init(chat: chat.id, back: closeChat, settings: { showingSettings = true },
-                                     backend: summary.backend, menu: AnyView(chatMenu.environment(store))), in: railTab)
+                                     backend: summary.backend, menu: AnyView(chatMenuItems.environment(store))), in: railTab)
     }
 
     private func sendIfPending() {

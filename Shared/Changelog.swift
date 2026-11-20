@@ -22,7 +22,7 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-20", changes: [
-            "On the open Duo, the side rail under the clock has buttons again: Back, Session Settings, ••• and Feedback in a session, ••• and Feedback otherwise.",
+            "On the open Duo, the side rail under the clock has buttons again: Back, Session Settings, ••• and Feedback in a session, ••• and Feedback otherwise. Its ••• has the session's items and the page's (Settings, Archived, layout), so there's no second ••• over the list.",
             "On the phone, Feedback is also in the ••• menu, for when the open Duo has no room for its button.",
             "On the phone, marking up a picture or PDF puts each note in a bubble right where you tapped, and the picture keeps the whole screen; Review at the top lists every note and the overall note.",
             "On the phone, tapping a sidequest icon shows its short title and Open, not its whole instructions.",

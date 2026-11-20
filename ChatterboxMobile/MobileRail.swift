@@ -16,12 +16,15 @@ final class MobileRail {
         let back: () -> Void
         let settings: () -> Void
         let backend: String
+        /// Its ⋯ items (the menu itself is the rail's, with the page's items after them).
         let menu: AnyView
     }
 
+    /// The column is on screen: the list's own ⋯ steps aside (one ⋯, not two).
+    var isDrawn = false
     /// The open session in each tab (by tab tag), while it shows in the open layout.
     private(set) var sessions: [String: Session] = [:]
-    /// Each tab's own ⋯ menu.
+    /// Each tab's own ⋯ items.
     private(set) var pageMenus: [String: AnyView] = [:]
 
     func show(_ session: Session, in tab: String) { sessions[tab] = session }
@@ -58,6 +61,8 @@ struct MobileRailColumn: View {
                 // Below the clock and battery, as in Shelby's screenshots (~16% down the screen).
                 let top = fullHeight * 0.16 - geometry.safeAreaInsets.top
                 column
+                    .onAppear { rail.isDrawn = true }
+                    .onDisappear { rail.isDrawn = false }
                     .frame(width: strip)
                     .fixedSize(horizontal: false, vertical: true)
                     .offset(x: geometry.size.width, y: top)
@@ -69,8 +74,8 @@ struct MobileRailColumn: View {
 
     @ViewBuilder private var column: some View {
         let session = rail.sessions[tab]
-        let menu = session?.menu ?? rail.pageMenus[tab]
-        if session != nil || menu != nil {
+        let page = rail.pageMenus[tab]
+        if session != nil || page != nil {
             VStack(spacing: 6) {
                 if let session {
                     railButton("chevron.left", label: "Back", id: "rail-back", action: session.back)
@@ -86,13 +91,18 @@ struct MobileRailColumn: View {
                     .accessibilityLabel("Session Settings")
                     .accessibilityIdentifier("rail-open-settings")
                 }
-                if let menu {
-                    menu
+                // One ⋯: the session's items, then the page's (Settings, Archived, layout…).
+                Menu {
+                    if let session { session.menu; if page != nil { Divider() } }
+                    if let page { page }
+                } label: {
+                    Image(systemName: "ellipsis")
                         .font(.title3.weight(.semibold))
                         .frame(width: 44, height: 48)
                         .contentShape(Rectangle())
-                        .accessibilityIdentifier("rail-menu")
                 }
+                .accessibilityLabel(session == nil ? "Menu" : "Session Menu")
+                .accessibilityIdentifier("rail-menu")
                 FeedbackButton()
                     .font(.title3)
                     .frame(width: 44, height: 48)

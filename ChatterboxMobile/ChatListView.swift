@@ -345,7 +345,8 @@ struct ChatListView: View {
                 // Sort and layout live in the menu, so the bar keeps to three buttons:
                 // on a closed iPhone Duo it runs down the side, and more would push
                 // New Chat into an overflow menu.
-                ToolbarItem(placement: .topBarTrailing) { pageMenu }
+                // One ⋯, not two: while the open Duo's rail shows its own, the list's goes.
+                if !MobileRail.shared.isDrawn { ToolbarItem(placement: .topBarTrailing) { pageMenu } }
                 ToolbarItem(placement: .topBarTrailing) { FeedbackButton() }
                 // New Chat beside the title, in the title's own place: on a closed iPhone Duo
                 // every bar button (leading or trailing) runs down the side rail, leaving the
@@ -888,39 +889,38 @@ struct ChatListView: View {
 
     private func registerRailMenu() {
         guard !railTab.isEmpty else { return }
-        MobileRail.shared.setPageMenu(AnyView(pageMenu.environment(store)), in: railTab)
+        MobileRail.shared.setPageMenu(AnyView(pageMenuItems.environment(store)), in: railTab)
     }
 
     /// The page's ••• menu: in the bar over the list, and in the open Duo's rail (MobileRail).
     @ViewBuilder private var pageMenu: some View {
+        Menu { pageMenuItems } label: { Image(systemName: "ellipsis") }
+            .accessibilityLabel(page == .studios ? "Studio options" : "Connection")
+    }
+
+    /// The page's ⋯ items: its menu here, and the open Duo's rail menu (MobileRail).
+    @ViewBuilder private var pageMenuItems: some View {
+        connectionItems
         if page == .studios {
-            Menu {
-                connectionItems
-                // The open Studio's instructions (its header has New Session instead).
-                if search.isEmpty, let group = visibleStudios.first, group.studioID != nil {
-                    Button { editingStudio = group } label: { Label("Studio Instructions\u{2026}", systemImage: "text.book.closed") }
-                }
-                Picker("Sort", selection: $sortName) {
-                    ForEach(Sort.allCases.filter { $0 != .tag }) { Text($0.title).tag($0.rawValue) }
-                }
-                Button { withAnimation { studioListMode.toggle() } } label: {
-                    Label(studioListMode ? "Show as Cards" : "Show as List", systemImage: studioListMode ? "square.grid.2x2" : "list.bullet")
-                }
-            } label: { Image(systemName: "ellipsis") }
-            .accessibilityLabel("Studio options")
+            // The open Studio's instructions (its header has New Session instead).
+            if search.isEmpty, let group = visibleStudios.first, group.studioID != nil {
+                Button { editingStudio = group } label: { Label("Studio Instructions\u{2026}", systemImage: "text.book.closed") }
+            }
+            Picker("Sort", selection: $sortName) {
+                ForEach(Sort.allCases.filter { $0 != .tag }) { Text($0.title).tag($0.rawValue) }
+            }
+            Button { withAnimation { studioListMode.toggle() } } label: {
+                Label(studioListMode ? "Show as Cards" : "Show as List", systemImage: studioListMode ? "square.grid.2x2" : "list.bullet")
+            }
         } else {
-            Menu {
-                connectionItems
-                if page != .activity {
+            if page != .activity {
                 Picker("Sort", selection: Binding(get: { sort }, set: { new in withAnimation(.easeOut(duration: 0.2)) { sortName = new.rawValue } })) {
                     ForEach(Sort.allCases) { Label($0.title, systemImage: $0.icon).tag($0) }
                 }
-                }
-                Button { withAnimation(.easeOut(duration: 0.2)) { showsCards.toggle() } } label: {
-                    Label(showsCards ? "Show as List" : "Show as Cards", systemImage: showsCards ? "list.bullet" : "square.grid.2x2")
-                }
-            } label: { Image(systemName: "ellipsis") }
-            .accessibilityLabel("Connection")
+            }
+            Button { withAnimation(.easeOut(duration: 0.2)) { showsCards.toggle() } } label: {
+                Label(showsCards ? "Show as List" : "Show as Cards", systemImage: showsCards ? "list.bullet" : "square.grid.2x2")
+            }
         }
     }
 
