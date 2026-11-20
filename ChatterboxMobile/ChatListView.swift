@@ -334,8 +334,10 @@ struct ChatListView: View {
             .navigationTitle(fixedPage?.title ?? store.connection?.macName ?? "Chatterbox")
             .navigationBarTitleDisplayMode(.inline)
             .refreshable { await store.loadChats() }
-            // Wide, the sidebar's own search spans the column; the bar's drawer stopped short of it.
-            .searchable(text: $search, placement: sizeClass == .regular ? .sidebar : .navigationBarDrawer(displayMode: .always), prompt: fixedPage.map { "Search \($0.title)" } ?? "Search sessions")
+            // Wide, our own field at the top of the column: iOS's sidebar search is a button that
+            // opened into a field running off the column's left edge (Shelby, 2026-11-20), and
+            // the bar's drawer stopped short of the column. Narrow, iOS's drawer.
+            .modifier(ListSearch(wide: sizeClass == .regular, text: $search, prompt: fixedPage.map { "Search \($0.title)" } ?? "Search sessions"))
             .sheet(item: $editingStudio) { group in
                 if let id = group.studioID {
                     StudioInstructionsEditor(title: group.title, studio: id, initial: group.instructions ?? "")
@@ -1700,3 +1702,38 @@ struct MobileArchivedSheet: View {
     }
 }
 
+
+/// The list's search: on a wide screen a field of our own across the top of the column;
+/// otherwise iOS's search drawer under the title.
+private struct ListSearch: ViewModifier {
+    let wide: Bool
+    @Binding var text: String
+    let prompt: String
+    @FocusState private var focused: Bool
+
+    func body(content: Content) -> some View {
+        if wide {
+            content.safeAreaInset(edge: .top, spacing: 0) {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    TextField(prompt, text: $text)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .submitLabel(.search)
+                        .focused($focused)
+                        .accessibilityIdentifier("list-search")
+                    if !text.isEmpty {
+                        Button { text = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Clear text")
+                    }
+                }
+                .padding(.horizontal, 12).padding(.vertical, 9)
+                .background(Capsule().fill(Color(uiColor: .tertiarySystemFill)))
+                .padding(.horizontal, 16).padding(.vertical, 6)
+            }
+        } else {
+            content.searchable(text: $text, placement: .navigationBarDrawer(displayMode: .always), prompt: prompt)
+        }
+    }
+}
