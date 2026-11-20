@@ -1019,6 +1019,11 @@ enum Companion {
             /// 0 to 1: used for a limit window, remaining for a proxy quota.
             var fraction: Double?
             var resetsAt: Date?
+            /// A limit's burn rate (share per hour), when it would run out at that pace, and
+            /// whether that's before it resets. Absent from older Macs and for proxy quotas.
+            var perHour: Double? = nil
+            var runsOutAt: Date? = nil
+            var runsOutBeforeReset: Bool? = nil
 
             /// Proxy quota is measured in percent; the wire contract always uses 0–1.
             static func quota(label: String, remainingPercent: Double?, resetsAt: Date?) -> Self {

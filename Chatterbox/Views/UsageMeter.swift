@@ -37,6 +37,8 @@ struct UsageMeter: View {
             .buttonStyle(.plain)
             .help(summary)
             .popover(isPresented: $isOpen, arrowEdge: .top) { details.padding(14).frame(width: 280) }
+            // The limits live with the agents, in the background service: ask for the latest.
+            .onChange(of: isOpen) { _, open in if open { Task { await Self.fetchFromService() } } }
             .accessibilityLabel(fraction.map { "Context \(Int($0 * 100)) percent full" } ?? "Context \(context.used) tokens")
         }
     }
@@ -64,6 +66,9 @@ struct UsageMeter: View {
                 ForEach(limits) { window in
                     meterRow(title: window.label, value: Self.limitText(window), fraction: window.utilization,
                              tint: window.utilization >= 0.9 ? .red : window.utilization >= 0.75 ? .orange : color)
+                    if let burn = Self.burnText(window) {
+                        Text(burn.text).font(.caption).foregroundStyle(burn.warn ? Color.orange : .secondary)
+                    }
                 }
             }
         }
@@ -92,6 +97,28 @@ struct UsageMeter: View {
             ? reset.formatted(date: .omitted, time: .shortened)
             : reset.formatted(.dateTime.weekday(.abbreviated).hour().minute())
         return "\(used), resets \(when)"
+    }
+
+    /// The Mac app asks the service for the limits (the agents run there).
+    static func fetchFromService() async {
+        guard RuntimeClient.usesDaemon,
+              let reply = try? await RuntimeClient.shared.request("usage", timeout: .seconds(5)) else { return }
+        let claude = (try? reply["claude"]?.decode([UsageWindow].self)) ?? []
+        let codex = (try? reply["codex"]?.decode([UsageWindow].self)) ?? []
+        UsageLimits.shared.show(claude: claude, codex: codex)
+    }
+
+    /// "Using 12% an hour · runs out around 3:40 PM, before it resets".
+    static func burnText(_ window: UsageWindow) -> (text: String, warn: Bool)? {
+        guard let burn = window.burn else { return nil }
+        guard burn.perHour >= 0.005 else { return ("Barely used lately", false) }
+        var text = "Using \(Int((burn.perHour * 100).rounded()))% an hour"
+        if let run = burn.runsOutAt {
+            let when = Calendar.current.isDateInToday(run) ? run.formatted(date: .omitted, time: .shortened)
+                : run.formatted(.dateTime.weekday(.abbreviated).hour().minute())
+            text += " \u{00B7} runs out around \(when)" + (burn.beforeReset ? ", before it resets" : "")
+        }
+        return (text, burn.beforeReset)
     }
 
     static func tokens(_ count: Int) -> String {

@@ -723,7 +723,8 @@ final class CompanionServer {
     /// account quotas when it's set up (refreshed in the background when asked or stale).
     private func usageResponse(refresh: Bool) -> HTTPResponse {
         func windows(_ list: [UsageWindow]) -> [Companion.Usage.Window] {
-            list.map { .init(label: $0.label, fraction: $0.utilization, resetsAt: $0.resetsAt) }
+            list.map { .init(label: $0.label, fraction: $0.utilization, resetsAt: $0.resetsAt,
+                             perHour: $0.burn?.perHour, runsOutAt: $0.burn?.runsOutAt, runsOutBeforeReset: $0.burn?.beforeReset) }
         }
         let proxy = ProxyQuotaStore.shared
         let configured = (try? ProxyQuotaStore.connection()) != nil

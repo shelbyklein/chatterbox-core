@@ -9,6 +9,7 @@ struct MobilePushSettings: View {
     @AppStorage("mobilePushSound") private var sound = true
     @AppStorage("mobilePush_needs") private var needs = true
     @AppStorage("mobilePush_replies") private var replies = true
+    @AppStorage("mobilePush_usage") private var usage = true
     @State private var error: String?
     /// What the background service said about its own Keychain access.
     @State private var serviceStatus: String?
@@ -51,6 +52,7 @@ struct MobilePushSettings: View {
                 if let serviceStatus { Text(serviceStatus).font(.caption).foregroundStyle(.secondary).textSelection(.enabled) }
                 Toggle("Approvals and questions", isOn: $needs)
                 Toggle("Finished replies", isOn: $replies)
+                Toggle("Usage limits running low (50%, 20% and 5% left)", isOn: $usage)
                 Toggle("Include message previews", isOn: $previews)
                 Toggle("Sound", isOn: $sound)
                 Text(push.status).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)

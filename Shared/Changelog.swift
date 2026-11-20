@@ -21,6 +21,10 @@ enum Changelog {
     }
 
     static let days: [Day] = [
+        Day(id: "2026-11-20", changes: [
+            "A warning on your Mac and iPhone when Claude or Codex has 50%, 20% and then 5% of a usage limit left, with how fast you're using it and when it would run out.",
+            "Usage limits now show your burn rate: how many percent an hour you're using and when it runs out at that pace (Mac: the context ring's popover; iPhone: Usage). Settings → Mobile notifications can turn the warnings off on the phone.",
+        ]),
         Day(id: "2026-11-19", changes: [
             "On the phone, marking up a picture or PDF ends with Send, which sends your notes and the marked-up copies right away instead of leaving them in the message box.",
             "On the phone, when notes sit beside the picture (the open Duo, or a phone on its side), a button at the top hides the notes panel so the picture gets the whole width; placing a note brings it back.",

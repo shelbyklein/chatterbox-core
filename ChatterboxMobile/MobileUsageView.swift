@@ -72,8 +72,25 @@ struct MobileUsageView: View {
             if let reset = window.resetsAt, reset > Date() {
                 Text("Resets \(reset.formatted(.relative(presentation: .named)))").font(.caption).foregroundStyle(.secondary)
             }
+            if !remaining, let line = Self.burnLine(window) {
+                Text(line.text).font(.caption).foregroundStyle(line.warn ? Color.orange : .secondary)
+                    .accessibilityIdentifier("usage-burn")
+            }
         }
         .accessibilityElement(children: .combine)
+    }
+
+    /// "Using 12% an hour · runs out around 3:40 PM, before it resets": the pace lately.
+    static func burnLine(_ window: Companion.Usage.Window) -> (text: String, warn: Bool)? {
+        guard let rate = window.perHour else { return nil }
+        guard rate >= 0.005 else { return ("Barely used lately", false) }
+        var text = "Using \(Int((rate * 100).rounded()))% an hour"
+        if let run = window.runsOutAt {
+            let when = Calendar.current.isDateInToday(run) ? run.formatted(date: .omitted, time: .shortened)
+                : run.formatted(.dateTime.weekday(.abbreviated).hour().minute())
+            text += " \u{00B7} runs out around \(when)" + (window.runsOutBeforeReset == true ? ", before it resets" : "")
+        }
+        return (text, window.runsOutBeforeReset == true)
     }
 
     private func load(refresh: Bool) async {

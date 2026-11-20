@@ -232,6 +232,17 @@ final class Attention: NSObject, UNUserNotificationCenterDelegate {
         post(content, session: session, item: nil)
     }
 
+    /// A provider's usage limit at 50%, 20% or 5% left (from the service). Not tied to a chat.
+    func notifyUsage(title: String, body: String) {
+        guard authorized, Bundle.main.bundleIdentifier != nil else { return }
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        if playSound { content.sound = .default }
+        content.threadIdentifier = "usage"
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "usage-" + UUID().uuidString, content: content, trigger: nil))
+    }
+
     private func post(_ content: UNMutableNotificationContent, session: ChatSession, item: UUID?) {
         guard authorized, Bundle.main.bundleIdentifier != nil else { return }
         if playSound { content.sound = .default }
