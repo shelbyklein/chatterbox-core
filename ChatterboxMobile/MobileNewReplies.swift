@@ -808,7 +808,7 @@ private struct MobileQuestIcon: View {
         }
         .popover(isPresented: $showing) {
             VStack(alignment: .leading, spacing: 10) {
-                Text(title).font(.subheadline.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
+                Text(MobileSidequests.shortTitle(chat)).font(.subheadline.weight(.semibold)).lineLimit(2)
                 Text(state).font(.caption).foregroundStyle(.secondary)
                 Button { showing = false; open() } label: {
                     Label("Open", systemImage: "arrow.up.right").frame(maxWidth: .infinity)

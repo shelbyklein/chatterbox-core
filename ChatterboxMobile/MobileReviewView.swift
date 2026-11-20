@@ -62,11 +62,14 @@ struct MobileReviewView: View {
     @State private var problem: String?
     @State private var adding = false
     @State private var confirmingCancel = false
-    @State private var window: CGSize = .zero
-    @State private var panelHeight: CGFloat = 120
-    /// Side by side, the notes panel can be put away so the picture takes the whole width
-    /// (remembered). Placing or picking a note brings it back: that's where you type.
-    @AppStorage("mobileReviewNotesHidden") private var notesHidden = false
+    /// The note being written, in its bubble on the picture (Shelby, 2026-11-19: a bubble
+    /// where you touch, not a panel beside the picture).
+    @State private var editing: UUID?
+    /// Where the picture sits in the canvas, so the bubble follows zoom and pan.
+    @State private var pictureFrame: CGRect = .zero
+    @State private var showingReview = false
+    @State private var openAfterList: UUID?
+    @State private var bubbleHeight: CGFloat = 110
     @FocusState private var focus: Field?
 
     init(source: MobileReviewSource, onAdd: @escaping (MobileReviewResult) -> Void) {
@@ -93,36 +96,10 @@ struct MobileReviewView: View {
     private var page: Int? { document == nil ? nil : pageIndex + 1 }
     private var pageMarks: [Mark] { marks.filter { $0.page == page } }
     private var hasFeedback: Bool { !marks.isEmpty || !overall.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-    /// An iPad, an open iPhone Duo, or a phone on its side: the notes beside the picture.
-    /// Measured from the window, so the keyboard never switches the layout mid-note.
-    private var sideBySide: Bool {
-        min(window.width, window.height) >= 600 || window.width > window.height
-    }
 
     var body: some View {
         NavigationStack {
-            Group {
-                if sideBySide {
-                    HStack(spacing: 0) {
-                        canvasArea
-                        if !notesHidden {
-                            Divider()
-                            sidebar.frame(width: min(360, max(280, window.width * 0.36)))
-                                .transition(.move(edge: .trailing))
-                        }
-                    }
-                } else {
-                    // The space left above the keyboard, so the picture keeps a share of it.
-                    GeometryReader { space in
-                        VStack(spacing: 0) {
-                            canvasArea
-                            Divider()
-                            bottomPanel(maxHeight: max(space.size.height * 0.45, 150))
-                        }
-                    }
-                }
-            }
-            .background { ReviewWindowProbe(size: $window).allowsHitTesting(false) }
+            canvasArea
             .navigationTitle(name)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -130,22 +107,13 @@ struct MobileReviewView: View {
                     Button("Cancel") { if hasFeedback { confirmingCancel = true } else { dismiss() } }
                         .keyboardShortcut(.cancelAction)
                 }
-                if sideBySide {
-                    ToolbarItem(placement: .primaryAction) {
-                        Button { withAnimation(.easeOut(duration: 0.2)) { notesHidden.toggle() } } label: {
-                            Label(notesHidden ? "Show Notes" : "Hide Notes", systemImage: "sidebar.trailing")
-                                .labelStyle(.iconOnly)
-                                .overlay(alignment: .topTrailing) {
-                                    if notesHidden, !marks.isEmpty {
-                                        Text("\(marks.count)").font(.caption2.bold()).foregroundStyle(.white)
-                                            .padding(.horizontal, 4).background(Capsule().fill(Color.accentColor))
-                                            .offset(x: 8, y: -6)
-                                    }
-                                }
-                        }
-                        .accessibilityLabel(notesHidden ? "Show Notes" + (marks.isEmpty ? "" : ", \(marks.count)") : "Hide Notes")
-                        .accessibilityIdentifier("reviewNotesToggle")
+                // Every note in one list (all pages), with the overall note.
+                ToolbarItem(placement: .primaryAction) {
+                    Button { closeBubble(); showingReview = true } label: {
+                        Label(marks.isEmpty ? "Review" : "Review (\(marks.count))", systemImage: "list.bullet.rectangle")
                     }
+                    .accessibilityLabel(marks.isEmpty ? "Review notes" : "Review notes, \(marks.count)")
+                    .accessibilityIdentifier("reviewList")
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Send") { add() }
@@ -154,15 +122,15 @@ struct MobileReviewView: View {
                         .keyboardShortcut(.return, modifiers: .command)
                         .disabled(!hasFeedback || adding || picture == nil)
                 }
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("Done") { focus = nil }
-                }
             }
             .confirmationDialog("Discard these comments?", isPresented: $confirmingCancel, titleVisibility: .visible) {
                 Button("Discard Comments", role: .destructive) { dismiss() }
                 Button("Keep Commenting", role: .cancel) {}
             }
+            .sheet(isPresented: $showingReview, onDismiss: {
+                // A note picked in the list opens once the list has gone.
+                if let id = openAfterList { openAfterList = nil; focusNote(id) }
+            }) { reviewList }
             .task(id: pageIndex) { await showPage() }
             .onChange(of: focus) { _, _ in tidyNotes() }
         }
@@ -177,7 +145,7 @@ struct MobileReviewView: View {
                 ReviewCanvas(
                     image: picture,
                     marks: pageMarks.map(\.rect),
-                    highlighted: pageMarks.firstIndex { focus == .mark($0.id) },
+                    highlighted: pageMarks.firstIndex { editing == $0.id },
                     label: document == nil ? "Image to mark" : "Page \(pageIndex + 1)",
                     turnsPages: pageCount > 1,
                     onMark: addMark,
@@ -186,8 +154,11 @@ struct MobileReviewView: View {
                         guard current.indices.contains(index) else { return }
                         focusNote(current[index].id)
                     },
-                    onTurn: { turn($0) })
+                    onTurn: { turn($0) },
+                    onFrame: { pictureFrame = $0 })
                 if picture == nil { ProgressView() }
+                GeometryReader { space in bubble(in: space.size) }
+                if pageMarks.isEmpty, editing == nil, picture != nil { hint }
             }
             .clipped()
             canvasBar
@@ -250,7 +221,7 @@ struct MobileReviewView: View {
     private func turn(_ offset: Int) {
         let target = pageIndex + offset
         guard document != nil, target >= 0, target < pageCount else { return }
-        focus = nil
+        closeBubble()
         pageIndex = target
     }
 
@@ -264,17 +235,20 @@ struct MobileReviewView: View {
         focusNote(mark.id)
     }
 
-    /// A note needs its panel to be typed in: a put-away panel comes back first, and the
-    /// note takes the keyboard once its field is there.
+    /// Opens the note's bubble on the picture, with the keyboard (once the field is there).
     private func focusNote(_ id: UUID) {
-        guard notesHidden, sideBySide else { focus = .mark(id); return }
-        withAnimation(.easeOut(duration: 0.2)) { notesHidden = false }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { focus = .mark(id) }
+        editing = id
+        DispatchQueue.main.async { if editing == id { focus = .mark(id) } }
+    }
+
+    private func closeBubble() {
+        editing = nil
+        focus = nil
     }
 
     private func remove(_ mark: Mark) {
         guard let index = marks.firstIndex(where: { $0.id == mark.id }) else { return }
-        if focus == .mark(mark.id) { focus = nil }
+        if editing == mark.id { closeBubble() }
         edits.append(.removed(marks[index], at: index))
         marks.remove(at: index)
     }
@@ -286,7 +260,7 @@ struct MobileReviewView: View {
         case .added(let id):
             guard let index = marks.firstIndex(where: { $0.id == id }) else { return }
             show(marks[index].page)
-            if focus == .mark(id) { focus = nil }
+            if editing == id { closeBubble() }
             marks.remove(at: index)
         case .removed(let mark, let index):
             show(mark.page)
@@ -295,7 +269,7 @@ struct MobileReviewView: View {
     }
 
     private func show(_ page: Int?) {
-        if let page, page - 1 != pageIndex { focus = nil; pageIndex = page - 1 }
+        if let page, page - 1 != pageIndex { closeBubble(); pageIndex = page - 1 }
     }
 
     private func comment(_ id: UUID) -> Binding<String> {
@@ -304,8 +278,8 @@ struct MobileReviewView: View {
         } set: { value in
             guard let index = marks.firstIndex(where: { $0.id == id }) else { return }
             marks[index].comment = value
-            // Return finishes the note (tidyNotes then takes the line break out).
-            if value.contains("\n") { focus = nil }
+            // Return finishes the note and closes its bubble (tidyNotes takes the break out).
+            if value.contains("\n") { closeBubble() }
         }
     }
 
@@ -324,142 +298,148 @@ struct MobileReviewView: View {
 
     // MARK: - Notes
 
+    /// Before the first mark on a page: how to make one, floating over the picture.
     private var hint: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(document == nil ? "Tap the image to mark a spot, or drag to mark an area. Then say what should change."
-                                 : "Tap the page to mark a spot, or drag to mark an area. Then say what should change.")
-                .font(.callout)
-            Text(pageCount > 1 ? "Pinch to zoom; move with two fingers. Swipe with two fingers to turn the page."
-                               : "Pinch to zoom; move with two fingers.")
-                .font(.caption).foregroundStyle(.secondary)
+        VStack {
+            Text(pageCount > 1 ? "Tap to mark a spot, or drag to mark an area. Two fingers zoom, move and turn the page."
+                               : "Tap to mark a spot, or drag to mark an area. Two fingers zoom and move.")
+                .font(.footnote)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 14).padding(.vertical, 8)
+                .background(Capsule().fill(.regularMaterial))
+                .padding(.top, 12).padding(.horizontal, 16)
+                .allowsHitTesting(false)
+            Spacer()
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var markRows: some View {
+    /// The note being written, in a bubble by its mark: below it when there's room, above
+    /// when not, kept inside the picture's space. Return or Done closes it.
+    @ViewBuilder private func bubble(in space: CGSize) -> some View {
+        let current = pageMarks
+        if let id = editing, let index = current.firstIndex(where: { $0.id == id }), pictureFrame.width > 0 {
+            let mark = current[index]
+            let frame = pictureFrame
+            let anchor = CGPoint(x: frame.minX + mark.rect.minX * frame.width,
+                                 y: frame.minY + (ReviewNotes.isPoint(mark.rect) ? mark.rect.minY : mark.rect.maxY) * frame.height)
+            let width = min(320, space.width - 24)
+            let gap: CGFloat = 22
+            let below = anchor.y + gap + bubbleHeight <= space.height - 8 || anchor.y < space.height / 2
+            let y = below ? anchor.y + gap : anchor.y - gap - bubbleHeight
+            let x = min(max(anchor.x - width / 2, 12), space.width - width - 12)
+            noteBubble(index + 1, mark)
+                .frame(width: width)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { bubbleHeight = $0 }
+                .offset(x: x, y: min(max(y, 8), max(8, space.height - bubbleHeight - 8)))
+                .transition(.scale(scale: 0.9, anchor: .top).combined(with: .opacity))
+                .id(id)
+        }
+    }
+
+    private func noteBubble(_ number: Int, _ mark: Mark) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            if pageMarks.isEmpty { hint }
-            ForEach(Array(pageMarks.enumerated()), id: \.element.id) { index, mark in
-                markRow(index + 1, mark)
-            }
-            otherPages
-        }
-    }
-
-    private func markRow(_ number: Int, _ mark: Mark) -> some View {
-        let focused = focus == .mark(mark.id)
-        return HStack(alignment: .top, spacing: 10) {
-            Text("\(number)")
-                .font(.footnote.weight(.bold).monospacedDigit())
-                .foregroundStyle(.white)
-                .frame(width: 26, height: 26)
-                .background(Circle().fill(Color.orange))
-                .padding(.top, 5)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .top, spacing: 10) {
+                Text("\(number)")
+                    .font(.footnote.weight(.bold).monospacedDigit())
+                    .foregroundStyle(.white)
+                    .frame(width: 26, height: 26)
+                    .background(Circle().fill(Color.orange))
+                    .padding(.top, 2)
+                    .accessibilityHidden(true)
                 TextField("What should change here?", text: comment(mark.id), axis: .vertical)
                     .lineLimit(1...4)
                     .submitLabel(.done)
                     .focused($focus, equals: .mark(mark.id))
                     .accessibilityLabel("Note for mark \(number)")
                     .accessibilityIdentifier("reviewNote-\(number)")
-                    .padding(.vertical, 7)
+                    .padding(.vertical, 4)
+            }
+            HStack(spacing: 12) {
                 Text(ReviewNotes.isPoint(mark.rect) ? "Spot" : "Area")
                     .font(.caption2).foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+                Button(role: .destructive) { remove(mark) } label: {
+                    Image(systemName: "trash").font(.subheadline)
+                }
+                .accessibilityLabel("Remove mark \(number)")
+                Button("Done") { closeBubble() }
+                    .font(.subheadline.weight(.semibold))
+                    .accessibilityIdentifier("reviewNoteDone")
             }
-            Button { remove(mark) } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.title3)
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 36, height: 36)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Remove mark \(number)")
         }
-        .padding(.leading, 10)
-        .padding(.trailing, 2)
-        .padding(.vertical, 4)
-        .background(RoundedRectangle(cornerRadius: 12).fill(Color(uiColor: .secondarySystemBackground)))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.orange.opacity(focused ? 0.8 : 0), lineWidth: 1.5))
-        .id(mark.id)
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color(uiColor: .secondarySystemBackground)))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Color.orange.opacity(0.7), lineWidth: 1.5))
+        .shadow(color: .black.opacity(0.35), radius: 12, y: 4)
     }
 
-    /// For a PDF: the other pages with marks, to go back to them.
-    @ViewBuilder private var otherPages: some View {
-        let counts = Dictionary(grouping: marks.compactMap(\.page), by: { $0 }).mapValues(\.count)
-        let others = counts.keys.filter { $0 != page }.sorted()
-        if document != nil, !others.isEmpty {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    Text("Also marked:").font(.caption).foregroundStyle(.secondary)
-                    ForEach(others, id: \.self) { other in
-                        Button { focus = nil; pageIndex = other - 1 } label: {
-                            Text("Page \(other) · \(counts[other] ?? 0)")
-                                .font(.caption.weight(.medium))
-                                .padding(.horizontal, 10).padding(.vertical, 6)
-                                .background(Capsule().fill(Color.orange.opacity(0.15)))
+    /// Review: every note, page by page, and the overall note. A note opens its bubble.
+    private var reviewList: some View {
+        let groups = Dictionary(grouping: marks, by: \.page)
+        let pages = groups.keys.sorted { ($0 ?? 0) < ($1 ?? 0) }
+        return NavigationStack {
+            List {
+                if marks.isEmpty {
+                    Text(document == nil ? "No notes yet. Tap the image to mark a spot, or drag to mark an area."
+                                         : "No notes yet. Tap a page to mark a spot, or drag to mark an area.")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(pages, id: \.self) { page in
+                    let onPage = groups[page] ?? []
+                    Section {
+                        ForEach(Array(onPage.enumerated()), id: \.element.id) { number, mark in
+                            Button { openFromList(mark) } label: {
+                                HStack(alignment: .top, spacing: 10) {
+                                    Text("\(number + 1)")
+                                        .font(.footnote.weight(.bold).monospacedDigit())
+                                        .foregroundStyle(.white)
+                                        .frame(width: 24, height: 24)
+                                        .background(Circle().fill(Color.orange))
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(mark.comment.isEmpty ? "No note yet" : Self.oneLine(mark.comment))
+                                            .foregroundStyle(mark.comment.isEmpty ? .secondary : .primary)
+                                        Text(ReviewNotes.isPoint(mark.rect) ? "Spot" : "Area")
+                                            .font(.caption2).foregroundStyle(.secondary)
+                                    }
+                                    Spacer(minLength: 0)
+                                }
+                                // The whole row, not just its words, opens the note.
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("reviewListNote-\(page ?? 0)-\(number + 1)")
+                            .swipeActions { Button("Delete", role: .destructive) { remove(mark) } }
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Page \(other), \(counts[other] ?? 0) mark\(counts[other] == 1 ? "" : "s")")
+                    } header: {
+                        if let page { Text("Page \(page)") }
                     }
                 }
-            }
-        }
-    }
-
-    private var overallField: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Overall note").font(.caption).foregroundStyle(.secondary)
-            TextField("Optional", text: $overall, axis: .vertical)
-                .lineLimit(1...5)
-                .focused($focus, equals: .overall)
-                .accessibilityLabel("Overall note")
-                .accessibilityIdentifier("reviewOverallNote")
-                .padding(.horizontal, 12).padding(.vertical, 9)
-                .background(RoundedRectangle(cornerRadius: 12).fill(Color(uiColor: .secondarySystemBackground)))
-            if let problem { Text(problem).font(.caption).foregroundStyle(.red) }
-        }
-        .id("overall")
-    }
-
-    /// Phone: under the picture, as tall as its notes, up to `maxHeight`.
-    private func bottomPanel(maxHeight: CGFloat) -> some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    markRows
-                    overallField
+                Section("Overall note") {
+                    TextField("Optional", text: $overall, axis: .vertical)
+                        .lineLimit(1...5)
+                        .focused($focus, equals: .overall)
+                        .accessibilityLabel("Overall note")
+                        .accessibilityIdentifier("reviewOverallNote")
+                    if let problem { Text(problem).font(.caption).foregroundStyle(.red) }
                 }
-                .padding(.horizontal, 16).padding(.vertical, 12)
-                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { panelHeight = $0 }
             }
-            .scrollBounceBehavior(.basedOnSize)
-            .scrollDismissesKeyboard(.interactively)
-            .frame(height: min(panelHeight, maxHeight))
-            .onChange(of: focus) { _, field in scroll(proxy, to: field) }
-        }
-    }
-
-    /// iPad, open Duo, or landscape: beside the picture, like the Mac's.
-    private var sidebar: some View {
-        ScrollViewReader { proxy in
-            VStack(alignment: .leading, spacing: 12) {
-                ScrollView {
-                    markRows.padding(16)
+            .navigationTitle(marks.isEmpty ? "Notes" : "Notes (\(marks.count))")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { showingReview = false }.accessibilityIdentifier("reviewListDone")
                 }
-                .scrollDismissesKeyboard(.interactively)
-                overallField.padding([.horizontal, .bottom], 16)
             }
-            .onChange(of: focus) { _, field in scroll(proxy, to: field) }
         }
-        .background(Color(uiColor: .systemBackground))
+        .presentationDetents([.medium, .large])
     }
 
-    private func scroll(_ proxy: ScrollViewProxy, to field: Field?) {
-        guard case .mark(let id) = field else { return }
-        withAnimation(.snappy(duration: 0.25)) { proxy.scrollTo(id, anchor: .center) }
+    /// From the list: back to that note's page, with its bubble open.
+    private func openFromList(_ mark: Mark) {
+        show(mark.page)
+        openAfterList = mark.id
+        showingReview = false
     }
 
     // MARK: - Adding to the message
@@ -518,10 +498,13 @@ private struct ReviewCanvas: UIViewRepresentable {
     let onMark: (CGRect) -> Void
     let onSelect: (Int) -> Void
     let onTurn: (Int) -> Void
+    /// Where the picture sits in the canvas (zoomed and panned), for the note bubble.
+    var onFrame: (CGRect) -> Void = { _ in }
 
     func makeUIView(context: Context) -> ReviewCanvasView { ReviewCanvasView() }
 
     func updateUIView(_ view: ReviewCanvasView, context: Context) {
+        view.onFrame = onFrame
         view.onMark = onMark
         view.onSelect = onSelect
         view.onTurn = onTurn
@@ -537,6 +520,8 @@ final class ReviewCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerD
     var onMark: (CGRect) -> Void = { _ in }
     var onSelect: (Int) -> Void = { _ in }
     var onTurn: (Int) -> Void = { _ in }
+    var onFrame: (CGRect) -> Void = { _ in }
+    private var reportedFrame: CGRect?
     var marks: [CGRect] = [] { didSet { if marks != oldValue { overlay.setNeedsDisplay() } } }
     var highlighted: Int? { didSet { if highlighted != oldValue { overlay.setNeedsDisplay() } } }
     var turnsPages = false { didSet { swipes.forEach { $0.isEnabled = turnsPages } } }
@@ -638,6 +623,7 @@ final class ReviewCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerD
             look(at: focus)
         }
         overlay.setNeedsDisplay()
+        reportFrame()
     }
 
     private func visibleCenter() -> CGPoint {
@@ -660,8 +646,15 @@ final class ReviewCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerD
     }
 
     func viewForZooming(in scrollView: UIScrollView) -> UIView? { imageView }
-    func scrollViewDidZoom(_ scrollView: UIScrollView) { centerContent(); overlay.setNeedsDisplay() }
-    func scrollViewDidScroll(_ scrollView: UIScrollView) { overlay.setNeedsDisplay() }
+    func scrollViewDidZoom(_ scrollView: UIScrollView) { centerContent(); overlay.setNeedsDisplay(); reportFrame() }
+    func scrollViewDidScroll(_ scrollView: UIScrollView) { overlay.setNeedsDisplay(); reportFrame() }
+
+    /// Tells SwiftUI where the picture is now (after the update that moved it).
+    private func reportFrame() {
+        guard let frame = pictureFrame, frame != reportedFrame else { return }
+        reportedFrame = frame
+        DispatchQueue.main.async { [weak self] in self?.onFrame(frame) }
+    }
 
     /// The picture's frame on screen, in the overlay's coordinates.
     fileprivate var pictureFrame: CGRect? {
@@ -853,27 +846,3 @@ enum ReviewRendering {
     }
 }
 
-/// The window's size, which the keyboard doesn't change (unlike the space a view gets).
-private struct ReviewWindowProbe: UIViewRepresentable {
-    @Binding var size: CGSize
-
-    func makeUIView(context: Context) -> Probe {
-        let probe = Probe()
-        probe.report = { value in if size != value { size = value } }
-        return probe
-    }
-
-    func updateUIView(_ probe: Probe, context: Context) {
-        probe.report = { value in if size != value { size = value } }
-    }
-
-    final class Probe: UIView {
-        var report: (CGSize) -> Void = { _ in }
-        override func didMoveToWindow() { super.didMoveToWindow(); check() }
-        override func layoutSubviews() { super.layoutSubviews(); check() }
-        private func check() {
-            guard let size = window?.bounds.size else { return }
-            DispatchQueue.main.async { [weak self] in self?.report(size) }
-        }
-    }
-}

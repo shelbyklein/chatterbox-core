@@ -20,6 +20,16 @@ enum MobileSidequests {
         return chats.contains { $0.id == parent }
     }
 
+    /// A sidequest in a few words, for its popover: its title without "Sidequest · ", else the
+    /// first sentence of its task, never the whole brief (Shelby, 2026-11-20).
+    static func shortTitle(_ quest: Companion.ChatSummary) -> String {
+        let title = quest.title.hasPrefix("Sidequest · ") ? String(quest.title.dropFirst("Sidequest · ".count)) : quest.title
+        if !title.trimmingCharacters(in: .whitespaces).isEmpty, title != "New chat" { return title }
+        let task = quest.sidequestTask ?? quest.title
+        let sentence = task.split(whereSeparator: { ".!?\n".contains($0) }).first.map(String.init) ?? task
+        return sentence.count > 90 ? String(sentence.prefix(88)) + "\u{2026}" : sentence
+    }
+
     /// "Codex is working on: Render four options" in a card's or row's own words.
     static func line(_ quests: [Companion.ChatSummary]) -> String? {
         guard let first = quests.first else { return nil }
@@ -97,7 +107,7 @@ struct MobileSidequestIcon: View {
         .accessibilityAction(named: "Open") { open() }
         .popover(isPresented: $showing) {
             VStack(alignment: .leading, spacing: 10) {
-                Text(task).font(.subheadline.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
+                Text(MobileSidequests.shortTitle(quest)).font(.subheadline.weight(.semibold)).lineLimit(2)
                 Text("\(agent) · \(state)").font(.caption).foregroundStyle(.secondary)
                 Button { showing = false; open() } label: {
                     Label("Open", systemImage: "arrow.up.right").frame(maxWidth: .infinity)
