@@ -68,6 +68,9 @@ struct ChatDetailView: View {
     /// The Next Steps set you opened; a new set arrives folded to one line.
     @State private var expandedSteps: [String]?
     @State private var confirmingRestart = false
+    /// The chat's width, so the narrow bar's title row can span it (a principal toolbar item
+    /// only takes the width it's given).
+    @State private var barWidth: CGFloat = 0
     /// Keep Open on this sidequest's archive request.
     @State private var sidequestKept = false
     @State private var promoting: ChatPromotionTarget?
@@ -210,19 +213,13 @@ struct ChatDetailView: View {
         }
         .navigationTitle(chatNavigationTitle)
         .navigationBarTitleDisplayMode(.inline)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { barWidth = $0 }
         .toolbar { chatToolbar }
         .modifier(WideChatHeader(column: aboutColumn) { titleButton } trailing: {
             HStack(spacing: 10) {
                 modelButton(pill: true)
                 // The session's sidebar, right of the model (Shelby, 2026-11-20; was in the rail).
-                Button { toggleAbout() } label: {
-                    Image(systemName: "sidebar.right").font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(aboutShown ? Color.accentColor : Color.primary)
-                        .frame(width: 36, height: 36).contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(aboutShown ? "Hide Session Sidebar" : "Session Sidebar")
-                .accessibilityIdentifier("header-sidebar")
+                sidebarButton
             }
         })
         .alert("Restart Thread?", isPresented: $confirmingRestart) {
@@ -521,12 +518,29 @@ struct ChatDetailView: View {
         }
     }
 
-    /// Narrow: the name over the model line, centered on the bar.
+    /// Narrow: the name on the left and the model on the right, across the bar (Shelby,
+    /// 2026-11-20; they were stacked in the middle).
     private var chatTitle: some View {
-        VStack(spacing: 0) {
-            titleButton
+        HStack(spacing: 8) {
+            titleButton.layoutPriority(1)
+            Spacer(minLength: 4)
             modelButton(pill: false)
         }
+        // As wide as the bar allows: iOS starts it at the bar's leading margin, so this leaves
+        // room for the sidebar's button on the right (measured on the closed Duo, 2026-11-20).
+        .frame(width: barWidth > 160 ? barWidth - 88 : nil)
+    }
+
+    /// Opens or closes the session's sidebar (About).
+    private var sidebarButton: some View {
+        Button { toggleAbout() } label: {
+            Image(systemName: "sidebar.right").font(.system(size: 18, weight: .medium))
+                .foregroundStyle(aboutShown ? Color.accentColor : Color.primary)
+                .frame(width: 36, height: 36).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(aboutShown ? "Hide Session Sidebar" : "Session Sidebar")
+        .accessibilityIdentifier("header-sidebar")
     }
 
     /// Tap the name for About this thread: its status and model, where it works, its task
@@ -582,25 +596,12 @@ struct ChatDetailView: View {
             // elsewhere (the title opens About, which has the actions; the model is under the
             // title; Feedback is on the list's bar).
             if aboutColumn == nil {
-                ToolbarItem(placement: .topBarTrailing) { settingsButton }
+                // The sidebar's button where the agent's glyph was (Shelby, 2026-11-20): the
+                // model text opens Session Settings.
+                ToolbarItem(placement: .topBarTrailing) { sidebarButton }
                 ToolbarItem(placement: .topBarTrailing) { chatMenu }
                 ToolbarItem(placement: .topBarTrailing) { FeedbackButton() }
             }
-    }
-
-    /// Session Settings (model, effort, permissions), one tap from the session: its agent's glyph.
-    private var settingsButton: some View {
-        Button { showingSettings = true } label: {
-            Image(summary.backend == "codex" ? "AgentCodex" : "AgentClaude")
-                .resizable().renderingMode(.template).scaledToFit()
-                .frame(width: 18, height: 18)
-                .foregroundStyle(agentAccent)
-                .frame(width: 30, height: 30)
-        }
-        .disabled(detail?.options == nil)
-        .accessibilityLabel("Session Settings")
-        .accessibilityValue(ChatSettingsLabels.chip(detail?.options) ?? detail?.settings ?? "")
-        .accessibilityIdentifier("rail-settings")
     }
 
     /// The session's ⋯ items: its menu here, and the open Duo's rail menu (MobileRail).
