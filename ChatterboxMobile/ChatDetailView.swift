@@ -518,9 +518,11 @@ struct ChatDetailView: View {
                 MobileWorkingPill(count: workingCount)
             }
             .font(pill ? .footnote.weight(.medium) : .caption2)
-            .foregroundStyle(.secondary)
+            // The pill in the agent's color (Appearance), text and border.
+            .foregroundStyle(pill ? agentAccent : .secondary)
             .padding(.horizontal, pill ? 12 : 0).padding(.vertical, pill ? 6 : 0)
-            .background { if pill { Capsule().fill(Color(uiColor: .tertiarySystemFill)) } }
+            .background { if pill { Capsule().fill(agentAccent.opacity(0.1)) } }
+            .overlay { if pill { Capsule().strokeBorder(agentAccent, lineWidth: 1) } }
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
