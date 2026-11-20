@@ -25,16 +25,18 @@ struct MobileReviewResult {
 }
 
 extension MobileComposerDraft where Image == PendingImage {
-    /// Puts review feedback in the box, after anything already typed there.
+    /// Puts review feedback in the box, after anything already typed there, and asks the
+    /// chat to send it (Send in the review sends, Shelby 2026-11-19).
     func add(_ review: MobileReviewResult) {
         let typed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if !review.text.isEmpty { text = typed.isEmpty ? review.text : typed + "\n\n" + review.text }
         images.append(contentsOf: review.images)
+        sendPending = true
     }
 }
 
 /// Full screen: tap to mark a spot, drag to mark an area, a note for each mark. PDFs go page
-/// by page and keep each page's marks. Add to Message hands back the feedback; the presenter
+/// by page and keep each page's marks. Send hands back the feedback (sent at once); the presenter
 /// puts it in the session's message box.
 struct MobileReviewView: View {
     let source: MobileReviewSource
@@ -146,8 +148,9 @@ struct MobileReviewView: View {
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Add to Message") { add() }
+                    Button("Send") { add() }
                         .bold()
+                        .accessibilityIdentifier("reviewSend")
                         .keyboardShortcut(.return, modifiers: .command)
                         .disabled(!hasFeedback || adding || picture == nil)
                 }

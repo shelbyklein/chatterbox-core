@@ -151,7 +151,9 @@ struct ChatDetailView: View {
             }
         }
         // Opening a chat here, from anywhere, clears it from New replies.
-        .onAppear { MobileSeenReplies.shared.markSeen(chat.id) }
+        .onAppear { MobileSeenReplies.shared.markSeen(chat.id); sendIfPending() }
+        // A review's Send filled the box: send it now, as the send button would.
+        .onChange(of: composerState.sendPending) { _, pending in if pending { sendIfPending() } }
         // The Desk says which task this session carries (its menu's task items).
         .task(id: chat.id) { _ = try? await store.desk() }
         .onDisappear { MobileSeenReplies.shared.markSeen(chat.id) }
@@ -807,6 +809,12 @@ struct ChatDetailView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("rate-limit-suggestion")
+    }
+
+    private func sendIfPending() {
+        guard composerState.sendPending else { return }
+        composerState.sendPending = false
+        Task { await send() }
     }
 
     /// `now`: stop the agent and send this right away, instead of adding it to the reply.

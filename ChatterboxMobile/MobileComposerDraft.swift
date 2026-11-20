@@ -16,6 +16,9 @@ final class MobileComposerDraft<Image> {
     var images: [Image] { didSet { persistImages(images) } }
     private(set) var inFlight: UUID?
     var sending: Bool { inFlight != nil }
+    /// Something filled the box to be sent at once (a review's Send): the chat sends it as
+    /// soon as it sees this, or when it next shows.
+    var sendPending = false
     @ObservationIgnored private let persistText: (String) -> Void
     @ObservationIgnored private let persistImages: ([Image]) -> Void
 
