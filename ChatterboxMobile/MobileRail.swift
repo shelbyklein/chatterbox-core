@@ -43,6 +43,10 @@ extension EnvironmentValues {
 /// window is wide (the open Duo) and has a strip on its trailing side.
 struct MobileRailColumn: View {
     let tab: String
+    /// The tab icons' group, measured from Shelby's screenshot: 48 points wide, centered 6
+    /// points left of the strip's middle.
+    static let width: CGFloat = 48
+    static let nudge: CGFloat = 6
     @Environment(\.horizontalSizeClass) private var sizeClass
     private var rail: MobileRail { .shared }
 
@@ -75,7 +79,7 @@ struct MobileRailColumn: View {
                             .resizable().renderingMode(.template).scaledToFit()
                             .frame(width: 22, height: 22)
                             .foregroundStyle(MobileConversationStyle.accent(for: session.backend))
-                            .frame(width: 48, height: 48)
+                            .frame(width: 44, height: 48)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -85,20 +89,23 @@ struct MobileRailColumn: View {
                 if let menu {
                     menu
                         .font(.title3.weight(.semibold))
-                        .frame(width: 48, height: 48)
+                        .frame(width: 44, height: 48)
                         .contentShape(Rectangle())
                         .accessibilityIdentifier("rail-menu")
                 }
                 FeedbackButton()
                     .font(.title3)
-                    .frame(width: 48, height: 48)
+                    .frame(width: 44, height: 48)
                     .contentShape(Rectangle())
             }
             .foregroundStyle(.primary)
             .padding(.vertical, 8)
-            .frame(width: 60)
-            .background(Capsule(style: .continuous).fill(Color(uiColor: .secondarySystemBackground)))
+            .frame(width: Self.width)
+            .modifier(RailGlass())
+            // On the tab icons' center line, which sits a little left of the strip's middle
+            // (Shelby's screenshot, 2026-11-20).
             .frame(maxWidth: .infinity)
+            .offset(x: -Self.nudge)
         }
     }
 
@@ -106,11 +113,22 @@ struct MobileRailColumn: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.title3.weight(.semibold))
-                .frame(width: 48, height: 48)
+                .frame(width: 44, height: 48)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
         .accessibilityIdentifier(id)
+    }
+}
+
+/// The same glass as iOS's own tab group below it; a plain dark capsule before iOS 26.
+private struct RailGlass: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26, *) {
+            content.glassEffect(.regular, in: Capsule(style: .continuous))
+        } else {
+            content.background(Capsule(style: .continuous).fill(Color(uiColor: .secondarySystemBackground)))
+        }
     }
 }
