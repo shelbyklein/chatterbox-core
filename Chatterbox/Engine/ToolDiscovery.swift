@@ -6,7 +6,7 @@ import Foundation
 /// The Tools settings list them, can turn them off per level, and can import a server.
 struct DiscoveredTool: Identifiable, Hashable {
     enum Kind: String { case server, skill, connector }
-    enum Source: String { case claude = "Claude", codex = "Codex", project = "Project file" }
+    enum Source: String { case claude = "Claude", codex = "Codex", gemini = "Gemini", project = "Project file" }
     var kind: Kind
     var source: Source
     /// As the agents name it ("inspo", "impeccable", "Gmail").
@@ -31,9 +31,10 @@ enum ToolDiscovery {
         return FileManager.default.homeDirectoryForCurrentUser
     }
 
-    /// Everything both agents load for a chat in `projectFolder` (nil: outside any project).
+    /// Everything the agents load for a chat in `projectFolder` (nil: outside any project).
     static func discover(projectFolder: String?) -> [DiscoveredTool] {
-        var found = claudeServers(projectFolder: projectFolder) + codexServers(projectFolder: projectFolder) + claudeSkills(projectFolder: projectFolder) + codexSkills()
+        var found = claudeServers(projectFolder: projectFolder) + codexServers(projectFolder: projectFolder) + geminiServers(projectFolder: projectFolder)
+            + claudeSkills(projectFolder: projectFolder) + codexSkills() + geminiSkills(projectFolder: projectFolder)
         found += connectors()
         // Same server in both agents' configs, or the same skill (one folder, or identical
         // copies): one row for both. A skill whose copies differ is marked.
@@ -154,6 +155,49 @@ enum ToolDiscovery {
         }
     }
 
+    // MARK: Gemini
+
+    /// ~/.gemini/config/mcp_config.json's servers (Antigravity CLI).
+    static func geminiServers(projectFolder: String? = nil) -> [DiscoveredTool] {
+        let config = json(home.appendingPathComponent(".gemini/config/mcp_config.json"))
+        let servers = config["mcpServers"] as? [String: Any] ?? [:]
+        return servers.sorted(by: { $0.key < $1.key }).compactMap { name, value in
+            guard let spec = value as? [String: Any] else { return nil }
+            return server(name, spec, source: .gemini, agents: [.gemini])
+        }
+    }
+
+    static func geminiSkills(projectFolder: String?) -> [DiscoveredTool] {
+        var roots: [(path: String, source: DiscoveredTool.Source, includeOnly: [String], exclude: [String])] = [
+            (home.appendingPathComponent(".gemini/config/skills").path, .gemini, [], []),
+            (home.appendingPathComponent(".gemini/skills").path, .gemini, [], []),
+        ]
+        let manifest = json(home.appendingPathComponent(".gemini/config/skills.json"))
+        for entry in (manifest["entries"] as? [[String: Any]]) ?? [] {
+            guard let raw = entry["path"] as? String, !raw.isEmpty else { continue }
+            let resolved = raw.hasPrefix("~/") ? home.path + "/" + raw.dropFirst(2) : raw
+            roots.append((resolved, .gemini, (entry["include_only"] as? [String]) ?? [], (entry["exclude"] as? [String]) ?? []))
+        }
+        if let folder = projectFolder {
+            roots.append((folder + "/.agents/skills", .project, [], []))
+        }
+        func matches(_ name: String, patterns: [String]) -> Bool {
+            patterns.contains { pattern in
+                name == pattern || name.range(of: "^(?:\(pattern))$", options: .regularExpression) != nil
+            }
+        }
+        var result: [DiscoveredTool] = []
+        for root in roots {
+            for (name, path) in skillFolders(in: root.path) {
+                if !root.includeOnly.isEmpty, !matches(name, patterns: root.includeOnly) { continue }
+                if !root.exclude.isEmpty, matches(name, patterns: root.exclude) { continue }
+                if result.contains(where: { $0.name == name && sameSkill($0.detail, path) }) { continue }
+                result.append(DiscoveredTool(kind: .skill, source: root.source, name: name, detail: path, agents: [.gemini], offKey: ToolKey.skill(name)))
+            }
+        }
+        return result
+    }
+
     // MARK: Connectors
 
     /// The claude.ai connectors Claude chats have loaded (noted from their start-up message),
@@ -192,8 +236,11 @@ enum ToolDiscovery {
     /// config's (switched off by Chatterbox or in the config itself), then what Chatterbox adds.
     /// One Chatterbox adds under a name the agent already has takes that one's place.
     static func loadedServers(_ backend: Backend, projectFolder: String?, tools: EffectiveTools) -> [LoadedServer] {
-        let own = backend == .claude ? claudeServers(projectFolder: projectFolder)
-            : backend == .codex ? codexServers(projectFolder: projectFolder) : []
+        let own: [DiscoveredTool] = switch backend {
+        case .claude: claudeServers(projectFolder: projectFolder)
+        case .codex: codexServers(projectFolder: projectFolder)
+        case .gemini: geminiServers(projectFolder: projectFolder)
+        }
         let added = tools.servers(for: backend)
         let replaced = Set(added.map(\.name))
         return own.filter { !replaced.contains($0.name) }.map { item in
@@ -205,7 +252,7 @@ enum ToolDiscovery {
     // MARK: Helpers
 
     private static func server(_ name: String, _ spec: [String: Any], source: DiscoveredTool.Source, agents: [Backend]) -> DiscoveredTool {
-        let url = (spec["url"] as? String) ?? ""
+        let url = (spec["url"] as? String) ?? (spec["serverUrl"] as? String) ?? ""
         let command = (spec["command"] as? String) ?? ""
         let args = (spec["args"] as? [String]) ?? []
         var importable = ToolServer(name: ToolServer.cleanName(name), kind: url.isEmpty ? .command : .url, command: command, args: args,

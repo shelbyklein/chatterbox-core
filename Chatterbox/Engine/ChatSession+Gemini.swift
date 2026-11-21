@@ -102,7 +102,12 @@ extension ChatSession {
     func geminiEnsureSession(earlierItems: Int) async throws -> (GeminiACPProcess, String) {
         if let starting = geminiStarting { try await starting.value }
         if let process = geminiProcess, process.isRunning, geminiSessionReady, let id = record.gemini?.sessionId {
-            return (process, id)
+            if ToolScopes.fingerprint(for: self) == geminiToolsFingerprint,
+               SecretVault.shared.fingerprint(for: self) == geminiSecretsFingerprint {
+                return (process, id)
+            }
+            // Tools or Secrets changed: restart agy so the resumed session gets the new MCP servers and env.
+            releaseGeminiProcess()
         }
         let task = Task { @MainActor in try await self.geminiStartSession(earlierItems: earlierItems) }
         geminiStarting = task
@@ -116,6 +121,10 @@ extension ChatSession {
 
     private func geminiStartSession(earlierItems: Int) async throws {
         if record.gemini == nil { record.gemini = GeminiSettings.newChat() }
+        let tools = ToolScopes.effective(for: self)
+        let mcpServers = geminiToolsMCPServers(tools)
+        geminiToolsFingerprint = ToolScopes.fingerprint(for: self)
+        geminiSecretsFingerprint = SecretVault.shared.fingerprint(for: self)
         let process: GeminiACPProcess
         if let running = geminiProcess, running.isRunning {
             process = running
@@ -127,7 +136,11 @@ extension ChatSession {
             geminiSessionReady = false
             _ = try await process.request("initialize", [
                 "protocolVersion": 1,
-                "clientCapabilities": ["fs": ["readTextFile": false, "writeTextFile": false], "terminal": false],
+                "clientCapabilities": [
+                    "fs": ["readTextFile": false, "writeTextFile": false],
+                    "terminal": false,
+                    "elicitation": ["form": [:]],
+                ],
                 "clientInfo": ["name": "Chatterbox", "version": "1"],
             ])
         }
@@ -136,12 +149,12 @@ extension ChatSession {
         if let saved = record.gemini?.sessionId {
             // Resume without replaying the conversation; older agy builds only load (replay).
             do {
-                opened = try await process.request("session/resume", ["sessionId": .string(saved), "cwd": .string(cwd), "mcpServers": []])
+                opened = try await process.request("session/resume", ["sessionId": .string(saved), "cwd": .string(cwd), "mcpServers": .array(mcpServers)])
             } catch {
                 geminiReplaying = true
                 defer { geminiReplaying = false }
                 do {
-                    opened = try await process.request("session/load", ["sessionId": .string(saved), "cwd": .string(cwd), "mcpServers": []])
+                    opened = try await process.request("session/load", ["sessionId": .string(saved), "cwd": .string(cwd), "mcpServers": .array(mcpServers)])
                 } catch {
                     // The saved session is gone: a new one, caught up on the chat.
                     record.gemini?.sessionId = nil
@@ -151,7 +164,7 @@ extension ChatSession {
             }
         }
         if record.gemini?.sessionId == nil {
-            let result = try await process.request("session/new", ["cwd": .string(cwd), "mcpServers": []])
+            let result = try await process.request("session/new", ["cwd": .string(cwd), "mcpServers": .array(mcpServers)])
             guard let sessionID = result["sessionId"]?.string else { throw GeminiError(message: "Gemini didn't open a session.") }
             record.gemini?.sessionId = sessionID
             opened = result
@@ -303,6 +316,9 @@ extension ChatSession {
             case "session/request_permission":
                 guard let id = message["id"] else { return }
                 geminiPermission(id: id, params: message["params"] ?? [:])
+            case "elicitation/create":
+                guard let id = message["id"] else { return }
+                geminiElicitation(id: id, params: message["params"] ?? [:])
             default:
                 // Requests we don't serve (files, terminals: not offered at initialize).
                 if let id = message["id"] { geminiProcess?.respondError(to: id, code: -32601, message: "Not supported by Chatterbox.") }
@@ -512,6 +528,119 @@ extension ChatSession {
             process.respond(to: requestID, ["outcome": ["outcome": "cancelled"]])
         }
         updateItem(itemID) { $0.approvalState = decision }
+        onChange?(self)
+    }
+
+    // MARK: - Questions (ACP elicitation/create)
+
+    /// Maps an ACP `elicitation/create` form schema (such as agy's `ask_question` tool) onto a
+    /// standard question card, keeping the field metadata on the item so answering never depends
+    /// on in-memory state.
+    private func geminiElicitation(id: JSON, params: JSON) {
+        let properties = params["requestedSchema"]?["properties"]?.object ?? [:]
+        // Pair `<key>` with `<key>_other` (agy's optional free-form companion field).
+        let primaryKeys = properties.keys
+            .filter { key in
+                guard key.hasSuffix("_other") else { return true }
+                let base = String(key.dropLast("_other".count))
+                return properties[base] == nil
+            }
+            .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+
+        var questions: [AgentQuestion] = []
+        var fieldsMeta: [String: JSON] = [:]
+
+        for key in primaryKeys {
+            guard let prop = properties[key] else { continue }
+            let isArray = prop["type"]?.string == "array"
+            let rawChoices = isArray
+                ? (prop["items"]?["anyOf"]?.array ?? prop["items"]?["oneOf"]?.array ?? [])
+                : (prop["oneOf"]?.array ?? prop["anyOf"]?.array ?? [])
+            var options: [AgentQuestion.Option] = []
+            var valueMap: [String: JSON] = [:]
+            if !rawChoices.isEmpty {
+                for choice in rawChoices {
+                    let const = choice["const"]?.string ?? choice["title"]?.string ?? ""
+                    let title = choice["title"]?.string ?? const
+                    guard !title.isEmpty else { continue }
+                    options.append(.init(label: title, detail: choice["description"]?.string ?? ""))
+                    valueMap[title] = .string(const)
+                }
+            } else {
+                let enumValues = (isArray ? prop["items"]?["enum"]?.array : prop["enum"]?.array) ?? []
+                for entry in enumValues {
+                    guard let value = entry.string, !value.isEmpty else { continue }
+                    options.append(.init(label: value, detail: ""))
+                    valueMap[value] = .string(value)
+                }
+            }
+            let promptText = prop["title"]?.string ?? prop["description"]?.string ?? key
+            let otherKey = properties[key + "_other"] != nil ? (key + "_other") : nil
+            questions.append(AgentQuestion(id: key, header: "", question: promptText, options: options,
+                                           multiSelect: isArray, isSecret: false))
+            var meta: [String: JSON] = ["isArray": .bool(isArray), "map": .object(valueMap)]
+            if let otherKey { meta["otherKey"] = .string(otherKey) }
+            fieldsMeta[key] = .object(meta)
+        }
+
+        guard !questions.isEmpty else {
+            geminiProcess?.respond(to: id, ["action": "decline"])
+            return
+        }
+        let payload: JSON = ["id": id, "fields": .object(fieldsMeta)]
+        appendItem(DisplayItem(kind: .questions, requestID: payload, approvalState: .pending, questions: questions))
+        onChange?(self)
+    }
+
+    /// Sends answers (or a decline when skipped) back to an ACP `elicitation/create` request.
+    func geminiAnswer(_ itemID: UUID, answers: [String: [String]]?) {
+        guard let item = record.items.first(where: { $0.id == itemID }), item.approvalState == .pending,
+              let payload = item.requestID, let requestID = payload["id"] else { return }
+        guard let process = geminiProcess, process.isRunning else {
+            updateItem(itemID) { $0.approvalState = .expired }
+            notice("That request is no longer active, because Gemini restarted. Ask again to continue.")
+            onChange?(self)
+            return
+        }
+        if let answers {
+            let fields = payload["fields"]?.object ?? [:]
+            var content: [String: JSON] = [:]
+            for (key, selected) in answers where !selected.isEmpty {
+                let meta = fields[key]?.object ?? [:]
+                let isArray = meta["isArray"]?.bool ?? false
+                let otherKey = meta["otherKey"]?.string
+                let valueMap = meta["map"]?.object ?? [:]
+                var mapped: [String] = []
+                var custom: [String] = []
+                for choice in selected {
+                    if let const = valueMap[choice]?.string {
+                        mapped.append(const)
+                    } else {
+                        custom.append(choice)
+                    }
+                }
+                if isArray {
+                    if !mapped.isEmpty { content[key] = .array(mapped.map(JSON.string)) }
+                    if !custom.isEmpty {
+                        if let otherKey { content[otherKey] = .string(custom.joined(separator: ", ")) }
+                        else { content[key] = .array((mapped + custom).map(JSON.string)) }
+                    }
+                } else {
+                    if let first = mapped.first { content[key] = .string(first) }
+                    if !custom.isEmpty {
+                        if let otherKey { content[otherKey] = .string(custom.joined(separator: ", ")) }
+                        else { content[key] = .string(custom.joined(separator: ", ")) }
+                    }
+                }
+            }
+            process.respond(to: requestID, ["action": "accept", "content": .object(content)])
+        } else {
+            process.respond(to: requestID, ["action": "decline"])
+        }
+        updateItem(itemID) {
+            $0.answers = answers
+            $0.approvalState = answers == nil ? .denied : .approved
+        }
         onChange?(self)
     }
 }

@@ -221,7 +221,8 @@ struct ToolsPanel: View {
     /// two agents' copies differ.
     private func skillRow(_ item: DiscoveredTool) -> some View {
         let shared = sets[scope.key]?.skillFolders.contains(item.detail) == true
-        let other: Backend? = item.agents.count == 1 ? (item.agents[0] == .claude ? .codex : .claude) : nil
+        let shareable = [Backend.claude, .codex].filter { !item.agents.contains($0) }
+        let other: Backend? = shareable.count == 1 ? shareable[0] : nil
         return HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {

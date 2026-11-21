@@ -121,6 +121,8 @@ extension ChatSession {
                 if link.running { isRunning = true }
                 do {
                     try process.attach(id: link.processID, from: link.offset)
+                    geminiToolsFingerprint = ToolScopes.fingerprint(for: self)
+                    geminiSecretsFingerprint = SecretVault.shared.fingerprint(for: self)
                     geminiAlive = true
                 } catch {
                     geminiProcess = nil

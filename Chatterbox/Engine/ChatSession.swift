@@ -121,6 +121,9 @@ final class ChatSession: Identifiable {
     @ObservationIgnored var geminiQueue: [(message: UserMessage, item: UUID)] = []
     /// Counts Gemini's turns, so a Stop's deadline only ever ends the turn it was pressed in.
     @ObservationIgnored var geminiTurn = 0
+    /// The Tools and Secrets settings the running Gemini process started with (see ChatSession+Tools).
+    @ObservationIgnored var geminiToolsFingerprint = ""
+    @ObservationIgnored var geminiSecretsFingerprint = ""
 
     // Codex state (see ChatSession+Codex.swift).
     @ObservationIgnored var codexTurnID: String?
@@ -441,7 +444,7 @@ final class ChatSession: Identifiable {
         switch record.backend {
         case .codex: codexAnswer(itemID, answers: answers)
         case .claude: claudeAnswer(itemID, answers: answers)
-        case .gemini: break // agy asks through permission requests only
+        case .gemini: geminiAnswer(itemID, answers: answers)
         }
     }
 

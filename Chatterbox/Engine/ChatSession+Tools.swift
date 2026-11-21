@@ -141,6 +141,36 @@ extension ChatSession {
         if !skills.isEmpty { config["skills.config"] = .array(skills) }
         return config
     }
+
+    // MARK: Gemini
+
+    /// The servers this chat adds for Gemini, in ACP `session/new` / `resume` / `load` format.
+    func geminiToolsMCPServers(_ tools: EffectiveTools) -> [JSON] {
+        tools.servers(for: .gemini).map { server in
+            switch server.kind {
+            case .command:
+                let env = Self.serverEnvironment(server).sorted { $0.key < $1.key }
+                    .map { JSON.object(["name": .string($0.key), "value": .string($0.value)]) }
+                return [
+                    "name": .string(server.name),
+                    "command": .string(server.command),
+                    "args": .array(server.args.map { .string($0) }),
+                    "env": .array(env),
+                ]
+            case .url:
+                var headers: [JSON] = []
+                if let token = server.bearerSecret.flatMap({ SecretVault.shared.value(forVariable: $0) }) {
+                    headers.append(["name": "Authorization", "value": .string("Bearer " + token)])
+                }
+                return [
+                    "name": .string(server.name),
+                    "type": "http",
+                    "url": .string(server.url),
+                    "headers": .array(headers),
+                ]
+            }
+        }
+    }
 }
 
 extension ChatSession {
@@ -168,7 +198,7 @@ extension ChatSession {
         let own: [String] = switch backend {
         case .codex: ToolDiscovery.codexServers(projectFolder: session.record.boundFolder).map(\.name)
         case .claude: ToolDiscovery.claudeServers(projectFolder: session.record.boundFolder).map(\.name)
-        case .gemini: []
+        case .gemini: ToolDiscovery.geminiServers(projectFolder: session.record.boundFolder).map(\.name)
         }
         let added = ToolScopes.effective(for: session).servers(for: backend).map(\.name)
         return (own + added).contains { same($0, name) }
