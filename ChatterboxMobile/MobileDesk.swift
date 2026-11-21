@@ -1399,40 +1399,59 @@ private struct DeskRequestCard: View {
                     Text("Working on it…").font(.footnote).foregroundStyle(Color.metadata)
                 }
             } else {
-                HStack(spacing: 8) {
-                    startButton(taps)
-                    if let link {
-                        Button("Link\u{2026}", action: taps(link))
-                            .buttonStyle(.bordered)
-                            .accessibilityLabel("Link a thread")
-                            .accessibilityIdentifier("desk-link-\(request.id.uuidString)")
-                    }
-                    Spacer(minLength: 0)
-                    if let markDone {
-                        Button(action: taps(markDone)) { Label("Done", systemImage: "checkmark") }
-                            .buttonStyle(.borderless)
-                            .accessibilityLabel("Mark done")
-                            .accessibilityHint("Done outside Chatterbox: moves it to Done without starting a thread")
-                            .accessibilityIdentifier("desk-done-\(request.id.uuidString)")
-                    }
-                    removeButton(taps)
+                // Labels when they fit; in a narrow column (the open Duo's three), Start and icons,
+                // never a word broken across lines (Shelby, 2026-11-20).
+                ViewThatFits(in: .horizontal) {
+                    actionRow(taps, compact: false)
+                    actionRow(taps, compact: true)
                 }
             }
         }
         .deskCard()
     }
 
+    private func actionRow(_ taps: DeskSwipeTaps, compact: Bool) -> some View {
+        HStack(spacing: compact ? 4 : 8) {
+            startButton(taps)
+            if let link {
+                Button(action: taps(link)) {
+                    if compact { Image(systemName: "link") } else { Text("Link\u{2026}") }
+                }
+                .buttonStyle(.bordered)
+                .accessibilityLabel("Link a thread")
+                .accessibilityIdentifier("desk-link-\(request.id.uuidString)")
+            }
+            Spacer(minLength: 0)
+            if let markDone {
+                Button(action: taps(markDone)) {
+                    if compact { Image(systemName: "checkmark").frame(width: 32, height: 32) } else { Label("Done", systemImage: "checkmark") }
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Mark done")
+                .accessibilityHint("Done outside Chatterbox: moves it to Done without starting a thread")
+                .accessibilityIdentifier("desk-done-\(request.id.uuidString)")
+            }
+            removeButton(taps, compact: compact)
+        }
+        .lineLimit(1)
+        .fixedSize(horizontal: !compact, vertical: false)
+    }
+
     // The place chip above changes the place; with none yet, Start asks for one first.
     private func startButton(_ taps: DeskSwipeTaps) -> some View {
         Button("Start", action: taps(start))
             .buttonStyle(.borderedProminent)
+            .lineLimit(1).fixedSize()
             .accessibilityHint(place == nil ? "Choose a place, then start" : "Choose the model, or continue a session already there")
             .accessibilityIdentifier("desk-start-\(request.id.uuidString)")
     }
 
-    private func removeButton(_ taps: DeskSwipeTaps) -> some View {
-        Button("Remove", action: taps(ignore))
+    private func removeButton(_ taps: DeskSwipeTaps, compact: Bool = false) -> some View {
+        Button(action: taps(ignore)) {
+            if compact { Image(systemName: "trash").frame(width: 32, height: 32) } else { Text("Remove") }
+        }
             .buttonStyle(.borderless)
+            .accessibilityLabel("Remove")
             .foregroundStyle(Color.metadata)
             .accessibilityHint("Takes it off the Desk")
             .accessibilityIdentifier("desk-ignore-\(request.id.uuidString)")
