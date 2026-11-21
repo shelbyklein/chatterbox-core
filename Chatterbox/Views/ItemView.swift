@@ -114,7 +114,7 @@ struct ItemView: View {
             }
         } else {
             VStack(alignment: .leading, spacing: 6) {
-                MarkdownText(text: item.text)
+                MarkdownText(text: item.text, isStreaming: item.phase == .streaming)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     // Its ```actions buttons: live only while it's the newest reply.
                     .environment(\.replyActions, item.text.contains("```actions") ? replyActionResolver?.context(for: item.id) : nil)

@@ -40,6 +40,29 @@ final class CompanionServer {
     @ObservationIgnored private var listener: NWListener?
     @ObservationIgnored private var failedPairings = 0
     @ObservationIgnored private let mutations = CompanionMutationLedger()
+    @ObservationIgnored private var chatListCache: (revision: Int, pinned: [String], pressure: Companion.Pressure?, at: Date, response: HTTPResponse)?
+
+    private final class CachedThumbnail: NSObject {
+        let data: Data
+        let contentType: String
+        init(data: Data, contentType: String) { self.data = data; self.contentType = contentType }
+    }
+    /// Thread-safe bounded thumbnail cache (`NSCache` is thread-safe, wrapped for Swift 6 Sendable).
+    private final class ThumbnailCache: @unchecked Sendable {
+        static let shared = ThumbnailCache()
+        private let cache: NSCache<NSString, CachedThumbnail> = {
+            let cache = NSCache<NSString, CachedThumbnail>()
+            cache.countLimit = 200
+            cache.totalCostLimit = 32 * 1024 * 1024
+            return cache
+        }()
+        func get(_ key: String) -> (Data, String)? {
+            cache.object(forKey: key as NSString).map { ($0.data, $0.contentType) }
+        }
+        func set(_ key: String, data: Data, contentType: String) {
+            cache.setObject(CachedThumbnail(data: data, contentType: contentType), forKey: key as NSString, cost: data.count)
+        }
+    }
 
     private init() {
         if let data = AppPreferences.defaults.data(forKey: Self.devicesKey),
@@ -256,6 +279,11 @@ final class CompanionServer {
         let side = response.thumbnailSize
         let fallback = response.fallbackFile
         let resized = await Task.detached(priority: .utility) { () -> (Data, String)? in
+            let values = try? source.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+            let mtime = values?.contentModificationDate?.timeIntervalSince1970 ?? 0
+            let fileSize = values?.fileSize ?? 0
+            let cacheKey = "\(source.path)|\(mtime)|\(fileSize)|\(side)|\(fallback ? 1 : 0)"
+            if let hit = ThumbnailCache.shared.get(cacheKey) { return hit }
             guard let image = CGImageSourceCreateWithURL(source as CFURL, nil) else { return nil }
             let properties = CGImageSourceCopyPropertiesAtIndex(image, 0, nil) as? [CFString: Any]
             let width = properties?[kCGImagePropertyPixelWidth] as? Int ?? 0
@@ -274,7 +302,10 @@ final class CompanionServer {
             guard let destination = CGImageDestinationCreateWithData(data, type.identifier as CFString, 1, nil) else { return nil }
             CGImageDestinationAddImage(destination, thumbnail, alpha ? nil : [kCGImageDestinationLossyCompressionQuality: 0.82] as CFDictionary)
             guard CGImageDestinationFinalize(destination) else { return nil }
-            return (data as Data, alpha ? "image/png" : "image/jpeg")
+            let encoded = data as Data
+            let mime = alpha ? "image/png" : "image/jpeg"
+            ThumbnailCache.shared.set(cacheKey, data: encoded, contentType: mime)
+            return (encoded, mime)
         }.value
         if let (data, type) = resized { return HTTPResponse(status: 200, contentType: type, body: data) }
         if fallback { return HTTPResponse(status: 200, contentType: response.contentType, body: Data(), fileURL: source) }
@@ -324,7 +355,16 @@ final class CompanionServer {
 
         switch (request.method, parts.count) {
         case ("GET", 2) where parts[1] == "chats":
-            return .json(CompanionMapper.chatList(model))
+            let rev = model.companionListRevision
+            let pinned = AppPreferences.defaults.stringArray(forKey: "macPinnedThreads") ?? []
+            let pressure = PressureHooks.snapshot()
+            if let cached = chatListCache, cached.revision == rev, cached.pinned == pinned, cached.pressure == pressure,
+               Date().timeIntervalSince(cached.at) < 15 {
+                return cached.response
+            }
+            let response = HTTPResponse.json(CompanionMapper.chatList(model))
+            chatListCache = (rev, pinned, pressure, Date(), response)
+            return response
         case ("GET", 2) where parts[1] == "archived":
             // The phone's Archived list: newest archived first, with ?q= words to search by.
             return .json(CompanionMapper.archived(model, query: request.query["q"] ?? ""))

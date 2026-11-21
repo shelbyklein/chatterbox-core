@@ -67,6 +67,7 @@ struct CommandReceipt: Codable {
     private let ownership: RuntimeOwnership
     private let root: URL
     private var dirty: Set<UUID> = []
+    private var stateDirty = false
     private var saveScheduled = false
     private var agentIdleSince: [UUID: Date] = [:]
     private var codexThreadIdleSince: [String: Date] = [:]
@@ -99,9 +100,35 @@ struct CommandReceipt: Codable {
             state.commands[key]?.state = "delivery_uncertain"
         }
         let folder=root.appendingPathComponent("Conversations")
+        let files = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil).filter { $0.pathExtension == "json" }
+        // Decode conversation files across cores so cold starts scale with hundreds of chats.
+        let decodedRecords: [ConversationRecord]
+        if files.count <= 8 {
+            decodedRecords = try files.map { try decoder.decode(ConversationRecord.self, from: Data(contentsOf: $0)) }
+        } else {
+            final class DecodeResults: @unchecked Sendable {
+                var records: [ConversationRecord?]
+                var firstError: Error?
+                let lock = NSLock()
+                init(count: Int) { records = Array(repeating: nil, count: count) }
+            }
+            let box = DecodeResults(count: files.count)
+            DispatchQueue.concurrentPerform(iterations: files.count) { index in
+                if box.lock.withLock({ box.firstError != nil }) { return }
+                do {
+                    let localDecoder = JSONDecoder()
+                    localDecoder.dateDecodingStrategy = .iso8601
+                    let record = try localDecoder.decode(ConversationRecord.self, from: Data(contentsOf: files[index]))
+                    box.lock.withLock { box.records[index] = record }
+                } catch {
+                    box.lock.withLock { if box.firstError == nil { box.firstError = error } }
+                }
+            }
+            if let error = box.firstError { throw error }
+            decodedRecords = box.records.compactMap { $0 }
+        }
         var adopted=Set<UUID>()
-        for file in try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil) where file.pathExtension == "json" {
-            var record = try decoder.decode(ConversationRecord.self, from: Data(contentsOf: file))
+        for var record in decodedRecords {
             if record.adoptAsSidequestIfAutomationRun() { adopted.insert(record.id) }
             let session=ChatSession(record: record)
             session.awaitingHostResume=session.hasHostLinks
@@ -157,7 +184,7 @@ struct CommandReceipt: Codable {
         let found = Set(survey.processes.map(\.id))
         var waiting = 0
         for session in sessions where session.awaitingHostResume {
-            let links = [session.record.claudeHost?.processID, session.record.codexHost?.processID].compactMap { $0 }
+            let links = [session.record.claudeHost?.processID, session.record.codexHost?.processID, session.record.geminiHost?.processID].compactMap { $0 }
             guard survey.complete || links.allSatisfy(found.contains) else { waiting += 1; continue }
             session.resumeFromHost(survey.processes)
             changed(session, streamed: false)
@@ -435,7 +462,10 @@ struct CommandReceipt: Codable {
             }
         }
         finishFlush()
-        persistStateInBackground()
+        if stateDirty {
+            stateDirty = false
+            persistStateInBackground()
+        }
         onFlushTimed?(Double(took-start)/1e9,Double(DispatchTime.now().uptimeNanoseconds-start)/1e9)
     }
 
@@ -452,7 +482,9 @@ struct CommandReceipt: Codable {
 
     /// The agent host can drop output once it's saved.
     private func ackHost(_ record: ConversationRecord) {
-        if let link=record.claudeHost, HostClient.shared.isConnected { HostClient.shared.ack(id:link.processID,offset:link.offset) }
+        guard HostClient.shared.isConnected else { return }
+        if let link=record.claudeHost { HostClient.shared.ack(id:link.processID,offset:link.offset) }
+        if let link=record.geminiHost { HostClient.shared.ack(id:link.processID,offset:link.offset) }
     }
 
     private func finishFlush() {
@@ -525,10 +557,12 @@ struct CommandReceipt: Codable {
     private let stateEncoder: JSONEncoder = { let e=JSONEncoder();e.dateEncodingStrategy = .iso8601;return e }()
     private var stateFile: URL { root.appendingPathComponent("runtime-state.json") }
     private func persistState() throws {
+        stateDirty = false
         let snapshot=state,file=stateFile
         try stateQueue.sync { [stateEncoder] in try stateEncoder.encode(snapshot).write(to:file,options:.atomic) }
     }
     private func persistStateInBackground() {
+        stateDirty = false
         let snapshot=state,file=stateFile
         stateQueue.async { [stateEncoder] in
             do { try stateEncoder.encode(snapshot).write(to:file,options:.atomic) }
@@ -593,6 +627,7 @@ struct CommandReceipt: Codable {
     }
     private func publish(_ s: ChatSession, kind: String) {
         state.sequence += 1;state.revisions[s.id.uuidString,default:0] += 1
+        if kind != "turn.progress" { stateDirty = true }
         let e=RuntimeEvent(sequence:state.sequence,chatID:s.id,revision:state.revisions[s.id.uuidString]!,kind:kind)
         state.events.append(e);if state.events.count>4096 {state.events.removeFirst(state.events.count-4096)}
         onEvent?(e)

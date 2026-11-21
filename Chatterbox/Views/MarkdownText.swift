@@ -9,13 +9,15 @@ import SwiftUI
 /// tables, quotes, rules, and fenced code, with inline bold, italics, code, and links.
 struct MarkdownText: View {
     let text: String
+    /// Streaming replies grow on every chunk: skip caching transient prefixes so they don't evict finished replies.
+    var isStreaming = false
     @Environment(\.readerStyle) private var style
     @Environment(\.chatFolder) private var folder
 
     var body: some View {
         let paths = PathLinks.context(for: text, folder: folder)
         VStack(alignment: .leading, spacing: style.paragraphSpacing) {
-            ForEach(Array(Self.blocks(text).enumerated()), id: \.offset) { _, block in
+            ForEach(Array(Self.blocks(text, cached: !isStreaming).enumerated()), id: \.offset) { _, block in
                 BlockView(block: block, paths: paths)
             }
         }
@@ -53,7 +55,8 @@ struct MarkdownText: View {
         return cache
     }()
 
-    static func blocks(_ text: String) -> [Block] {
+    static func blocks(_ text: String, cached: Bool = true) -> [Block] {
+        guard cached else { return parseBlocks(text) }
         let key = text as NSString
         if let hit = blockCache.object(forKey: key) { return hit.value }
         let parsed = parseBlocks(text)
@@ -97,14 +100,15 @@ struct MarkdownText: View {
 
             if trimmed.isEmpty { flush(); index += 1; continue }
 
-            if let match = trimmed.firstMatch(of: #/^(#{1,6})\s+(.+?)\s*#*$/#) {
+            let first = trimmed.first
+            if first == "#", let match = trimmed.firstMatch(of: #/^(#{1,6})\s+(.+?)\s*#*$/#) {
                 flush()
                 blocks.append(.heading(level: match.1.count, text: String(match.2)))
                 index += 1
                 continue
             }
 
-            if trimmed.firstMatch(of: #/^([-*_])(\s*\1){2,}$/#) != nil {
+            if (first == "-" || first == "*" || first == "_"), trimmed.firstMatch(of: #/^([-*_])(\s*\1){2,}$/#) != nil {
                 flush()
                 blocks.append(.rule)
                 index += 1
@@ -131,7 +135,7 @@ struct MarkdownText: View {
                 continue
             }
 
-            if trimmed.hasPrefix(">") {
+            if first == ">" {
                 if !paragraph.isEmpty || !list.isEmpty { flush() }
                 quote.append(String(trimmed.dropFirst()).trimmingCharacters(in: .whitespaces))
                 index += 1
@@ -139,13 +143,13 @@ struct MarkdownText: View {
             }
 
             let indent = line.prefix(while: { $0 == " " || $0 == "\t" }).reduce(0) { $0 + ($1 == "\t" ? 4 : 1) }
-            if let match = trimmed.firstMatch(of: #/^[-*+•]\s+(.*)$/#) {
+            if (first == "-" || first == "*" || first == "+" || first == "•"), let match = trimmed.firstMatch(of: #/^[-*+•]\s+(.*)$/#) {
                 if !paragraph.isEmpty || !quote.isEmpty { flush() }
                 list.append(ListItem(marker: "\u{2022}", depth: indent / 2, text: String(match.1)))
                 index += 1
                 continue
             }
-            if let match = trimmed.firstMatch(of: #/^(\d{1,3})[.)]\s+(.*)$/#) {
+            if let first, first.isASCII, first.isNumber, let match = trimmed.firstMatch(of: #/^(\d{1,3})[.)]\s+(.*)$/#) {
                 if !paragraph.isEmpty || !quote.isEmpty { flush() }
                 list.append(ListItem(marker: "\(match.1).", depth: indent / 2, text: String(match.2)))
                 index += 1
@@ -228,10 +232,12 @@ struct MarkdownText: View {
         return parsed
     }
 
+    private static let angleBracketRegex = try? NSRegularExpression(pattern: #"(\]\()((?:/|~/)[^)<>\n]*\s[^)<>\n]*)(\))"#)
+
     /// `[name](/a path/with spaces.pdf)`: Markdown ends a link at its first space, so agents'
     /// links to such files showed as raw text. Wrapped in <…>, which Markdown allows.
     static func angleBracketPaths(_ text: String) -> String {
-        guard text.contains("]("), let regex = try? NSRegularExpression(pattern: #"(\]\()((?:/|~/)[^)<>\n]*\s[^)<>\n]*)(\))"#) else { return text }
+        guard text.contains("]("), let regex = angleBracketRegex else { return text }
         return regex.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text), withTemplate: "$1<$2>$3")
     }
 
@@ -270,10 +276,12 @@ struct MarkdownText: View {
 struct MarkdownBlockText: View {
     let block: MarkdownText.Block
     let source: String
+    /// Precomputed context from the enclosing reply so multi-block messages don't rescan `source` per block.
+    var paths: PathLinks? = nil
     @Environment(\.chatFolder) private var folder
 
     var body: some View {
-        BlockView(block: block, paths: PathLinks.context(for: source, folder: folder))
+        BlockView(block: block, paths: paths ?? PathLinks.context(for: source, folder: folder))
     }
 }
 

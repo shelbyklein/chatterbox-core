@@ -213,8 +213,7 @@ extension ChatSession {
         let process = GeminiACPProcess()
         process.onMessage = { [weak self] message in
             guard let self else { return }
-            self.handleGemini(message)
-            self.onStreamed?(self)
+            if self.handleGemini(message) { self.onStreamed?(self) }
         }
         process.onExit = { [weak self] status, detail in self?.geminiProcessExited(status: status, detail: detail) }
         return process
@@ -307,23 +306,24 @@ extension ChatSession {
 
     // MARK: - Stream
 
-    private func handleGemini(_ message: JSON) {
+    /// Returns true when the message streamed transcript content that needs a throttled `onStreamed` pulse.
+    private func handleGemini(_ message: JSON) -> Bool {
         if let method = message["method"]?.string {
             switch method {
             case "session/update":
-                guard !geminiReplaying, message["params"]?["sessionId"]?.string == record.gemini?.sessionId else { return }
-                geminiUpdate(message["params"]?["update"] ?? [:])
+                guard !geminiReplaying, message["params"]?["sessionId"]?.string == record.gemini?.sessionId else { return false }
+                return geminiUpdate(message["params"]?["update"] ?? [:])
             case "session/request_permission":
-                guard let id = message["id"] else { return }
+                guard let id = message["id"] else { return false }
                 geminiPermission(id: id, params: message["params"] ?? [:])
             case "elicitation/create":
-                guard let id = message["id"] else { return }
+                guard let id = message["id"] else { return false }
                 geminiElicitation(id: id, params: message["params"] ?? [:])
             default:
                 // Requests we don't serve (files, terminals: not offered at initialize).
                 if let id = message["id"] { geminiProcess?.respondError(to: id, code: -32601, message: "Not supported by Chatterbox.") }
             }
-            return
+            return false
         }
         // A reply. Only a prompt's carries a stop reason: the turn is over.
         if let stop = message["result"]?["stopReason"]?.string {
@@ -333,12 +333,13 @@ extension ChatSession {
             notice("Gemini reported a problem: \(error["message"]?.string ?? "unknown error")")
             finishGeminiTurn(stopReason: "error", usage: nil)
         }
+        return false
     }
 
-    private func geminiUpdate(_ update: JSON) {
+    private func geminiUpdate(_ update: JSON) -> Bool {
         switch update["sessionUpdate"]?.string {
         case "agent_message_chunk":
-            guard let text = update["content"]?["text"]?.string else { return }
+            guard let text = update["content"]?["text"]?.string else { return false }
             if !isRunning { isRunning = true }
             geminiThoughtItem = nil
             if let item = geminiTextItem {
@@ -348,15 +349,17 @@ extension ChatSession {
                 geminiTextItem = item
                 geminiTextItems.append(item)
             }
+            return true
         case "agent_thought_chunk":
-            guard let text = update["content"]?["text"]?.string else { return }
+            guard let text = update["content"]?["text"]?.string else { return false }
             if let item = geminiThoughtItem {
                 updateItem(item) { $0.text += text }
             } else {
                 geminiThoughtItem = appendItem(DisplayItem(kind: .thought, text: text))
             }
+            return true
         case "tool_call":
-            guard let callID = update["toolCallId"]?.string else { return }
+            guard let callID = update["toolCallId"]?.string else { return false }
             // Anything said before a tool call was narration, not the answer.
             markGeminiTextAsCommentary()
             geminiTextItem = nil
@@ -368,25 +371,29 @@ extension ChatSession {
                 Self.applyGeminiTool(update, to: &row)
                 geminiToolItems[callID] = appendItem(row)
             }
+            return true
         case "tool_call_update":
-            guard let callID = update["toolCallId"]?.string, let item = geminiToolItems[callID] else { return }
+            guard let callID = update["toolCallId"]?.string, let item = geminiToolItems[callID] else { return false }
             updateItem(item) { Self.applyGeminiTool(update, to: &$0) }
             if update["status"]?.string == "completed", update["kind"]?.string == "edit",
                let path = update["locations"]?.array?.first?["path"]?.string {
                 showWrittenFile(path)
             }
+            return true
         case "plan":
             let steps = (update["entries"]?.array ?? []).compactMap { entry -> PlanStep? in
                 guard let text = entry["content"]?.string else { return nil }
                 return PlanStep(step: text, status: entry["status"]?.string ?? "pending")
             }
             showPlan(steps)
+            return true
         case "usage_update":
             if let used = update["used"]?.int, used > 0 {
                 contextUsage[.gemini] = ContextUsage(used: used, window: update["size"]?.int ?? contextUsage[.gemini]?.window)
             }
+            return false
         default:
-            break
+            return false
         }
     }
 
