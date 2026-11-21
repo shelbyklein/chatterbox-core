@@ -124,6 +124,8 @@ extension ChatSession {
                     geminiToolsFingerprint = ToolScopes.fingerprint(for: self)
                     geminiSecretsFingerprint = SecretVault.shared.fingerprint(for: self)
                     geminiAlive = true
+                    // A turn that was running when the service restarted is watched too.
+                    if link.running { geminiLastActivity = Date(); geminiWatchQuiet() }
                 } catch {
                     geminiProcess = nil
                     isRunning = false

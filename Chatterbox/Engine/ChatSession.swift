@@ -121,6 +121,8 @@ final class ChatSession: Identifiable {
     @ObservationIgnored var geminiQueue: [(message: UserMessage, item: UUID)] = []
     /// Counts Gemini's turns, so a Stop's deadline only ever ends the turn it was pressed in.
     @ObservationIgnored var geminiTurn = 0
+    /// When agy last said anything in this turn (an update or a request).
+    @ObservationIgnored var geminiLastActivity = Date.distantPast
     /// The Tools and Secrets settings the running Gemini process started with (see ChatSession+Tools).
     @ObservationIgnored var geminiToolsFingerprint = ""
     @ObservationIgnored var geminiSecretsFingerprint = ""

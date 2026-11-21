@@ -29,7 +29,9 @@ extension ChatSession {
         do {
             let (process, sessionID) = try await geminiEnsureSession(earlierItems: earlierItems)
             geminiTurn += 1
+            geminiLastActivity = Date()
             process.requestNow("session/prompt", ["sessionId": .string(sessionID), "prompt": .array(geminiContent(for: message))])
+            geminiWatchQuiet()
         } catch {
             isRunning = false
             notice(error.localizedDescription)
@@ -223,6 +225,44 @@ extension ChatSession {
         SecretVault.shared.environment(for: self).merging(["CHATTERBOX_CHAT_ID": id.uuidString]) { $1 }
     }
 
+    /// agy sometimes never ends a long turn: it writes its answer, has a last thought, then
+    /// goes silent with the prompt still open (2026-11-20 overnight, 2026-11-21 12:53), and a
+    /// message sent next waits as "Queued". With an answer written, nothing running and
+    /// nothing waiting on you, this long a silence ends the turn here; agy's process restarts
+    /// and the next message resumes the same session.
+    static var geminiQuietLimit: Duration = .seconds(180)
+    static var geminiQuietCheck: Duration = .seconds(15)
+
+    func geminiWatchQuiet() {
+        let turn = geminiTurn
+        Task { @MainActor [weak self] in
+            while true {
+                try? await Task.sleep(for: Self.geminiQuietCheck)
+                guard let self, self.isRunning, self.geminiTurn == turn, self.record.backend == .gemini else { return }
+                guard self.geminiTurnLooksFinished,
+                      Date().timeIntervalSince(self.geminiLastActivity) >= Self.seconds(Self.geminiQuietLimit) else { continue }
+                RuntimeHooks.note("Gemini went quiet after answering in \u{201C}\(self.title)\u{201D}; ended the turn and restarted its process")
+                self.releaseGeminiProcess()
+                self.finishGeminiTurn(stopReason: "end_turn", usage: nil)
+                return
+            }
+        }
+    }
+
+    static func seconds(_ duration: Duration) -> Double {
+        Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18
+    }
+
+    /// The turn has an answer, and nothing in it is still running or waiting on you.
+    var geminiTurnLooksFinished: Bool {
+        guard !geminiTextItems.isEmpty else { return false }
+        let tools = Set(geminiToolItems.values)
+        if record.items.contains(where: { tools.contains($0.id) && $0.toolState == .running }) { return false }
+        if record.items.contains(where: { $0.approvalState == .pending }) { return false }
+        guard let last = record.items.last(where: { $0.kind != .notice && $0.queued != true && !($0.kind == .user && $0.steered) }) else { return false }
+        return last.kind == .assistant || last.kind == .thought
+    }
+
     /// How long agy gets to confirm a Stop before Chatterbox ends the reply itself.
     static var geminiStopGrace: Duration = .seconds(10)
 
@@ -312,8 +352,10 @@ extension ChatSession {
             switch method {
             case "session/update":
                 guard !geminiReplaying, message["params"]?["sessionId"]?.string == record.gemini?.sessionId else { return false }
+                geminiLastActivity = Date()
                 return geminiUpdate(message["params"]?["update"] ?? [:])
             case "session/request_permission":
+                geminiLastActivity = Date()
                 guard let id = message["id"] else { return false }
                 geminiPermission(id: id, params: message["params"] ?? [:])
             case "elicitation/create":
