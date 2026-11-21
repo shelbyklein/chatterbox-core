@@ -119,6 +119,8 @@ final class ChatSession: Identifiable {
     @ObservationIgnored var geminiStopRequested = false
     /// Messages sent while a reply runs: agy takes one prompt at a time, so they go next.
     @ObservationIgnored var geminiQueue: [(message: UserMessage, item: UUID)] = []
+    /// Counts Gemini's turns, so a Stop's deadline only ever ends the turn it was pressed in.
+    @ObservationIgnored var geminiTurn = 0
 
     // Codex state (see ChatSession+Codex.swift).
     @ObservationIgnored var codexTurnID: String?

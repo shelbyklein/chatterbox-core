@@ -21,6 +21,10 @@ enum Changelog {
     }
 
     static let days: [Day] = [
+        Day(id: "2026-11-21", changes: [
+            "Stop always stops a Gemini reply: if Gemini doesn't answer within 10 seconds, Chatterbox ends the reply itself and restarts Gemini, keeping its conversation for your next message.",
+            "Picking another agent's model while a reply runs no longer changes the current agent's model; the switch waits for the reply to end.",
+        ]),
         Day(id: "2026-11-20", changes: [
             "On the phone's Desk, Check for updates sits beside the \u{201C}What needs doing?\u{201D} box, the update summary line is gone, and the top bar is more compact so more of the board fits on screen.",
             "On the phone's Desk, a card's Start, Link, Done and Remove stay on one line; in the open Duo's narrow columns, Link, Done and Remove become icons.",

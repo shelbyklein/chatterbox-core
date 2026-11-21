@@ -117,6 +117,8 @@ final class ModelSelection {
 
     static func apply(_ choice: ModelChoice, effort: String, to session: ChatSession) {
         if session.record.backend != choice.backend { session.setBackend(choice.backend) }
+        // The switch waits for a running reply; the other agent's settings wait with it.
+        guard session.record.backend == choice.backend else { return }
         switch choice.backend {
         case .claude:
             session.setModel(choice.model ?? "default")

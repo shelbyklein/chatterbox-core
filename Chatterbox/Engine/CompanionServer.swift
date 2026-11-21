@@ -1326,6 +1326,9 @@ enum CompanionMapper {
     static func apply(_ change: Companion.SettingsRequest, to session: ChatSession) {
         if let backend = change.backend.flatMap(Backend.init(rawValue:)), backend != session.record.backend {
             session.setBackend(backend)
+            // The switch waits for a running reply: a model or effort meant for the new agent
+            // mustn't land on the one still answering (2026-11-21: "Gemini · opus").
+            guard session.record.backend == backend else { return }
         }
         if let open = change.openModel {
             session.setOpenModel(open.isEmpty ? nil : open)

@@ -28,6 +28,7 @@ extension ChatSession {
     private func geminiDeliver(_ message: UserMessage, earlierItems: Int) async {
         do {
             let (process, sessionID) = try await geminiEnsureSession(earlierItems: earlierItems)
+            geminiTurn += 1
             process.requestNow("session/prompt", ["sessionId": .string(sessionID), "prompt": .array(geminiContent(for: message))])
         } catch {
             isRunning = false
@@ -210,10 +211,26 @@ extension ChatSession {
         SecretVault.shared.environment(for: self).merging(["CHATTERBOX_CHAT_ID": id.uuidString]) { $1 }
     }
 
+    /// How long agy gets to confirm a Stop before Chatterbox ends the reply itself.
+    static var geminiStopGrace: Duration = .seconds(10)
+
     func geminiInterrupt() {
-        guard isRunning, let process = geminiProcess, let session = record.gemini?.sessionId else { return }
+        guard isRunning else { return }
         geminiStopRequested = true
-        process.notify("session/cancel", ["sessionId": .string(session)])
+        if let process = geminiProcess, let session = record.gemini?.sessionId {
+            process.notify("session/cancel", ["sessionId": .string(session)])
+        }
+        // agy can wedge and ignore every cancel (2026-11-20: a finished reply never closed,
+        // and twenty Stops went unanswered). If it hasn't confirmed in time, the reply ends
+        // here and its process is restarted; the session stays, for the next message.
+        let turn = geminiTurn
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.geminiStopGrace)
+            guard let self, self.isRunning, self.geminiStopRequested, self.geminiTurn == turn else { return }
+            RuntimeHooks.note("Gemini didn't confirm Stop in \u{201C}\(self.title)\u{201D}; ended the reply and restarted its process")
+            self.releaseGeminiProcess()
+            self.finishGeminiTurn(stopReason: "cancelled", usage: nil)
+        }
     }
 
     /// Ends the process (not the session); the next message starts a new one that resumes it.
@@ -397,7 +414,7 @@ extension ChatSession {
         geminiStopRequested = false
     }
 
-    private func finishGeminiTurn(stopReason: String, usage: JSON?) {
+    func finishGeminiTurn(stopReason: String, usage: JSON?) {
         for id in geminiTextItems {
             updateItem(id) { if $0.phase != .final { $0.phase = .final } }
         }
