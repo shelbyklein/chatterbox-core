@@ -22,6 +22,8 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-20", changes: [
+            "Gemini is a third agent beside Claude and Codex, through Google's Antigravity CLI and your Google sign-in: pick it in the model picker (Mac and phone), File → New Gemini Chat, or Settings → Models. It edits files with your approval, resumes its sessions, and can take sidequests, work threads and automations.",
+            "Open models on the PC are hidden from the model pickers for now; chats already on one keep it.",
             "On the closed phone, a session's sidebar slides in from the right instead of dropping from the top; tap the chat beside it or drag its left edge to close it.",
             "On an iPhone without the Duo's side rail, a session's name and model stay stacked in the middle of the bar, clear of the Back and menu buttons.",
             "On the phone, permissions in Session Settings and New Chat are one row of icons: the chosen one is highlighted, with its name and what it does shown with it.",
