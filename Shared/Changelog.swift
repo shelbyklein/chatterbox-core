@@ -22,6 +22,7 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-20", changes: [
+            "On the phone's Desk, Check for updates sits beside the \u{201C}What needs doing?\u{201D} box, the update summary line is gone, and the top bar is more compact so more of the board fits on screen.",
             "On the phone's Desk, a card's Start, Link, Done and Remove stay on one line; in the open Duo's narrow columns, Link, Done and Remove become icons.",
             "Gemini is a third agent beside Claude and Codex, through Google's Antigravity CLI and your Google sign-in: pick it in the model picker (Mac and phone), File → New Gemini Chat, or Settings → Models. It edits files with your approval, resumes its sessions, and can take sidequests, work threads and automations.",
             "Open models on the PC are hidden from the model pickers for now; chats already on one keep it.",

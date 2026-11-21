@@ -148,7 +148,7 @@ struct MobileDeskView: View {
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
             .background(Color(uiColor: .systemGroupedBackground))
             .navigationTitle("Desk")
-            .navigationBarTitleDisplayMode(.large)
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 // Every project's routines, to change or run (MobileAutomations.swift).
                 ToolbarItem(placement: .topBarTrailing) {
@@ -242,48 +242,53 @@ struct MobileDeskView: View {
 
     // MARK: Layouts
 
-    /// What's above the board: a problem reaching the Mac, the ask box, or that it's loading.
+    /// What's above the board: a problem reaching the Mac, the ask box with Check for updates, or that it's loading.
     @ViewBuilder private var top: some View {
         if let problem = store.problem ?? loadProblem {
             MobileProblemCard(problem, updated: store.chatsUpdatedAt) { await refresh() }
         }
         // Nothing to ask of a Mac without the Desk, or one not reached yet.
-        if desk != nil || (loadProblem == nil && store.problem == nil) { askBox }
-        if let desk {
-            VStack(alignment: .leading, spacing: 8) {
-                Button {
-                    guard !checkingSources else { return }
-                    checkingSources = true
-                    Task { @MainActor in
-                        defer { checkingSources = false }
-                        do { try await store.checkDeskSources() }
-                        catch { actionProblem = Self.describe(error) }
-                    }
-                } label: {
-                    HStack(spacing: 8) {
-                        if checkingSources || desk.sourcePull?.isRunning == true { ProgressView() }
-                        else { Image(systemName: "arrow.clockwise") }
-                        Text(desk.sourcePull?.isRunning == true ? "Checking…" : "Check for updates")
-                    }.frame(minHeight: 32)
-                }
-                .buttonStyle(.bordered)
-                .disabled(checkingSources || desk.sourcePull?.isRunning == true)
-                .accessibilityIdentifier("desk-check-sources")
-                if let pull = desk.sourcePull {
-                    Group {
-                        if !pull.isRunning, let problem = pull.problem {
-                            Text(problem)
-                        } else if !pull.isRunning, let result = pull.result, result.complete {
-                            Text("Checked \(Self.ago(result.finishedAt)) · \(result.summary)")
-                        } else if let date = pull.lastRequestedAt {
-                            Text("Last requested \(Self.ago(date))")
-                        }
-                    }.font(.caption).foregroundStyle(.secondary).lineLimit(3)
-                        .accessibilityIdentifier("desk-source-check-status")
-                }
+        if desk != nil || (loadProblem == nil && store.problem == nil) {
+            HStack(alignment: .bottom, spacing: 8) {
+                askBox
+                if let desk { checkSourcesButton(desk) }
             }
         }
         if desk == nil, loadProblem == nil, store.problem == nil { loading }
+    }
+
+    private func checkSourcesButton(_ desk: Companion.Desk) -> some View {
+        let running = checkingSources || desk.sourcePull?.isRunning == true
+        return Button {
+            guard !checkingSources else { return }
+            checkingSources = true
+            Task { @MainActor in
+                defer { checkingSources = false }
+                do { try await store.checkDeskSources() }
+                catch { actionProblem = Self.describe(error) }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                if running { ProgressView().controlSize(.small) }
+                else { Image(systemName: "arrow.clockwise").font(.subheadline.weight(.semibold)) }
+                if wide {
+                    Text(running ? "Checking…" : "Check for updates")
+                        .font(.subheadline.weight(.medium))
+                        .lineLimit(1)
+                }
+            }
+            .foregroundStyle(running ? Color.secondary : Color.accentColor)
+            .padding(.horizontal, wide ? 14 : 0)
+            .frame(minWidth: 40, minHeight: 40)
+            .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color(uiColor: .secondarySystemGroupedBackground)))
+            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1))
+            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(running)
+        .accessibilityLabel(running ? "Checking for updates" : "Check for updates")
+        .accessibilityIdentifier("desk-check-sources")
     }
 
     /// A phone: the ask box, then the column tabs (they stay at the top as the cards scroll),
@@ -291,8 +296,9 @@ struct MobileDeskView: View {
     private var tabbed: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
-                VStack(alignment: .leading, spacing: 16) { top }
-                    .padding(.bottom, 10)
+                VStack(alignment: .leading, spacing: 8) { top }
+                    .padding(.top, 4)
+                    .padding(.bottom, 2)
                 Section {
                     VStack(alignment: .leading, spacing: 10) { cards(shown) }
                         .padding(.top, 4)
@@ -356,16 +362,15 @@ struct MobileDeskView: View {
         }
         .padding(3)
         .background(RoundedRectangle(cornerRadius: 13, style: .continuous).fill(Color(uiColor: .tertiarySystemFill)))
-        .padding(.vertical, 8)
+        .padding(.vertical, 6)
         .background(Color(uiColor: .systemGroupedBackground))
     }
 
     /// Wide: the ask box, then the columns side by side, each scrolling on its own, the board
     /// sideways when they don't all fit (shown at Needs you when something does).
     private var board: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            VStack(alignment: .leading, spacing: 14) { top }
-                .frame(maxWidth: 760, alignment: .leading)
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) { top }
                 .padding(.horizontal, 20)
             ScrollViewReader { proxy in
                 ScrollView(.horizontal) {
@@ -515,31 +520,27 @@ struct MobileDeskView: View {
 
     /// Type what needs doing; the Desk proposes where it goes before anything starts.
     private var askBox: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .bottom, spacing: 8) {
-                TextField("What needs doing?", text: $ask, axis: .vertical)
-                    .lineLimit(1...5)
-                    .focused($asking)
-                    .padding(.vertical, 6)
-                    .accessibilityIdentifier("desk-ask")
-                Button(action: add) {
-                    Group {
-                        if adding { ProgressView().controlSize(.small) }
-                        else { Image(systemName: "arrow.up.circle.fill").font(.title2) }
-                    }
-                    .frame(width: 32, height: 32)
+        HStack(alignment: .bottom, spacing: 8) {
+            TextField("What needs doing?", text: $ask, axis: .vertical)
+                .lineLimit(1...5)
+                .focused($asking)
+                .padding(.vertical, 6)
+                .accessibilityIdentifier("desk-ask")
+            Button(action: add) {
+                Group {
+                    if adding { ProgressView().controlSize(.small) }
+                    else { Image(systemName: "arrow.up.circle.fill").font(.title2) }
                 }
-                .disabled(trimmedAsk.isEmpty || adding)
-                .accessibilityLabel("Add to Desk")
-                .accessibilityIdentifier("desk-ask-send")
+                .frame(width: 32, height: 32)
             }
-            .padding(.leading, 14).padding(.trailing, 6).padding(.vertical, 4)
-            .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color(uiColor: .secondarySystemGroupedBackground)))
-            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(asking ? Color.accentColor.opacity(0.6) : Color.primary.opacity(0.06), lineWidth: asking ? 1.5 : 1))
-            Text("The Desk suggests a place before anything starts.")
-                .font(.caption).foregroundStyle(Color.metadata).padding(.horizontal, 6)
+            .disabled(trimmedAsk.isEmpty || adding)
+            .accessibilityLabel("Add to Desk")
+            .accessibilityIdentifier("desk-ask-send")
         }
+        .padding(.leading, 14).padding(.trailing, 6).padding(.vertical, 4)
+        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color(uiColor: .secondarySystemGroupedBackground)))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
+            .strokeBorder(asking ? Color.accentColor.opacity(0.6) : Color.primary.opacity(0.06), lineWidth: asking ? 1.5 : 1))
     }
 
     // MARK: Actions
