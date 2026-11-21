@@ -15,6 +15,7 @@ struct MobileUsageView: View {
                 if let usage {
                     limits("Claude", usage.claude)
                     limits("Codex", usage.codex)
+                    if let gemini = usage.gemini, !gemini.isEmpty { limits("Gemini", gemini) }
                     if let accounts = usage.proxyAccounts {
                         Section {
                             if let note = usage.proxyProblem { Text(note).font(.footnote).foregroundStyle(.orange) }

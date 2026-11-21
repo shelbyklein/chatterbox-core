@@ -736,7 +736,9 @@ final class CompanionServer {
                   windows: account.windows.map { .quota(label: $0.title, remainingPercent: $0.remaining, resetsAt: $0.reset) },
                   problem: account.problem)
         } : nil
+        GeminiUsage.shared.refreshIfStale()
         return .json(Companion.Usage(claude: windows(UsageLimits.shared.claude), codex: windows(UsageLimits.shared.codex),
+                                     gemini: UsageLimits.shared.gemini.isEmpty ? nil : windows(UsageLimits.shared.gemini),
                                      proxyAccounts: accounts, proxyProblem: configured ? proxy.problem : nil, proxyChecked: proxy.lastRefresh))
     }
 

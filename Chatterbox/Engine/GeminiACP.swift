@@ -182,3 +182,54 @@ final class GeminiModels {
         }
     }
 }
+
+/// Gemini's account limits, from `agy -p /usage --output-format json` (no model call; a
+/// second or two). Read when the service starts, every ten minutes, after each Gemini reply,
+/// and when the phone opens Usage; at most once a minute.
+@MainActor
+final class GeminiUsage {
+    static let shared = GeminiUsage()
+    private var lastRun: Date?
+    private var running = false
+    private var timer: Timer?
+
+    /// Every ten minutes from now (the service).
+    func start() {
+        refresh()
+        timer = Timer.scheduledTimer(withTimeInterval: 600, repeats: true) { _ in
+            MainActor.assumeIsolated { GeminiUsage.shared.refresh() }
+        }
+    }
+
+    func refreshIfStale() { if lastRun.map({ Date().timeIntervalSince($0) > 60 }) ?? true { refresh() } }
+
+    func refresh() {
+        guard !running, let agy = GeminiACPProcess.locateBinary() else { return }
+        running = true
+        lastRun = Date()
+        let environment = BinaryLocator.environment
+        Task {
+            let data = await Task.detached(priority: .utility) { () -> Data? in
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: agy)
+                process.arguments = ["-p", "/usage", "--output-format", "json"]
+                process.environment = environment
+                process.currentDirectoryURL = FileManager.default.temporaryDirectory
+                let output = Pipe()
+                process.standardOutput = output
+                process.standardError = FileHandle.nullDevice
+                process.standardInput = FileHandle.nullDevice
+                guard (try? process.run()) != nil else { return nil }
+                let deadline = DispatchWorkItem { if process.isRunning { process.terminate() } }
+                DispatchQueue.global().asyncAfter(deadline: .now() + 60, execute: deadline)
+                let data = output.fileHandleForReading.readDataToEndOfFile()
+                process.waitUntilExit()
+                deadline.cancel()
+                return data
+            }.value
+            running = false
+            guard let data, let reply = try? JSON.parse(data) else { return }
+            UsageLimits.shared.updateGemini(reply["command"]?["data"])
+        }
+    }
+}

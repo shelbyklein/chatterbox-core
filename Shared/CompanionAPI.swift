@@ -1041,6 +1041,8 @@ enum Companion {
         }
         var claude: [Window]
         var codex: [Window]
+        /// Gemini's limits (agy); nil from a Mac without Gemini.
+        var gemini: [Window]? = nil
         var proxyAccounts: [Account]?
         var proxyProblem: String?
         var proxyChecked: Date?

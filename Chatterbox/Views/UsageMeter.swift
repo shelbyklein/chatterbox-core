@@ -105,7 +105,8 @@ struct UsageMeter: View {
               let reply = try? await RuntimeClient.shared.request("usage", timeout: .seconds(5)) else { return }
         let claude = (try? reply["claude"]?.decode([UsageWindow].self)) ?? []
         let codex = (try? reply["codex"]?.decode([UsageWindow].self)) ?? []
-        UsageLimits.shared.show(claude: claude, codex: codex)
+        let gemini = (try? reply["gemini"]?.decode([UsageWindow].self)) ?? []
+        UsageLimits.shared.show(claude: claude, codex: codex, gemini: gemini)
     }
 
     /// "Using 12% an hour · runs out around 3:40 PM, before it resets".

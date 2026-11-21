@@ -453,6 +453,7 @@ extension ChatSession {
         record.updatedAt = Date()
         turnEnded()
         onChange?(self)
+        GeminiUsage.shared.refreshIfStale()
         sendNextQueuedGemini()
     }
 

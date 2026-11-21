@@ -83,6 +83,7 @@ final class UsageLimits {
 
     private(set) var claude: [UsageWindow] = []
     private(set) var codex: [UsageWindow] = []
+    private(set) var gemini: [UsageWindow] = []
 
     /// Called when a limit falls to 50%, 20% or 5% left (the service posts it to the Mac and
     /// the phone). Once per level per window, kept across restarts.
@@ -93,14 +94,40 @@ final class UsageLimits {
     static let warningLevels: [Double] = [0.5, 0.2, 0.05]
     private static let warnedKey = "usageWarnedLevels"
 
-    /// Gemini (agy) doesn't report its account limits.
-    func windows(for backend: Backend) -> [UsageWindow] { backend == .claude ? claude : backend == .codex ? codex : [] }
+    func windows(for backend: Backend) -> [UsageWindow] {
+        switch backend {
+        case .claude: claude
+        case .codex: codex
+        case .gemini: gemini
+        }
+    }
 
     /// The Mac app with the background service: the service's numbers, as they are (the
     /// service keeps the readings and warns; the app only shows them).
-    func show(claude: [UsageWindow], codex: [UsageWindow]) {
+    func show(claude: [UsageWindow], codex: [UsageWindow], gemini: [UsageWindow] = []) {
         if claude != self.claude { self.claude = claude }
         if codex != self.codex { self.codex = codex }
+        if gemini != self.gemini { self.gemini = gemini }
+    }
+
+    /// `agy -p /usage --output-format json`: `command.data.groups`, each with `buckets` of a
+    /// `window` ("5h", "weekly"), its `remaining_fraction` (0–1) and an ISO `reset_time`.
+    /// Only the Gemini models' group: agy's Claude and GPT group isn't what Chatterbox's Gemini uses.
+    func updateGemini(_ data: JSON?) {
+        let groups = data?["groups"]?.array ?? []
+        guard let group = groups.first(where: { ($0["name"]?.string ?? "").localizedCaseInsensitiveContains("gemini") }) ?? groups.first else { return }
+        let iso = ISO8601DateFormatter()
+        let order = ["5h", "weekly"]
+        let fresh = (group["buckets"]?.array ?? []).compactMap { bucket -> UsageWindow? in
+            guard let left = bucket["remaining_fraction"]?.double else { return nil }
+            let window = bucket["window"]?.string ?? bucket["id"]?.string ?? "limit"
+            let label = window == "5h" ? "5-hour" : window == "weekly" ? "Weekly" : (bucket["name"]?.string ?? window)
+            return UsageWindow(id: window, label: label, utilization: max(0, min(1, 1 - left)),
+                               resetsAt: bucket["reset_time"]?.string.flatMap { iso.date(from: $0) })
+        }
+        .sorted { (order.firstIndex(of: $0.id) ?? 99) < (order.firstIndex(of: $1.id) ?? 99) }
+        guard !fresh.isEmpty else { return }
+        gemini = fresh.map { track(.gemini, $0) }
     }
 
     /// Claude Code's `rate_limit_event`: `rate_limit_info.unifiedWindows` maps a window name
