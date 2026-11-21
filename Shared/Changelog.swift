@@ -22,6 +22,7 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-21", changes: [
+            "In the phone's Activity, a session with sidequests takes one column like the other cards, its sidequests as small icons inside it.",
             "Stop always stops a Gemini reply: if Gemini doesn't answer within 10 seconds, Chatterbox ends the reply itself and restarts Gemini, keeping its conversation for your next message.",
             "Picking another agent's model while a reply runs no longer changes the current agent's model; the switch waits for the reply to end.",
         ]),

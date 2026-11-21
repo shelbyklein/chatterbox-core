@@ -263,14 +263,14 @@ struct MobileNewReplies: View {
                     pressureRow(pressure)
                     if let listSearchField { listSearchField }
                     dedicatedHeader(workingCount: workingCount, replyCount: replyCount, pressure: pressure)
-                    // A session's sidequests and Sidechats sit inside its card, as in the lists.
-                    VStack(alignment: .leading, spacing: 10) {
+                    // A session's sidequests and Sidechats sit inside its card as small icons, so it
+                    // takes one column like any other card (Shelby, 2026-11-21).
+                    LazyVGrid(columns: typeSize.isAccessibilitySize ? [GridItem(.flexible())] : [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)],
+                              alignment: .leading, spacing: 10) {
                         ForEach(MobileActivityGroup.segments(entries, chats: chats)) { segment in
                             switch segment {
                             case .grid(let run):
-                                LazyVGrid(columns: typeSize.isAccessibilitySize ? [GridItem(.flexible())] : [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
-                                    ForEach(run) { entry in expandedEntry(entry, card: true) }
-                                }
+                                ForEach(run) { entry in expandedEntry(entry, card: true) }
                             case .family(let parent, let head, let children):
                                 familyCard(parent, head: head, children: children)
                             }
