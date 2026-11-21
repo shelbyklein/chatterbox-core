@@ -356,7 +356,7 @@ struct ChatListView: View {
             }
             .navigationTitle(fixedPage?.title ?? store.connection?.macName ?? "Chatterbox")
             .navigationBarTitleDisplayMode(.inline)
-            .refreshable { await store.loadChats() }
+            .refreshable { await store.loadChats(force: true) }
             // Wide, our own field at the top of the column: iOS's sidebar search is a button that
             // opened into a field running off the column's left edge (Shelby, 2026-11-20), and
             // the bar's drawer stopped short of the column. Narrow, iOS's drawer.

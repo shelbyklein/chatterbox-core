@@ -40,7 +40,8 @@ final class CompanionServer {
     @ObservationIgnored private var listener: NWListener?
     @ObservationIgnored private var failedPairings = 0
     @ObservationIgnored private let mutations = CompanionMutationLedger()
-    @ObservationIgnored private var chatListCache: (revision: Int, pinned: [String], pressure: Companion.Pressure?, at: Date, response: HTTPResponse)?
+    @ObservationIgnored private var chatListCache: (listRevision: Int, modelRevision: Int, pinned: [String], pressure: Companion.Pressure?, at: Date, response: HTTPResponse)?
+    @ObservationIgnored private var chatListVersion = 0
 
     private final class CachedThumbnail: NSObject {
         let data: Data
@@ -355,15 +356,33 @@ final class CompanionServer {
 
         switch (request.method, parts.count) {
         case ("GET", 2) where parts[1] == "chats":
-            let rev = model.companionListRevision
+            let modelRev = model.companionListRevision
             let pinned = AppPreferences.defaults.stringArray(forKey: "macPinnedThreads") ?? []
             let pressure = PressureHooks.snapshot()
-            if let cached = chatListCache, cached.revision == rev, cached.pinned == pinned, cached.pressure == pressure,
-               Date().timeIntervalSince(cached.at) < 15 {
+            let now = Date()
+            let since = request.query["since"].flatMap(Int.init)
+            func samePressure(_ a: Companion.Pressure?, _ b: Companion.Pressure?) -> Bool {
+                guard a?.level == b?.level, a?.waiting == b?.waiting else { return false }
+                if a?.level == "ok" || a == nil { return true }
+                return a?.summary == b?.summary && a?.holding == b?.holding
+            }
+            if let cached = chatListCache,
+               cached.modelRevision == modelRev,
+               cached.pinned == pinned,
+               samePressure(cached.pressure, pressure),
+               now.timeIntervalSince(cached.at) < 60 {
+                if let since, since == cached.listRevision {
+                    return .json(Companion.Unchanged(revision: cached.listRevision))
+                }
                 return cached.response
             }
-            let response = HTTPResponse.json(CompanionMapper.chatList(model))
-            chatListCache = (rev, pinned, pressure, Date(), response)
+            chatListVersion += 1
+            let baseRev = max(modelRev, chatListVersion)
+            let nextRev = chatListCache.map { max(baseRev, $0.listRevision + 1) } ?? max(1, baseRev)
+            var list = CompanionMapper.chatList(model)
+            list.revision = nextRev
+            let response = HTTPResponse.json(list)
+            chatListCache = (nextRev, modelRev, pinned, pressure, now, response)
             return response
         case ("GET", 2) where parts[1] == "archived":
             // The phone's Archived list: newest archived first, with ?q= words to search by.

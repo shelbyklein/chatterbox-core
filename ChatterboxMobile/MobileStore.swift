@@ -188,22 +188,42 @@ final class MobileStore {
 
     // MARK: - Calls
 
-    func loadChats() async {
+    func loadChats(force: Bool = false) async {
         // The iPad can show several tabs/navigation columns sharing this store.
         // Await one in-flight refresh instead of sending overlapping list requests.
-        if let listRefresh { await listRefresh.value; return }
+        if let listRefresh {
+            await listRefresh.value
+            if !force { return }
+        }
         let id = UUID()
         listRefreshID = id
-        let task = Task { await fetchChats() }
+        let task = Task { await fetchChats(force: force) }
         listRefresh = task
         await task.value
         if listRefreshID == id { listRefresh = nil }
     }
 
-    private func fetchChats() async {
+    private func fetchChats(force: Bool) async {
         do {
-            let fresh: Companion.ChatList = try await call("/v1/chats")
+            // Only send ?since= once this launch holds a live list and the connection is healthy;
+            // explicit pull-to-refresh or post-mutation reloads pass force: true for a full list.
+            let since: Int? = (!force && hasRefreshedChats && problem == nil) ? chatList?.revision : nil
+            let path = "/v1/chats" + (since.map { "?since=\($0)" } ?? "")
+            let data = try await raw(path)
             guard !Task.isCancelled, isPaired else { return }
+            if let unchanged = try? Companion.decoder.decode(Companion.Unchanged.self, from: data), unchanged.unchanged {
+                let now = Date()
+                if chatsUpdatedAt.map({ now.timeIntervalSince($0) >= 30 }) ?? true {
+                    chatsUpdatedAt = now
+                    AppPreferences.defaults.set(chatsUpdatedAt, forKey: "chatsUpdatedAt")
+                }
+                hasRefreshedChats = true
+                refreshWidgetUsage()
+                await syncPushRegistration()
+                if now.timeIntervalSince(addressesChecked) > 60 { await refreshAddresses() }
+                return
+            }
+            let fresh = try Companion.decoder.decode(Companion.ChatList.self, from: data)
             chatList = fresh
             chatsUpdatedAt = Date()
             AppPreferences.defaults.set(chatsUpdatedAt, forKey: "chatsUpdatedAt")
@@ -339,7 +359,7 @@ final class MobileStore {
     /// Pin to Top (on the Mac too), or unpin; the list reloads with the new order.
     func setPinned(_ chat: UUID, _ pinned: Bool) async throws {
         let _: Companion.ChatDetail = try await call("/v1/chats/\(chat.uuidString)/pin", method: "POST", body: try JSONEncoder().encode(Companion.PinRequest(pinned: pinned)))
-        await loadChats()
+        await loadChats(force: true)
     }
 
     func usage(refresh: Bool = false) async throws -> Companion.Usage {
@@ -390,7 +410,7 @@ final class MobileStore {
 
     func promote(_ chat: UUID, using request: Companion.PromotionRequest) async throws -> Companion.ChatDetail {
         let result: Companion.ChatDetail = try await call("/v1/chats/\(chat.uuidString)/promote", method: "POST", body: try JSONEncoder().encode(request))
-        await loadChats()
+        await loadChats(force: true)
         return result
     }
 

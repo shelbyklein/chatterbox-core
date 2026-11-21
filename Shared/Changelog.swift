@@ -22,6 +22,7 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-21", changes: [
+            "On the phone, background session-list refreshes skip re-downloading and redrawing when nothing has changed on the Mac, saving battery and data.",
             "Faster background service startup, smoother streaming replies with less disk churn, cached image thumbnails and session lists for the phone, and reliable Gemini reconnects if the background host answers slowly.",
             "In the phone's Activity, a sidequest that's still working shows a small spinner in its icon's top right corner, where the dot appears when it's done.",
             "The usage meter shows Gemini's 5-hour and weekly limits in Gemini chats on the Mac and in Usage on the phone, with the same 50/20/5% warnings as Claude and Codex.",
