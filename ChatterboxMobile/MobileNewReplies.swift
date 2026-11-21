@@ -807,6 +807,11 @@ private struct MobileQuestIcon: View {
                         Circle().fill(Color.attention).frame(width: 7, height: 7)
                     } else if entry.reply != nil {
                         Circle().fill(.blue).frame(width: 7, height: 7)
+                    } else if chat.isRunning, !stale {
+                        // Working: a small spinner in the corner, where its dot goes when it's done.
+                        ProgressView().controlSize(.mini).tint(MobileConversationStyle.accent(for: entry.backend))
+                            .scaleEffect(0.7).offset(x: 3, y: -3)
+                            .accessibilityIdentifier("quest-working-\(chat.id.uuidString)")
                     }
                 }
                 .contentShape(Rectangle())
