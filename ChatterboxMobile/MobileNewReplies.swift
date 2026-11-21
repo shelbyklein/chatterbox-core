@@ -353,18 +353,15 @@ struct MobileNewReplies: View {
     /// A session's sidequests and Sidechats with activity, as small icons in their model's
     /// color. Tapping one shows its title and state, with Open.
     private func questIcons(_ entries: [MobileActivityEntry]) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 4) {
-                ForEach(entries) { entry in
-                    MobileQuestIcon(entry: entry, stale: store.isStale, open: { open(entry.chat) },
-                                    dismiss: { dismiss(entry) },
-                                    archive: { manage(entry.chat, deleting: false) },
-                                    delete: { manage(entry.chat, deleting: true) })
-                        .disabled(busy.contains(entry.chat.id))
-                }
+        AboutFlow(spacing: 4) {
+            ForEach(entries) { entry in
+                MobileQuestIcon(entry: entry, stale: store.isStale, open: { open(entry.chat) },
+                                dismiss: { dismiss(entry) },
+                                archive: { manage(entry.chat, deleting: false) },
+                                delete: { manage(entry.chat, deleting: true) })
+                    .disabled(busy.contains(entry.chat.id))
             }
         }
-        .scrollBounceBehavior(.basedOnSize)
     }
 
     private func recentThread(_ chat: Companion.ChatSummary, card: Bool) -> some View {

@@ -81,6 +81,8 @@ struct MobileSidequestIcon: View {
 
     private var task: String { quest.sidequestTask ?? quest.title }
     private var agent: String { Backend.label(quest.backend) }
+    /// What it is: a sidequest goes to an agent; work threads and Sidechats are named so.
+    private var kind: String { quest.isSidequest ? "Sidequest to \(agent)" : quest.workOf != nil ? "Work thread" : "Sidechat" }
     private var state: String { quest.isWaitingOnYou ? "Needs you" : quest.isRunning ? "Working" : "Finished" }
 
     var body: some View {
@@ -103,7 +105,7 @@ struct MobileSidequestIcon: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Sidequest to \(agent): \(task)\(quest.isRunning ? ", working" : quest.isWaitingOnYou ? ", needs you" : "")")
+        .accessibilityLabel("\(kind): \(task)\(quest.isRunning ? ", working" : quest.isWaitingOnYou ? ", needs you" : "")")
         .accessibilityIdentifier("sidequest-icon-" + quest.id.uuidString)
         .accessibilityAction(named: "Open") { open() }
         .popover(isPresented: $showing) {
@@ -122,18 +124,16 @@ struct MobileSidequestIcon: View {
     }
 }
 
-/// A chat's sidequests as one scrolling row of icons.
+/// A chat's sidequests (and Sidechats, work threads) as icons, wrapping onto more lines
+/// rather than scrolling out of sight in a one-column card.
 struct MobileSidequestIcons: View {
     let quests: [Companion.ChatSummary]
     let open: (Companion.ChatSummary) -> Void
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(quests) { quest in MobileSidequestIcon(quest: quest) { open(quest) } }
-            }
+        AboutFlow(spacing: 6) {
+            ForEach(quests) { quest in MobileSidequestIcon(quest: quest) { open(quest) } }
         }
-        .scrollBounceBehavior(.basedOnSize)
     }
 }
 

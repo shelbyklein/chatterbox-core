@@ -655,8 +655,8 @@ private struct MobileAboutImages: View {
     }
 }
 
-/// Chips that wrap onto as many lines as they need.
-private struct AboutFlow: Layout {
+/// Chips (or icons) that wrap onto as many lines as they need.
+struct AboutFlow: Layout {
     var spacing: CGFloat = 6
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let rows = arrange(width: proposal.width ?? .infinity, subviews)

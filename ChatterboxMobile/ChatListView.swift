@@ -647,14 +647,16 @@ struct ChatListView: View {
                     ForEach(groups) { group in
                         VStack(alignment: .leading, spacing: 8) {
                             if showsHeader(group) { header(group).font(.footnote.weight(.semibold)).foregroundStyle(.secondary).textCase(.uppercase) }
-                            ForEach(Self.cardSegments(group.chats)) { segment in
-                                switch segment {
-                                case .grid(let chats):
-                                    LazyVGrid(columns: cardColumns, spacing: 10) {
+                            // A session's sidequests, Sidechats and work threads are icons in its card,
+                            // so it takes one column like any other (Shelby, 2026-11-21).
+                            LazyVGrid(columns: cardColumns, alignment: .leading, spacing: 10) {
+                                ForEach(Self.cardSegments(group.chats)) { segment in
+                                    switch segment {
+                                    case .grid(let chats):
                                         ForEach(chats) { chat in card(chat) }
+                                    case .family(let parent, let children):
+                                        familyCard(parent, children)
                                     }
-                                case .family(let parent, let children):
-                                    familyCard(parent, children)
                                 }
                             }
                         }
@@ -677,20 +679,11 @@ struct ChatListView: View {
     private func familyCard(_ parent: Companion.ChatSummary, _ children: [Companion.ChatSummary]) -> some View {
         let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
         let selected = sizeClass == .regular && selection == parent.id
-        let visible = MobileFamilyExpansion.shared.visible(children, of: parent.id)
         return VStack(alignment: .leading, spacing: 0) {
             card(parent, embedded: true)
-            ForEach(visible.shown) { child in
-                Divider().padding(.leading, 12)
-                NestedChatRow(chat: child, parent: parent, selected: sizeClass == .regular && selection == child.id) { open(child) }
-                    .contextMenu { chatActions(child) }
-            }
-            if let toggle = familyToggle(parent, hidden: visible.hidden) {
-                Divider().padding(.leading, 12)
-                toggle.padding(.horizontal, 12)
-            }
+            MobileSidequestIcons(quests: children, open: open).padding(.horizontal, 12)
         }
-        .padding(.bottom, 4)
+        .padding(.bottom, 8)
         .background(shape.fill(Color(uiColor: .secondarySystemGroupedBackground)))
         .overlay(shape.strokeBorder(parent.isWaitingOnYou ? Color.yellow.opacity(0.6) : selected ? Color.accentColor : Color.primary.opacity(0.06),
                                     lineWidth: parent.isWaitingOnYou || selected ? 1.5 : 1))
