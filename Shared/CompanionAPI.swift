@@ -483,6 +483,8 @@ enum Companion {
         /// Sessions put on the Desk without a task (their questions show in Needs you; other
         /// sessions without a task don't). Nil from a service older than following.
         var followed: [UUID]? = nil
+        /// The always-on Desk, while it's on; older Macs leave it out.
+        var watch: DeskWatch? = nil
     }
 
     struct DeskHeld: Codable, Identifiable, Hashable {
@@ -498,6 +500,21 @@ enum Companion {
         var isWaitingForResponse: Bool { reason == "response" }
         /// "Waiting for response" or "On hold": the card's label.
         var label: String { isWaitingForResponse ? "Waiting for response" : "On hold" }
+    }
+
+    /// The always-on Desk's state (plans/always-on-desk.md): what it watches, when each source
+    /// was last checked and any problem, what's waiting, and the next digest. Nil when off.
+    struct DeskWatch: Codable, Equatable {
+        struct Source: Codable, Equatable {
+            var name: String
+            var lastChecked: Date?
+            var problem: String?
+        }
+        var sources: [Source]
+        var pending: Int
+        var running: Bool
+        var nextDigest: Date?
+        var changesToday: Int
     }
 
     struct DeskSourcePull: Codable, Equatable {

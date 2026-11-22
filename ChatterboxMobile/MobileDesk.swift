@@ -253,8 +253,43 @@ struct MobileDeskView: View {
                 askBox
                 if let desk { checkSourcesButton(desk) }
             }
+            if let watch = desk?.watch { watchLine(watch) }
         }
         if desk == nil, loadProblem == nil, store.problem == nil { loading }
+    }
+
+    /// The always-on Desk's status line (plans/always-on-desk.md): what it watches and when it
+    /// last looked, a source's problem in orange, then today's count and the next digest.
+    private func watchLine(_ watch: Companion.DeskWatch) -> some View {
+        let problem = watch.sources.first { $0.problem != nil }
+        let checked = watch.sources.compactMap(\.lastChecked).max()
+        return VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                Circle().fill(problem == nil ? Color.green : Color.orange).frame(width: 7, height: 7)
+                Text("Watching " + watch.sources.map(\.name).joined(separator: " · ")
+                     + (checked.map { " · checked " + $0.formatted(.relative(presentation: .named)) } ?? ""))
+                    .lineLimit(1)
+            }
+            .font(.footnote.weight(.medium))
+            if let problem {
+                Text("\(problem.name): \(problem.problem ?? "")").font(.caption).foregroundStyle(.orange).lineLimit(2)
+            }
+            Text(Self.watchDetail(watch)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+        }
+        .padding(.horizontal, 4)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("desk-watch")
+    }
+
+    static func watchDetail(_ watch: Companion.DeskWatch) -> String {
+        var extra: [String] = []
+        if watch.running || watch.pending > 0 { extra.append(watch.running ? "Updating the Desk…" : "\(watch.pending) waiting") }
+        extra.append("\(watch.changesToday) change\(watch.changesToday == 1 ? "" : "s") today")
+        if let next = watch.nextDigest {
+            extra.append("digest " + (Calendar.current.isDateInToday(next) ? next.formatted(date: .omitted, time: .shortened)
+                                       : next.formatted(.dateTime.weekday(.abbreviated).hour().minute())))
+        }
+        return extra.joined(separator: " · ")
     }
 
     private func checkSourcesButton(_ desk: Companion.Desk) -> some View {

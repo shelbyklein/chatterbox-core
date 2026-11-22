@@ -1237,6 +1237,16 @@ final class DeskStore {
 
     /// A user tap reuses the configured intake, without a second scheduler or duplicate run.
     func checkSources(includeNew: Bool = true) throws {
+        // Always on: the watchers look now; the agent runs on whatever they find.
+        if AppPreferences.defaults.object(forKey: "deskAlwaysOn") as? Bool ?? false {
+            Task { @MainActor in
+                await ClickUpWatcher.shared.check()
+                await MailWatcher.shared.check()
+                DeskInbox.shared.wake(now: true)
+                self.changed()
+            }
+            return
+        }
         let routine: [ProjectAutomation]
         do { routine = try ProjectAutomations.deskSourceRoutine(in: ProjectAutomations.load()) }
         catch { throw Failure(status: 409, message: error.localizedDescription) }
@@ -1443,7 +1453,28 @@ final class DeskStore {
     private static func desk(_ content: Content, revision: Int) -> Companion.Desk {
         .init(revision: revision, needsYou: content.needsYou, incoming: content.incoming, working: content.working, silenced: content.silenced,
               ready: content.ready, done: content.done, linked: content.linked, sourcePull: content.sourcePull, onHold: content.onHold,
-              followed: content.followed)
+              followed: content.followed, watch: watchState())
+    }
+
+    /// The always-on Desk's status line, while it's on (not part of what counts as a change:
+    /// its times move every minute).
+    static func watchState(now: Date = Date()) -> Companion.DeskWatch? {
+        guard AppPreferences.defaults.object(forKey: "deskAlwaysOn") as? Bool ?? false else { return nil }
+        let points = DeskCheckpoints.load()
+        let inbox = DeskInbox.shared
+        let start = Calendar.current.startOfDay(for: now)
+        let outbox = DeskOutbox.shared
+        var next = Calendar.current.date(bySettingHour: DeskOutbox.digestHour, minute: DeskOutbox.digestMinute, second: 0, of: now)
+        for _ in 0..<8 {
+            guard let candidate = next else { break }
+            if candidate > now || outbox.digestDue(now), !Calendar.current.isDateInWeekend(candidate) { break }
+            next = Calendar.current.date(byAdding: .day, value: 1, to: candidate)
+        }
+        return .init(sources: [
+            .init(name: "ClickUp", lastChecked: points.lastChecked["clickup"], problem: points.problems["clickup"]),
+            .init(name: "Outlook", lastChecked: points.lastChecked["mail"], problem: points.problems["mail"]),
+        ], pending: inbox.pending.count, running: inbox.isRunning, nextDigest: next,
+           changesToday: inbox.events.filter { $0.receivedAt >= start }.count)
     }
 
     /// Now, in whole seconds, as desk.json keeps it.

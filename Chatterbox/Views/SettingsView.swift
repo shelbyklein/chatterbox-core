@@ -815,6 +815,9 @@ struct BackgroundServiceSection: View {
     @AppStorage("openModelsEnabled") private var openModelsEnabled = true
     /// Desk tasks scored "can run without you" start by themselves (plans/desk-confidence.md).
     @AppStorage("deskAutoStart") private var deskAutoStart = true
+    @AppStorage("deskAlwaysOn") private var deskAlwaysOn = false
+    @AppStorage("deskDigestHour") private var deskDigestHour = 8
+    @AppStorage("deskDigestMinute") private var deskDigestMinute = 30
     /// The Mac's pressure (PressureMonitor): when it's busy or overloaded, and whether work
     /// threads wait. Defaults as MacPressure.Thresholds.
     @AppStorage("pressureHoldsWork") private var pressureHoldsWork = true
@@ -845,6 +848,18 @@ struct BackgroundServiceSection: View {
                 Toggle("Offer open models on \(RemoteMachine.pc.name)", isOn: $openModelsEnabled)
                     .help("Show the Open models choice in model pickers on the Mac and the phone. Turn it off while the PC is down; chats already on an open model keep theirs.")
                     .accessibilityIdentifier("open-models-enabled")
+            }
+            Toggle("Always-on Desk: watch ClickUp and USA Archery mail", isOn: $deskAlwaysOn)
+                .help("Checks ClickUp every 3 minutes and USA Archery mail (through Apple Mail) every minute. Each change wakes a short Desk run that updates the board; urgent things notify your phone, the rest come in a morning digest. Nothing is sent or changed in ClickUp or Outlook.")
+                .accessibilityIdentifier("desk-always-on")
+            if deskAlwaysOn {
+                DatePicker("Morning digest (weekdays)", selection: Binding(get: {
+                    Calendar.current.date(bySettingHour: deskDigestHour, minute: deskDigestMinute, second: 0, of: Date()) ?? Date()
+                }, set: { date in
+                    deskDigestHour = Calendar.current.component(.hour, from: date)
+                    deskDigestMinute = Calendar.current.component(.minute, from: date)
+                }), displayedComponents: .hourAndMinute)
+                .accessibilityIdentifier("desk-digest-time")
             }
             Toggle("Start Desk tasks that can run without you", isOn: $deskAutoStart)
                 .help("Tasks brought onto the Desk are scored Yes or No: can an agent finish this without you? Yes tasks with a place start by themselves, two at a time, and their cards say Started automatically. Off: the scores still show, nothing starts.")

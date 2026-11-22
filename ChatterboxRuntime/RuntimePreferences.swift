@@ -9,7 +9,7 @@ enum RuntimePreferences {
         "companionEnabled","companionDevices","pins","openWebsitePinsInApp",
         "plugin.nextSteps.enabled","plugin.nextSteps.minAnswerChars","plugin.nextSteps.suggestCommands",
         "mobilePushEnabled","mobilePushLastStatus","modelPresetsJSON","lastModel.chats","lastModel.studios","lastModel.projects","macPinnedThreads"
-        ,"mobilePushConfigured","mobilePushPreviews","mobilePushSound","idleSimulatorShutdown","openModelsEnabled"
+        ,"mobilePushConfigured","mobilePushPreviews","mobilePushSound","idleSimulatorShutdown","openModelsEnabled","deskAlwaysOn","deskDigestHour","deskDigestMinute","deskMailDomain"
         // The Mac's pressure (MacPressure.Thresholds, PressureMonitor).
         ,"pressureHoldsWork","pressure.criticalCPUPercent","pressure.criticalMemoryPercent","pressure.criticalSeconds"
         ,"pressure.stepDownMinutes","mobilePush_pressure"

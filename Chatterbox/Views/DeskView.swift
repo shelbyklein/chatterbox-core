@@ -907,14 +907,28 @@ struct DeskView: View {
                     HStack(spacing: 6) {
                         if desk.checkingSources || desk.snapshot?.sourcePull?.isRunning == true { ProgressView().controlSize(.small) }
                         else { Image(systemName: "arrow.clockwise") }
-                        Text(desk.snapshot?.sourcePull?.isRunning == true ? "Checking…" : "Check for updates")
+                        Text(desk.snapshot?.sourcePull?.isRunning == true ? "Checking…" : desk.snapshot?.watch != nil ? "Check now" : "Check for updates")
                     }
                 }
                 .disabled(desk.checkingSources || desk.snapshot?.sourcePull?.isRunning == true)
                 .deskFrame("checkSources")
             }
             askField.frame(maxWidth: 760, alignment: .leading)
-            if let pull = desk.snapshot?.sourcePull {
+            if let watch = desk.snapshot?.watch {
+                // The always-on Desk: what it watches, when it last looked, any problem.
+                let problem = watch.sources.first { $0.problem != nil }
+                let checked = watch.sources.compactMap(\.lastChecked).max()
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Circle().fill(problem == nil ? Color.green : Color.orange).frame(width: 7, height: 7)
+                        Text("Watching " + watch.sources.map(\.name).joined(separator: " · ")
+                             + (checked.map { " · checked " + $0.formatted(.relative(presentation: .named)) } ?? ""))
+                    }
+                    if let problem { Text("\(problem.name): \(problem.problem ?? "")").foregroundStyle(.orange) }
+                    Text(DeskWatchText.detail(watch)).foregroundStyle(Color.metadata)
+                }
+                .font(.callout).lineLimit(2).deskFrame("deskWatch")
+            } else if let pull = desk.snapshot?.sourcePull {
                 Group {
                     if !pull.isRunning, let problem = pull.problem {
                         Text(problem)
@@ -2275,5 +2289,19 @@ private struct DeskHeldRow: View {
         .disabled(desk.busy.contains(item.id))
         .accessibilityElement(children: .contain)
         .deskFrame("held:\(item.id)")
+    }
+}
+
+/// The always-on Desk's second line, shared wording with the phone's.
+enum DeskWatchText {
+    static func detail(_ watch: Companion.DeskWatch) -> String {
+        var extra: [String] = []
+        if watch.running || watch.pending > 0 { extra.append(watch.running ? "Updating the Desk…" : "\(watch.pending) waiting") }
+        extra.append("\(watch.changesToday) change\(watch.changesToday == 1 ? "" : "s") today")
+        if let next = watch.nextDigest {
+            extra.append("digest " + (Calendar.current.isDateInToday(next) ? next.formatted(date: .omitted, time: .shortened)
+                                       : next.formatted(.dateTime.weekday(.abbreviated).hour().minute())))
+        }
+        return extra.joined(separator: " · ")
     }
 }
