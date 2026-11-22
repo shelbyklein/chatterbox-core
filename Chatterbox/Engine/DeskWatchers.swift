@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 
 /// Where each watcher left off, and what it last saw of each task, so a change is reported
 /// once. `Desk/checkpoints.json`; only advanced after a complete, successful check.
@@ -183,5 +184,145 @@ final class ClickUpWatcher {
         let text = (task["text_content"]?.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if !text.isEmpty { lines.append("Description: " + String(text.prefix(1500))) }
         return lines.joined(separator: "\n")
+    }
+}
+
+/// USA Archery mail, through Apple Mail (plans/always-on-desk.md T4): the account is added to
+/// Mail, which syncs it; every minute this reads Mail's own index **read-only** for that
+/// account's Inbox and turns each new message into an event. No AI, nothing in Mail changes.
+/// Mail only syncs while it runs, so it's kept open, hidden.
+@MainActor
+final class MailWatcher {
+    static let shared = MailWatcher()
+    static var interval: TimeInterval = 60
+
+    /// The address's domain that picks the account (Settings can change it).
+    var domain: () -> String = { AppPreferences.defaults.string(forKey: "deskMailDomain").flatMap { $0.isEmpty ? nil : $0 } ?? "usarchery.org" }
+    var indexFile = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Mail/V10/MailData/Envelope Index")
+    var accountsFile = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Accounts/Accounts4.sqlite")
+    var checkpointsFile = DeskCheckpoints.file
+    var keepMailOpen = true
+    var inbox: DeskInbox { DeskInbox.shared }
+    private var timer: Timer?
+    private var checking = false
+
+    func start() {
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: Self.interval, repeats: true) { _ in
+            MainActor.assumeIsolated { Task { await MailWatcher.shared.check() } }
+        }
+        Task { await check() }
+    }
+    func stop() { timer?.invalidate(); timer = nil }
+
+    @discardableResult
+    func check(now: Date = Date()) async -> Int {
+        guard !checking else { return 0 }
+        checking = true
+        defer { checking = false }
+        var points = DeskCheckpoints.load(checkpointsFile)
+        do {
+            let account = try Self.accountID(domain: domain(), in: accountsFile)
+            if keepMailOpen { Self.keepMailRunning() }
+            let index = indexFile, after = points.mailAfterRow
+            let rows = try await Task.detached { try Self.messages(in: index, account: account, after: after ?? 0, latestOnly: after == nil) }.value
+            var added = 0
+            if after != nil {
+                for row in rows {
+                    let event = DeskEvent(source: "mail", sourceEventID: "mail:\(row.messageID)", kind: "email.new",
+                                          title: row.subject.isEmpty ? "(no subject)" : row.subject,
+                                          detail: "From: \(row.from)\nReceived: \(row.received.formatted(date: .abbreviated, time: .shortened))\n\(row.summary)")
+                    if inbox.add(event) { added += 1 }
+                }
+            }
+            points.mailAfterRow = max(after ?? 0, rows.map(\.row).max() ?? 0)
+            points.lastChecked["mail"] = now
+            points.problems["mail"] = nil
+            points.save(checkpointsFile)
+            return added
+        } catch {
+            points.problems["mail"] = error.localizedDescription
+            points.save(checkpointsFile)
+            return 0
+        }
+    }
+
+    struct Row { var row: Int64; var messageID: Int64; var from: String; var subject: String; var summary: String; var received: Date }
+
+    /// Mail's account id for the address at `domain` (Mail's index names mailboxes by it).
+    nonisolated static func accountID(domain: String, in accounts: URL) throws -> String {
+        let rows = try query(accounts, "SELECT ZIDENTIFIER, ZUSERNAME FROM ZACCOUNT WHERE ZUSERNAME LIKE ?", ["%@" + domain]) { stmt in
+            (column(stmt, 0), column(stmt, 1))
+        }
+        guard let id = rows.first?.0, !id.isEmpty else {
+            throw RuntimeFailure("Add your \(domain) account to Apple Mail (Mail → Settings → Accounts) so the Desk can see new mail.")
+        }
+        return id
+    }
+
+    /// Inbox messages after `after` (Mail's ROWID), oldest first; with `latestOnly`, just the
+    /// newest row, to learn where things stand.
+    nonisolated static func messages(in index: URL, account: String, after: Int64, latestOnly: Bool) throws -> [Row] {
+        let sql = """
+            SELECT m.ROWID, m.message_id, COALESCE(a.comment, ''), COALESCE(a.address, ''), COALESCE(s.subject, ''),
+                   COALESCE(sm.summary, ''), m.date_received
+            FROM messages m JOIN mailboxes b ON m.mailbox = b.ROWID
+            LEFT JOIN addresses a ON m.sender = a.ROWID LEFT JOIN subjects s ON m.subject = s.ROWID
+            LEFT JOIN summaries sm ON m.summary = sm.ROWID
+            WHERE (b.url = ? OR b.url = ?) AND m.ROWID > ? AND m.deleted = 0
+            ORDER BY m.ROWID \(latestOnly ? "DESC LIMIT 1" : "ASC LIMIT 200")
+            """
+        return try query(index, sql, ["ews://\(account)/Inbox", "imap://\(account)/INBOX", after]) { stmt in
+            let name = column(stmt, 2), address = column(stmt, 3)
+            return Row(row: sqlite3_column_int64(stmt, 0), messageID: sqlite3_column_int64(stmt, 1),
+                       from: name.isEmpty ? address : "\(name) <\(address)>", subject: column(stmt, 4),
+                       summary: String(column(stmt, 5).prefix(1500)),
+                       received: Date(timeIntervalSince1970: Double(sqlite3_column_int64(stmt, 6))))
+        }
+    }
+
+    /// Mail syncs only while it runs: open it hidden, in the background, when it isn't.
+    static func keepMailRunning() {
+        let check = Process()
+        check.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+        check.arguments = ["-x", "Mail"]
+        check.standardOutput = FileHandle.nullDevice
+        guard (try? check.run()) != nil else { return }
+        check.waitUntilExit()
+        guard check.terminationStatus != 0 else { return }
+        let open = Process()
+        open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        open.arguments = ["-g", "-j", "-a", "Mail"]
+        try? open.run()
+        RuntimeHooks.note("Opened Apple Mail hidden, so the Desk sees new USA Archery mail")
+    }
+
+    private nonisolated static func column(_ stmt: OpaquePointer?, _ index: Int32) -> String {
+        sqlite3_column_text(stmt, index).map { String(cString: $0) } ?? ""
+    }
+
+    /// One read-only query (Mail and the accounts database are only ever read).
+    private nonisolated static func query<T>(_ file: URL, _ sql: String, _ arguments: [Any], row: (OpaquePointer?) -> T) throws -> [T] {
+        var db: OpaquePointer?
+        let uri = "file:" + (file.path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? file.path) + "?mode=ro"
+        guard sqlite3_open_v2(uri, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, nil) == SQLITE_OK else {
+            sqlite3_close(db)
+            throw RuntimeFailure("Couldn't read \(file.lastPathComponent). Chatterbox may need Full Disk Access (System Settings → Privacy & Security).")
+        }
+        defer { sqlite3_close(db) }
+        sqlite3_busy_timeout(db, 2000)
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw RuntimeFailure("Mail's index changed shape: \(String(cString: sqlite3_errmsg(db)))")
+        }
+        defer { sqlite3_finalize(stmt) }
+        let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        for (i, value) in arguments.enumerated() {
+            if let text = value as? String { sqlite3_bind_text(stmt, Int32(i + 1), text, -1, transient) }
+            else if let number = value as? Int64 { sqlite3_bind_int64(stmt, Int32(i + 1), number) }
+        }
+        var rows: [T] = []
+        while sqlite3_step(stmt) == SQLITE_ROW { rows.append(row(stmt)) }
+        return rows
     }
 }
