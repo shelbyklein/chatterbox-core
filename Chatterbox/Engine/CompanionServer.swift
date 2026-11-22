@@ -904,6 +904,30 @@ final class CompanionServer {
         #endif
     }
 
+    /// One always-on Desk run for a batch of events (plans/always-on-desk.md): a source-check
+    /// run of the configured routine, told only these changes and the Desk's memory.
+    func runDeskEvents(_ events: [DeskEvent], memory: DeskMemory = DeskMemory()) throws -> ChatSession {
+        guard let model else { throw Failure(status: 503, message: "Chatterbox is starting.") }
+        let routine: [ProjectAutomation]
+        do { routine = try ProjectAutomations.deskSourceRoutine(in: ProjectAutomations.load()) }
+        catch { throw Failure(status: 409, message: error.localizedDescription) }
+        #if CHATTERBOX_HEADLESS
+        guard let runner = AutomationRunner.shared else { throw Failure(status: 503, message: "Automations aren't running yet.") }
+        var run = routine[0]
+        run.instructions = ProjectAutomations.deskEventInstructions(run.instructions, events: events, memory: memory)
+        run.deskSourceCheck = true
+        run.deskSourceCheckIncludeNew = true
+        let thread: UUID
+        do { thread = try runner.run(run, manual: false) } catch { throw Failure(status: 409, message: error.localizedDescription) }
+        model.automationsChanged()
+        guard let session = model.sessions.first(where: { $0.id == thread }) else { throw Failure(status: 503, message: "The run started, but its session isn't there.") }
+        return session
+        #else
+        _ = model; _ = routine
+        throw Failure(status: 503, message: "The Desk runs in Chatterbox's background service, which isn't running.")
+        #endif
+    }
+
     private func pair(_ request: HTTPRequest) -> HTTPResponse {
         guard isEnabled else { return .error(403, "The iPhone app is turned off in Chatterbox's Settings.") }
         guard let body = try? Companion.decoder.decode(Companion.PairRequest.self, from: request.body) else {

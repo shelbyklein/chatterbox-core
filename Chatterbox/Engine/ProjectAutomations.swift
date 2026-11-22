@@ -95,6 +95,39 @@ enum ProjectAutomations {
         return routine
     }
 
+    /// One always-on Desk run (plans/always-on-desk.md): just the changes the watchers saw, with
+    /// the Desk's memory, instead of re-reading every source. Same rules as a source check.
+    static func deskEventInstructions(_ configured: String, events: [DeskEvent], memory: DeskMemory) -> String {
+        let list = events.enumerated().map { index, event in
+            var lines = ["\(index + 1). [\(event.kind)] \(event.title)"]
+            if let link = event.link { lines.append("   Link: \(link)") }
+            if !event.detail.isEmpty { lines.append(event.detail.split(separator: "\n").map { "   " + $0 }.joined(separator: "\n")) }
+            lines.append("   Source ref: \(event.source):\(event.sourceEventID)")
+            return lines.joined(separator: "\n")
+        }.joined(separator: "\n\n")
+        return """
+            Always-on Desk run: \(events.count) change\(events.count == 1 ? "" : "s") since the last run. Handle only these; don't re-read every source.
+
+            \(list)
+
+            Your memory (\(memory.directory.path)):
+            \(memory.promptText())
+
+            Your standing rules, from the configured routine:
+            \(configured.trimmingCharacters(in: .whitespacesAndNewlines))
+
+            For this run:
+            - For each change: find the Desk task it belongs to (`desk list --json`, by source reference), and update its source status, or add a genuinely new task with its verified source. A comment or status change on a known task is an update, not a new task.
+            - Prepare, don't act outbound: never send or draft-send email, post comments, or change ClickUp. Clear Yes tasks start by themselves.
+            - Keep notes for next time in your memory folder: what you learned about Shelby in `notes/`, per-task progress in `progress/<task>.md`, with a line in `index.md`. Keep `instructions.md` as is unless Shelby asks.
+            - If something needs Shelby now (she's asked something, or a deadline is within 48 hours), tell her with `desk notify --urgent "<one line>"`; otherwise `desk notify "<one line>"` for the morning digest, or nothing if it isn't worth her attention. Check `reported.md` first and don't repeat what she's already been told.
+            - To check back later, set `desk remind <task> --at "<when>" --note "<what to check>"`.
+            - Then submit the manifest as a source check does (below). Zero items is fine.
+
+            \(deskSourceInstructions("", includeNew: true))
+            """
+    }
+
     static func deskSourceInstructions(_ configured: String, includeNew: Bool) -> String {
         """
         \(configured)

@@ -1008,6 +1008,19 @@ final class DeskStore {
             // Agent inventory includes every stored task, even hidden/older review and done.
             result["tasks"] = try .value(tasks)
             return .object(result)
+        case "remind":
+            // The always-on Desk agent's follow-up (plans/always-on-desk.md).
+            guard let when = body["at"]?.string, let due = DeskTimers.parse(when) else {
+                throw Failure(status: 400, message: "Give --at as an ISO date/time (2026-11-24T09:00) or +3d, +4h, +30m.")
+            }
+            let note = (body["note"]?.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let timer = DeskTimers.shared.add(task: body["task"]?.string, note: note.isEmpty ? "Check back" : String(note.prefix(500)), due: due)
+            return ["id": .string(timer.id.uuidString), "due": .string(ISO8601DateFormatter().string(from: timer.due))]
+        case "notify":
+            let text = (body["text"]?.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { throw Failure(status: 400, message: "Say what to tell Shelby.") }
+            DeskOutbox.shared.add(String(text.prefix(300)), urgent: body["urgent"]?.bool ?? false, task: body["task"]?.string)
+            return ["queued": .bool(true)]
         case "places":
             return try .value(places())
         case "threads":
@@ -1021,7 +1034,7 @@ final class DeskStore {
             return try .value(options(for: place, picks: picks, chat: chat))
         case "add":
             guard var request = try? body.decode(Companion.DeskAddRequest.self) else { throw Failure(status: 400, message: "Say what needs doing.") }
-            if agent { request.source = ["claude", "codex"].contains(request.source ?? "") ? request.source : "claude" }
+            if agent { request.source = Backend.allCases.map(\.rawValue).contains(request.source ?? "") ? request.source : "claude" }
             let before = Set(tasks.map(\.id))
             let added = try add(request)
             var result = try JSON.value(snapshot()).object ?? [:]
