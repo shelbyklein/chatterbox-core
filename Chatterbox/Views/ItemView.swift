@@ -116,8 +116,8 @@ struct ItemView: View {
             VStack(alignment: .leading, spacing: 6) {
                 MarkdownText(text: item.text, isStreaming: item.phase == .streaming)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    // Its ```actions buttons: live only while it's the newest reply.
-                    .environment(\.replyActions, item.text.contains("```actions") ? replyActionResolver?.context(for: item.id) : nil)
+                    // Its ```actions and ```a2ui cards: live only while it's the newest reply.
+                    .environment(\.replyActions, ReplyActions.containsInteractiveBlock(item.text) ? replyActionResolver?.context(for: item.id) : nil)
                 // Animations the reply points to (made with a command, say), playing.
                 if item.phase == .final {
                     ForEach(ChatSession.referencedMedia(in: item.text, folder: chatFolder), id: \.self) { url in

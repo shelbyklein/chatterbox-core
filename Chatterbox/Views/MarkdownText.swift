@@ -349,6 +349,9 @@ private struct BlockView: View {
         case .code(let code, let language, let closed):
             if DraftCard.languages.contains(language.lowercased()) {
                 DraftCard(draft: code, closed: closed)
+            } else if A2UIParser.languages.contains(language.lowercased()),
+                      let surface = A2UIParser.parse(code, closed: closed).primarySurface {
+                A2UISurfaceView(source: code, surface: surface, closed: closed, paths: paths)
             } else if ReplyActions.languages.contains(language.lowercased()), !ReplyActions.parse(code).isEmpty {
                 ActionButtons(actions: ReplyActions.parse(code), closed: closed)
             } else {
@@ -450,6 +453,10 @@ enum ReplyActions {
     static let languages: Set<String> = ["actions"]
     /// More than this is a menu, not a next step.
     static let limit = 5
+
+    static func containsInteractiveBlock(_ text: String) -> Bool {
+        text.contains("```actions") || text.contains("```a2ui")
+    }
 
     static func parse(_ block: String) -> [ReplyAction] {
         var actions: [ReplyAction] = []

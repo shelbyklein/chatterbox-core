@@ -1205,7 +1205,7 @@ private struct MobileTranscriptRows: View {
     var body: some View {
         ForEach(items) { item in
             ItemRow(item: item, chat: chat, backend: backend, actions: actions,
-                    replyActions: item.kind == .assistant && item.text.contains("```actions") ? replyActions(for: item.id) : nil)
+                    replyActions: item.kind == .assistant && ReplyActions.containsInteractiveBlock(item.text) ? replyActions(for: item.id) : nil)
                 .id(item.id)
         }
     }

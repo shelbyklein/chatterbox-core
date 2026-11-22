@@ -22,6 +22,7 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-21", changes: [
+            "Replies can now include native interactive A2UI cards—forms, pickers, tabs, progress bars, and native Swift Charts—that render directly on Mac and phone and send your choices back to the chat.",
             "A Gemini reply that gives its answer and then goes quiet (nothing running, nothing waiting on you) is closed after 3 minutes, so a message you sent meanwhile goes through instead of waiting as Queued.",
             "On the phone, background session-list refreshes skip re-downloading and redrawing when nothing has changed on the Mac, saving battery and data.",
             "Faster background service startup, smoother streaming replies with less disk churn, cached image thumbnails and session lists for the phone, and reliable Gemini reconnects if the background host answers slowly.",
