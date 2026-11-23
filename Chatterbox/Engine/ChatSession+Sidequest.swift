@@ -139,10 +139,9 @@ extension ChatSession {
         return reply
     }
 
-    /// After a sidequest's turn: its finished answer goes back by itself, and the sidequest
-    /// asks to be archived (a bubble with Archive and Keep Open; an automation's run still
-    /// archives itself). Continued, later answers wait for Send Back, so refining doesn't
-    /// restart the other chat each time.
+    /// After a sidequest's turn: its finished answer goes back by itself and the sidequest
+    /// archives itself (Shelby, November 23); a message sent to it brings it back. Continued,
+    /// later answers wait for Send Back, so refining doesn't restart the other chat each time.
     func sidequestTurnEnded(parent: ChatSession?) {
         guard let parent, record.sidequestReturned == nil, !isWaitingOnYou, unreturnedSidequestReply != nil else { return }
         // A PC errand's files are copied to the Mac first, so its answer can name them.
@@ -182,14 +181,9 @@ extension ChatSession {
         // Into a work thread while the Mac is overloaded, its next turn waits (ChatSession+Pressure).
         parent.sendAutomatic(.init(text: text, automatic: true, detail: detail, sidequest: id))
         parent.onChange?(parent)
-        // An automation's run is done with: it leaves the sidebar by itself. A sidequest stays
-        // and asks (SidequestArchiveRequest; Shelby, November 13): you may want to keep going.
-        if automation {
-            notice("Sent back to \u{201C}\(parent.title)\u{201D}. This run is archived; it's still here if you want it.")
-            setArchived(true)
-        } else {
-            notice("Sent back to \u{201C}\(parent.title)\u{201D}.")
-        }
+        // Done with: it leaves the sidebar by itself. Sending it a message brings it back.
+        notice("Sent back to \u{201C}\(parent.title)\u{201D}. This \(automation ? "run" : "sidequest") is archived; send it a message to carry on.")
+        setArchived(true)
         onChange?(self)
     }
 }
