@@ -32,7 +32,7 @@ enum ConnectorTools {
              ["text": prop("string", "The first message: the task, the files, and what done looks like"),
               "place": prop("string", "A Studio's or project's name, from list_places"),
               "loose_reason": prop("string", "Only without a place: why this belongs in no Studio or project"),
-              "agent": prop("string", "claude (default) or codex", ["claude", "codex"]), "title": prop("string", "A name (optional)")],
+              "agent": prop("string", "claude (default), codex or gemini", ["claude", "codex", "gemini"]), "title": prop("string", "A name (optional)")],
              required: ["text"]),
         tool("propose_work", "Puts work on Shelby's Desk, to be placed and started there; nothing starts until Shelby starts it. Use it instead of start_session when it's unclear which Studio or project the work belongs in. Name the place you think fits, or leave it out and the Desk proposes one from each place's instructions or brief (or none when nothing clearly fits).",
              ["text": prop("string", "The work: the task, the files, and what done looks like. It becomes the session's first message."),
@@ -55,7 +55,7 @@ enum ConnectorTools {
         tool("share_file", "A download link for a file from a session (an image, PDF, document, zip), for Shelby. Anyone with the link can download it for 24 hours.",
              ["session_id": prop("string", "From list_sessions"), "file_id": prop("string", "A file's id, from read_session")], required: ["session_id", "file_id"]),
         tool("session_settings", "Shows a session's agent, model, effort and Fast mode and the choices; given any of them, changes them. Changes apply from the next message.",
-             ["session_id": prop("string", "From list_sessions"), "agent": prop("string", "claude or codex", ["claude", "codex"]),
+             ["session_id": prop("string", "From list_sessions"), "agent": prop("string", "claude, codex or gemini", ["claude", "codex", "gemini"]),
               "model": prop("string", "A model's name or id from the choices"), "effort": prop("string", "An effort level from the choices"),
               "fast_mode": prop("boolean", "Fast mode on or off, where the model has it")], required: ["session_id"]),
     ]
@@ -165,21 +165,21 @@ enum ConnectorTools {
             var change = Companion.SettingsRequest()
             if target != options.backend { change.backend = target }
             if let modelName {
-                let models = target == "codex" ? options.codexModels : options.claudeModels
+                let models = options.models(for: target)
                 guard let model = models.first(where: { $0.id.caseInsensitiveCompare(modelName) == .orderedSame || $0.name.caseInsensitiveCompare(modelName) == .orderedSame })
                         ?? models.first(where: { $0.name.localizedCaseInsensitiveContains(modelName) }) else {
                     return ("No \(target) model called \(modelName). Choices: \(models.map(\.name).joined(separator: ", ")).", true)
                 }
                 change.model = model.id
             } else if change.backend != nil {
-                change.model = (target == "codex" ? options.codexModels : options.claudeModels).first?.id
+                change.model = options.models(for: target).first?.id
             }
             let applied = await request("POST", "/v1/chats/\(session)/settings", body: change, token: token, as: Companion.ChatDetail.self)
             guard case .ok(let updated) = applied else { if case .failed(let text) = applied { return (text, true) }; return failure }
             detail = updated; options = updated.options ?? options
             var follow = Companion.SettingsRequest()
             if let effort {
-                let levels = (options.backend == "codex" ? options.codexModels : options.claudeModels).first { $0.id == options.model }?.efforts ?? []
+                let levels = options.models(for: options.backend).first { $0.id == options.model }?.efforts ?? []
                 guard levels.isEmpty || levels.contains(effort) else { return ("Model changed, but \(effort) isn't one of its efforts: \(levels.joined(separator: ", ")).", true) }
                 follow.effort = effort
             }
@@ -191,11 +191,12 @@ enum ConnectorTools {
             }
             return ("Changed. Now: \(detail.settings)", false)
         }
-        let models = options.backend == "codex" ? options.codexModels : options.claudeModels
+        let models = options.models(for: options.backend)
         let current = models.first { $0.id == options.model }
         var lines = ["Now: \(detail.settings)", "Agent: \(options.backend)"]
         lines.append("Claude models: \(options.claudeModels.map(\.name).joined(separator: ", "))")
         lines.append("Codex models: \(options.codexModels.map(\.name).joined(separator: ", "))")
+        if let gemini = options.geminiModels, !gemini.isEmpty { lines.append("Gemini models: \(gemini.map(\.name).joined(separator: ", "))") }
         if let efforts = current?.efforts, !efforts.isEmpty { lines.append("Efforts for \(current?.name ?? "this model"): \(efforts.joined(separator: ", "))") }
         if let fast = options.fastMode { lines.append("Fast mode: \(fast ? "on" : "off")") }
         return (lines.joined(separator: "\n"), false)

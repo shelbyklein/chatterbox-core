@@ -27,7 +27,8 @@ struct ChatSettingsForm<Leading: View>: View {
     /// Which provider's models the model menu lists ("claude", "codex" or "open").
     @State private var browsing: String?
     private var isCodex: Bool { options.backend == "codex" }
-    private var currentModel: Companion.ModelOption? { (isCodex ? options.codexModels : options.claudeModels).first { $0.id == options.model } }
+    /// The model in use among its agent's (Gemini's too), for its effort levels.
+    private var currentModel: Companion.ModelOption? { options.models(for: options.backend).first { $0.id == options.model } }
 
     var body: some View {
             Form {
