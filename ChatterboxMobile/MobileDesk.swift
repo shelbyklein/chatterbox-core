@@ -1142,11 +1142,6 @@ private struct DeskReadyCard: View {
             }
             // Small, one-line buttons with short labels, so the row stays one compact line.
             HStack(spacing: 6) {
-                Button(action: taps(complete)) { Label("Complete", systemImage: "checkmark") }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.green)
-                    .accessibilityLabel("Mark Complete")
-                    .accessibilityIdentifier("desk-complete-\(item.id.uuidString)")
                 Button(action: taps(open)) { Label("Open", systemImage: "arrow.up.forward") }
                     .buttonStyle(.bordered)
                     .accessibilityLabel("Open")
@@ -1163,6 +1158,12 @@ private struct DeskReadyCard: View {
                         .accessibilityIdentifier("desk-ready-hold-\(item.id.uuidString)")
                 }
                 Spacer(minLength: 0)
+                // Complete: a green check at the right end (Shelby, 2026-11-23).
+                Button(action: taps(complete)) { Image(systemName: "checkmark").fontWeight(.bold).padding(.horizontal, 4) }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.green)
+                    .accessibilityLabel("Mark Complete")
+                    .accessibilityIdentifier("desk-complete-\(item.id.uuidString)")
             }
             .controlSize(.small)
             .font(.subheadline.weight(.medium))
@@ -2064,13 +2065,15 @@ private struct MobileDeskHeldCard: View {
             if let note = item.note { Text(note).font(.footnote).foregroundStyle(Color.metadata).lineLimit(3) }
             }
             HStack {
-                Button("Resume", action: resume).buttonStyle(.borderedProminent)
+                // One button: Open takes it off hold and opens its session (Shelby, 2026-11-23).
+                Button("Open") { resume(); open?() }.buttonStyle(.bordered)
+                    .accessibilityHint("Takes it off hold and opens its session")
                     .accessibilityIdentifier("desk-resume-" + item.id.uuidString)
-                if let open { Button("Open", action: open).buttonStyle(.bordered) }
             }
         }
         .deskCard()
         .contextMenu {
+            Button("Resume Without Opening", systemImage: "play.circle", action: resume)
             if let setWaiting {
                 if item.isWaitingForResponse { Button("Just On Hold", systemImage: "pause.circle") { setWaiting(false) } }
                 else { Button("Waiting for Response", systemImage: "ellipsis.bubble") { setWaiting(true) } }

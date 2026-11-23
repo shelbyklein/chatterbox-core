@@ -22,7 +22,7 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-23", changes: [
-            "On the Mac's Desk, Complete sits at the right end of a Review card, and an On hold card has one Open button that takes it off hold and opens its session (Resume without opening is in its right-click menu).",
+            "On the Desk (Mac and phone), Complete is a green check at the right end of a Review card, and an On hold card has one Open button that takes it off hold and opens its session (Resume without opening is in its menu).",
         ]),
         Day(id: "2026-11-21", changes: [
             "Replies can now include native interactive A2UI cards—forms, pickers, tabs, progress bars, and native Swift Charts—that render directly on Mac and phone and send your choices back to the chat.",

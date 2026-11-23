@@ -2006,8 +2006,14 @@ private struct DeskReadyRow: View {
                 }
                 Spacer(minLength: 0)
                 // Complete on the right, apart from Open and On hold (Shelby, 2026-11-23).
-                Button("Complete") { Task { await desk.complete(item) } }
-                    .buttonStyle(.accent)
+                Button { Task { await desk.complete(item) } } label: {
+                    Image(systemName: "checkmark").fontWeight(.bold).foregroundStyle(.white)
+                        .frame(width: 34, height: 22)
+                        .background(Capsule().fill(desk.canSilence ? Color.green : Color.green.opacity(0.4)))
+                        .contentShape(Capsule())
+                }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Complete")
                     .disabled(!desk.canSilence)
                     .help("Archive the session, completing its task. It shows in Done for a week, where Reopen brings it back.")
                     .deskFrame("complete:\(item.id)")
