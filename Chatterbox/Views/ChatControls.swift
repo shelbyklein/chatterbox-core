@@ -422,11 +422,20 @@ struct SidebarActivityStrip: View {
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(appearance.style.color(for: quest))
                         .opacity(running ? 0.75 : 1)
-                        .frame(width: 18, height: 20).contentShape(Rectangle())
+                        .frame(width: 18, height: 20)
+                        // Working: a small spinner on its top right, as on the phone (Shelby, 2026-11-23).
+                        .overlay(alignment: .topTrailing) {
+                            if quest.isRunning {
+                                ActivitySpinner(color: appearance.style.color(for: quest))
+                                    .frame(width: 7, height: 7).offset(x: 3, y: -1)
+                            }
+                        }
+                        .padding(.trailing, quest.isRunning ? 3 : 0)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Open sidequest \(questTitle(quest))")
-                .help("\(questTitle(quest)) · \(running ? quest.record.provider.label + " is working" : "New reply")")
+                .accessibilityLabel("Open sidequest \(questTitle(quest))\(quest.isRunning ? ", working" : "")")
+                .help("\(questTitle(quest)) · \(quest.isRunning ? quest.record.provider.label + " is working" : "New reply")")
             }
             Spacer(minLength: 0)
         }

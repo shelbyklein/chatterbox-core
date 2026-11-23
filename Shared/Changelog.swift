@@ -22,6 +22,7 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-23", changes: [
+            "In the Mac sidebar's Activity, a sidequest that's still working shows a small spinner on its icon, as on the phone.",
             "On the Desk (Mac and phone), Complete is a green check at the right end of a Review card, and an On hold card has one Open button that takes it off hold and opens its session (Resume without opening is in its menu).",
         ]),
         Day(id: "2026-11-21", changes: [
