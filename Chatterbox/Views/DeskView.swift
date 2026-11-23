@@ -1991,11 +1991,6 @@ private struct DeskReadyRow: View {
                            writeBack: item.task.map { task in { Task { await desk.writeBack(task, in: model) } } })
             }
             HStack(spacing: 8) {
-                Button("Complete") { Task { await desk.complete(item) } }
-                    .buttonStyle(.accent)
-                    .disabled(!desk.canSilence)
-                    .help("Archive the session, completing its task. It shows in Done for a week, where Reopen brings it back.")
-                    .deskFrame("complete:\(item.id)")
                 Button("Open") { desk.open(item.id, in: model) }
                     .deskFrame("readyOpen:\(item.id)")
                 // Waiting on someone's reply: off Review until resumed (Shelby, 2026-11-10).
@@ -2010,6 +2005,12 @@ private struct DeskReadyRow: View {
                         .deskFrame("readyHold:\(item.id)")
                 }
                 Spacer(minLength: 0)
+                // Complete on the right, apart from Open and On hold (Shelby, 2026-11-23).
+                Button("Complete") { Task { await desk.complete(item) } }
+                    .buttonStyle(.accent)
+                    .disabled(!desk.canSilence)
+                    .help("Archive the session, completing its task. It shows in Done for a week, where Reopen brings it back.")
+                    .deskFrame("complete:\(item.id)")
             }
             .padding(.top, 4)
         }
@@ -2271,15 +2272,21 @@ private struct DeskHeldRow: View {
             if let note = item.note { Text(note).font(.callout).foregroundStyle(Color.metadata).lineLimit(3) }
             }
             HStack {
-                Button("Resume") { Task { await desk.hold(item.id, resume: true) } }
-                    .deskFrame("resume:\(item.id)")
-                if let chat = item.chatID {
-                    Button("Open") { desk.open(chat, in: model) }.deskFrame("heldOpen:\(item.id)")
+                // One button: Open brings it back from On hold and opens its session
+                // (Shelby, 2026-11-23: "resume should just be open").
+                Button("Open") {
+                    Task {
+                        await desk.hold(item.id, resume: true)
+                        if let chat = item.chatID { desk.open(chat, in: model) }
+                    }
                 }
+                .help("Take it off hold and open its session")
+                .deskFrame("resume:\(item.id)")
             }
         }
         .deskCard()
         .contextMenu {
+            Button("Resume Without Opening", systemImage: "play.circle") { Task { await desk.hold(item.id, resume: true) } }
             if item.isWaitingForResponse {
                 Button("Just On Hold", systemImage: "pause.circle") { Task { await desk.hold(item.id) } }
             } else {
