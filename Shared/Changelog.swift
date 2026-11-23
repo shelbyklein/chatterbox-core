@@ -22,6 +22,7 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-23", changes: [
+            "The always-on Desk can read new USA Archery mail from Outlook (when it's open on the Inbox) if the account isn't in Apple Mail; it needs Chatterbox's background service allowed under Privacy & Security → Accessibility.",
             "A sidequest archives itself once its answer goes back to the session it came from (Mac and phone), instead of asking with Archive and Keep Open; send it a message to bring it back.",
             "On the phone, Session Settings in a Gemini chat now shows the effort levels for its model, so you can pick Low to Extra high as with Claude and Codex.",
             "A session counts as working whenever one of its sidequests, Sidechats or work threads is: its card and Activity row show the spinner at full brightness (Mac and phone).",

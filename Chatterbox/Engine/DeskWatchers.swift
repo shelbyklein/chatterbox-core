@@ -1,3 +1,5 @@
+import AppKit
+import ApplicationServices
 import Foundation
 import SQLite3
 
@@ -19,6 +21,8 @@ struct DeskCheckpoints: Codable, Equatable {
     /// When each watcher last finished a check, and its problem if the last one failed.
     var lastChecked: [String: Date] = [:]
     var problems: [String: String] = [:]
+    /// Outlook (read through accessibility): messages already seen, newest last.
+    var outlookSeen: [String]?
 
     static var file: URL { RuntimePaths.data.appendingPathComponent("Desk/checkpoints.json") }
     static func load(_ file: URL = Self.file) -> DeskCheckpoints {
@@ -222,7 +226,12 @@ final class MailWatcher {
         defer { checking = false }
         var points = DeskCheckpoints.load(checkpointsFile)
         do {
-            let account = try Self.accountID(domain: domain(), in: accountsFile)
+            let account: String
+            do { account = try Self.accountID(domain: domain(), in: accountsFile) }
+            catch where outlook.available() {
+                // No account in Apple Mail, but Outlook is open: read it instead.
+                return try await checkOutlook(now: now, points: &points)
+            }
             if keepMailOpen { Self.keepMailRunning() }
             let index = indexFile, after = points.mailAfterRow
             let rows = try await Task.detached { try Self.messages(in: index, account: account, after: after ?? 0, latestOnly: after == nil) }.value
@@ -247,6 +256,35 @@ final class MailWatcher {
         }
     }
 
+    /// Where Outlook's rows come from: the real app, or a test's stand-in.
+    var outlook = OutlookReader()
+
+    /// Outlook's Inbox, as its window lists it: the first check learns what's there; after
+    /// that, each row received today that wasn't seen becomes an event.
+    private func checkOutlook(now: Date, points: inout DeskCheckpoints) async throws -> Int {
+        let rows = try await outlook.inboxRows()
+        let firstLook = points.outlookSeen == nil
+        var seen = points.outlookSeen ?? []
+        var added = 0
+        let day = now.formatted(.iso8601.year().month().day())
+        for row in rows.reversed() {
+            guard let message = OutlookReader.Message(row) else { continue }
+            let key = "\(day)|\(message.key)"
+            guard message.today, !seen.contains(key) else { continue }
+            seen.append(key)
+            guard !firstLook else { continue }
+            let event = DeskEvent(source: "mail", sourceEventID: "outlook:\(ClickUpWatcher.stableHash(key))", kind: "email.new",
+                                  title: message.subject.isEmpty ? "(no subject)" : message.subject,
+                                  detail: "From: \(message.from)\nReceived: today, \(message.time)\n\(message.preview)\n(Read from Outlook's message list: \(message.text))")
+            if inbox.add(event) { added += 1 }
+        }
+        points.outlookSeen = Array(seen.suffix(500))
+        points.lastChecked["mail"] = now
+        points.problems["mail"] = nil
+        points.save(checkpointsFile)
+        return added
+    }
+
     struct Row { var row: Int64; var messageID: Int64; var from: String; var subject: String; var summary: String; var received: Date }
 
     /// Mail's account id for the address at `domain` (Mail's index names mailboxes by it).
@@ -255,7 +293,7 @@ final class MailWatcher {
             (column(stmt, 0), column(stmt, 1))
         }
         guard let id = rows.first?.0, !id.isEmpty else {
-            throw RuntimeFailure("Add your \(domain) account to Apple Mail (Mail → Settings → Accounts) so the Desk can see new mail.")
+            throw RuntimeFailure("Open Outlook on its Inbox, or add your \(domain) account to Apple Mail (Mail → Settings → Accounts), so the Desk can see new mail.")
         }
         return id
     }
@@ -324,5 +362,128 @@ final class MailWatcher {
         var rows: [T] = []
         while sqlite3_step(stmt) == SQLITE_ROW { rows.append(row(stmt)) }
         return rows
+    }
+}
+
+
+/// Outlook's message list, read through the Mac's accessibility features: no AI, no mouse,
+/// nothing in Outlook changes. The new Outlook has no scripting, so its window is the way in.
+/// It reads only a main window showing the Inbox of the account at `domain` (not a search or
+/// another folder), and only the rows Outlook has drawn, which always include the newest.
+/// Needs Chatterbox's service allowed under Privacy & Security → Accessibility.
+struct OutlookReader {
+    static let bundleID = "com.microsoft.Outlook"
+    /// Tests replace these with stand-ins.
+    var available: () -> Bool = { !NSRunningApplication.runningApplications(withBundleIdentifier: OutlookReader.bundleID).isEmpty }
+    var inboxRows: () async throws -> [String] = { try await Task.detached { try OutlookReader.readInbox() }.value }
+    var domain: () -> String = { AppPreferences.defaults.string(forKey: "deskMailDomain").flatMap { $0.isEmpty ? nil : $0 } ?? "usarchery.org" }
+
+    /// One message-list row, from its accessibility text, which reads like
+    /// "Unread, High priority, 3 messages, Allison Collins, Re: Jerseys, 2:48 PM, Folder: Inbox, Has attachments, Hi Shelby…".
+    struct Message: Equatable {
+        var from: String
+        var subject: String
+        var time: String
+        var preview: String
+        var text: String
+        /// Received today: Outlook shows a time alone ("2:48 PM"), not a day or date.
+        var today: Bool
+        /// Stays the same while the row does: sender, subject and time (not read or flag state).
+        var key: String { "\(from)|\(subject)|\(time)" }
+
+        static let flags: Set<String> = ["Unread", "Read", "Expanded", "Collapsed", "High priority", "Low priority", "Flagged", "Pinned",
+                                         "Has attachments", "Replied", "Forwarded", "Meeting request", "Mentioned", "Draft"]
+
+        init?(_ text: String) {
+            let parts = text.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+            // The time: "2:48 PM", "Replied 11/20/26", "Mon 3:15 PM", "11/5/26"…
+            guard let at = parts.firstIndex(where: Self.isWhen), at > 0 else { return nil }
+            var head = Array(parts[..<at]).filter { !$0.isEmpty && !Self.flags.contains($0) }
+            let conversation = head.first.map { $0.range(of: #"^\d+ messages?$"#, options: .regularExpression) != nil } ?? false
+            if conversation { head.removeFirst() }
+            guard !head.isEmpty else { return nil }
+            // A conversation lists its senders, then the subject; a message, one sender.
+            if conversation, head.count > 1 {
+                subject = head.removeLast(); from = head.joined(separator: ", ")
+            } else {
+                from = head.removeFirst(); subject = head.joined(separator: ", ")
+            }
+            var when = parts[at]
+            for word in ["Replied", "Forwarded"] where when.hasPrefix(word) { when = String(when.dropFirst(word.count)).trimmingCharacters(in: .whitespaces) }
+            time = when
+            today = when.range(of: #"^\d{1,2}:\d{2}\s?[AP]M$"#, options: .regularExpression) != nil
+            let tail = parts[(at + 1)...].filter { !$0.isEmpty && !$0.hasPrefix("Folder:") && !Self.flags.contains($0) }
+            preview = String(tail.joined(separator: ", ").prefix(1500))
+            self.text = String(text.trimmingCharacters(in: .whitespaces).prefix(2000))
+        }
+
+        static func isWhen(_ part: String) -> Bool {
+            part.range(of: #"^((Replied|Forwarded)\s+)?((Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+)?(\d{1,2}:\d{2}\s?[AP]M|\d{1,2}/\d{1,2}/\d{2,4})$"#,
+                       options: .regularExpression) != nil
+        }
+    }
+
+    /// The Inbox list's rows, top first. Throws a readable reason when it can't read them.
+    static func readInbox(domain: String = AppPreferences.defaults.string(forKey: "deskMailDomain").flatMap { $0.isEmpty ? nil : $0 } ?? "usarchery.org") throws -> [String] {
+        guard AXIsProcessTrusted() else {
+            askForAccess()
+            throw RuntimeFailure("Allow Chatterbox's background service in System Settings → Privacy & Security → Accessibility, so the Desk can read Outlook.")
+        }
+        guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first else {
+            throw RuntimeFailure("Open Outlook (or add your \(domain) account to Apple Mail) so the Desk can see new mail.")
+        }
+        let ax = AXUIElementCreateApplication(app.processIdentifier)
+        AXUIElementSetMessagingTimeout(ax, 5)
+        let windows = (value(ax, kAXWindowsAttribute) as? [AXUIElement]) ?? []
+        // A main window (it has the folder list) that isn't searching, with the Inbox selected.
+        let inboxes = windows.filter { window in
+            let title = (value(window, kAXTitleAttribute) as? String) ?? ""
+            guard !title.hasPrefix("Searching") else { return false }
+            var budget = 1500
+            guard let folders = find(in: window, budget: &budget, where: { (value($0, kAXRoleAttribute) as? String) == kAXOutlineRole }) else { return false }
+            let selected = (value(folders, kAXSelectedRowsAttribute) as? [AXUIElement]) ?? []
+            return selected.contains { row in
+                let cell = ((value(row, kAXChildrenAttribute) as? [AXUIElement]) ?? []).first ?? row
+                return ((value(cell, kAXDescriptionAttribute) as? String) ?? "").hasPrefix("Inbox")
+            }
+        }
+        guard let window = inboxes.first else {
+            throw RuntimeFailure("Outlook isn't showing the \(domain) Inbox (a search or another folder is open); the Desk reads mail when it is.")
+        }
+        var budget = 4000
+        guard let table = find(in: window, budget: &budget, where: {
+            (value($0, kAXRoleAttribute) as? String) == kAXTableRole && (value($0, kAXDescriptionAttribute) as? String) == "Message List"
+        }) else { throw RuntimeFailure("Couldn't find Outlook's message list.") }
+        let rows = (value(table, kAXRowsAttribute) as? [AXUIElement]) ?? (value(table, kAXChildrenAttribute) as? [AXUIElement]) ?? []
+        return rows.prefix(200).compactMap { row in
+            let cell = ((value(row, kAXChildrenAttribute) as? [AXUIElement]) ?? []).first ?? row
+            return (value(cell, kAXDescriptionAttribute) as? String).flatMap { $0.isEmpty ? nil : $0 }
+        }
+    }
+
+    /// Asks macOS once per launch to list the service under Accessibility.
+    nonisolated(unsafe) private static var asked = false
+    private static func askForAccess() {
+        guard !asked else { return }
+        asked = true
+        _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
+    }
+
+    private static func value(_ element: AXUIElement, _ attribute: String) -> AnyObject? {
+        var result: AnyObject?
+        return AXUIElementCopyAttributeValue(element, attribute as CFString, &result) == .success ? result : nil
+    }
+
+    private static func find(in element: AXUIElement, budget: inout Int, where match: (AXUIElement) -> Bool) -> AXUIElement? {
+        guard budget > 0 else { return nil }
+        budget -= 1
+        if match(element) { return element }
+        // The folder list and toolbar are never the message list: don't descend into rows or cells.
+        let role = value(element, kAXRoleAttribute) as? String
+        guard role != kAXRowRole, role != kAXCellRole else { return nil }
+        for child in (value(element, kAXChildrenAttribute) as? [AXUIElement]) ?? [] {
+            if let found = find(in: child, budget: &budget, where: match) { return found }
+        }
+        return nil
     }
 }
