@@ -679,8 +679,11 @@ struct ChatListView: View {
     private func familyCard(_ parent: Companion.ChatSummary, _ children: [Companion.ChatSummary]) -> some View {
         let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
         let selected = sizeClass == .regular && selection == parent.id
+        // A child working counts as the whole family working (Shelby, 2026-11-23).
+        var shown = parent
+        if children.contains(where: \.isRunning) { shown.isRunning = true }
         return VStack(alignment: .leading, spacing: 0) {
-            card(parent, embedded: true)
+            card(shown, embedded: true)
             MobileSidequestIcons(quests: children, open: open).padding(.horizontal, 12)
         }
         .padding(.bottom, 8)
@@ -1322,7 +1325,7 @@ struct ChatCard: View {
                         if chat.isWaitingOnYou {
                             Circle().fill(Color.attention).frame(width: 8, height: 8).accessibilityLabel("Waiting on you")
                         } else if chat.isRunning {
-                            MobileWorkingMark(size: .mini)
+                            MobileWorkingMark(size: .mini).accessibilityLabel("Working")
                         } else if isNew {
                             Circle().fill(.blue).frame(width: 8, height: 8).accessibilityLabel("New reply")
                         }

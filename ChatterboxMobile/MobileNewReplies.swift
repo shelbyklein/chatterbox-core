@@ -335,12 +335,19 @@ struct MobileNewReplies: View {
     /// A session with the sidequests and Sidechats in Activity: one card the width of the page,
     /// the session on top (its own activity, or just its name when only they have some) and
     /// each of them a small icon under it.
+    /// A child working counts as the whole family working (Shelby, 2026-11-23).
+    fileprivate static func familyShown(_ parent: Companion.ChatSummary, _ children: [MobileActivityEntry], stale: Bool) -> Companion.ChatSummary {
+        var shown = parent
+        if !stale, children.contains(where: { $0.chat.isRunning }) { shown.isRunning = true }
+        return shown
+    }
+
     private func familyCard(_ parent: Companion.ChatSummary, head: MobileActivityEntry?, children: [MobileActivityEntry]) -> some View {
         let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
         let waiting = head.map { $0.needsYouIn != nil || ($0.reply == nil && $0.chat.isWaitingOnYou) } ?? false
         return VStack(alignment: .leading, spacing: 0) {
             if let head { expandedEntry(head, card: true, embedded: true) }
-            else { ChatCard(chat: parent, embedded: true) { open(parent) } }
+            else { ChatCard(chat: Self.familyShown(parent, children, stale: store.isStale), embedded: true) { open(parent) } }
             questIcons(children).padding(.horizontal, 12)
         }
         .padding(.bottom, 8)

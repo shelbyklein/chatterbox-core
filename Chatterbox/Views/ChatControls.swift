@@ -398,9 +398,12 @@ struct SidebarActivityStrip: View {
                 if entry.listed { open(session, running: running) } else { model.selectedID = session.id }
             } label: {
                 HStack(spacing: 7) {
-                    if !entry.listed {
+                    // A child working counts as the whole family working (Shelby, 2026-11-23):
+                    // the session gets the spinner and full brightness.
+                    let childWorking = entry.quests.contains { $0.isRunning }
+                    if !entry.listed && !childWorking {
                         Color.clear.frame(width: 11, height: 11)
-                    } else if running {
+                    } else if running || childWorking {
                         ActivitySpinner(color: appearance.style.color(for: session))
                             .frame(width: 11, height: 11)
                     } else {
@@ -408,7 +411,7 @@ struct SidebarActivityStrip: View {
                         Circle().fill(appearance.style.color(for: session)).frame(width: 6, height: 6).frame(width: 11, height: 11)
                     }
                     Text(name).font(.caption).lineLimit(1)
-                        .foregroundStyle(entry.listed ? .primary : .secondary)
+                        .foregroundStyle(entry.listed || childWorking ? .primary : .secondary)
                 }.padding(.vertical, 4).padding(.horizontal, 2).contentShape(Rectangle())
             }
             .buttonStyle(.plain)
