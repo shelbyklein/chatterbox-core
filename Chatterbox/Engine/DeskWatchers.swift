@@ -266,8 +266,10 @@ final class MailWatcher {
         var seen = points.outlookSeen ?? []
         var added = 0
         let day = now.formatted(.iso8601.year().month().day())
-        for row in rows.reversed() {
-            guard let message = OutlookReader.Message(row) else { continue }
+        let messages = rows.compactMap(OutlookReader.Message.init)
+        // A conversation whose messages are listed below it is reported through them, not twice.
+        let listed = Set(messages.filter { !$0.conversation }.map(\.topic))
+        for message in messages.reversed() where !(message.conversation && listed.contains(message.topic)) {
             let key = "\(day)|\(message.key)"
             guard message.today, !seen.contains(key) else { continue }
             seen.append(key)
@@ -390,6 +392,10 @@ struct OutlookReader {
         var text: String
         /// Received today: Outlook shows a time alone ("2:48 PM"), not a day or date.
         var today: Bool
+        /// A conversation's summary row ("3 messages, …"); its messages may be listed too.
+        var conversation = false
+        /// The subject without "Re:"/"FW:", to match a conversation with its messages.
+        var topic: String { subject.replacingOccurrences(of: #"^((re|fw|fwd):\s*)+"#, with: "", options: [.regularExpression, .caseInsensitive]).lowercased() }
         /// Stays the same while the row does: sender, subject and time (not read or flag state).
         var key: String { "\(from)|\(subject)|\(time)" }
 
@@ -403,8 +409,9 @@ struct OutlookReader {
             guard !parts.contains("Expanded"), !parts.contains(where: { $0.hasPrefix("Folder:") && $0 != "Folder: Inbox" }) else { return nil }
             // The time: "2:48 PM", "Replied 11/20/26", "Mon 3:15 PM", "11/5/26"…
             guard let at = parts.firstIndex(where: Self.isWhen), at > 0 else { return nil }
-            var head = Array(parts[..<at]).filter { !$0.isEmpty && !Self.flags.contains($0) }
-            let conversation = head.first.map { $0.range(of: #"^\d+ messages?$"#, options: .regularExpression) != nil } ?? false
+            var head = Array(parts[..<at]).filter { !$0.isEmpty && !Self.flags.contains($0)
+                && $0.range(of: #"^\d+ unread messages?$"#, options: .regularExpression) == nil }
+            conversation = head.first.map { $0.range(of: #"^\d+ messages?$"#, options: .regularExpression) != nil } ?? false
             if conversation { head.removeFirst() }
             guard !head.isEmpty else { return nil }
             // A conversation lists its senders, then the subject; a message, one sender.

@@ -22,6 +22,7 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-24", changes: [
+            "The always-on Desk keeps working when its reporting session (USAA Updates) is in a Studio; before, every new email failed. Outlook conversations are no longer counted twice.",
             "Account Usage in the Mac toolbar shows Gemini's 5-hour and weekly limits under Claude and Codex.",
             "In a Gemini chat on the Mac, the model button under the message box names the Gemini model and effort, not the Claude model the chat used before.",
             "Picking another agent's model while a reply runs now switches once the reply ends, with the model and effort you picked; before, the pick was lost.",
