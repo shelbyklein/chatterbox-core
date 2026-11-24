@@ -9,11 +9,11 @@ struct ProxyQuotaView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Account Usage").font(.title2.bold())
-                    Text("Subscription quota via EasyCLIProxy").font(.callout).foregroundStyle(.secondary)
+                    Text(UsageLimits.shared.gemini.isEmpty ? "Subscription quota via EasyCLIProxy" : "Subscription quota via EasyCLIProxy; Gemini from Antigravity").font(.callout).foregroundStyle(.secondary)
                 }
                 Spacer()
                 if store.refreshing { ProgressView().controlSize(.small).accessibilityLabel("Refreshing account usage") }
-                Button { Task { await store.refresh() } } label: { Label("Refresh", systemImage: "arrow.clockwise") }
+                Button { Task { async let gemini: Void = UsageMeter.fetchFromService(); await store.refresh(); await gemini } } label: { Label("Refresh", systemImage: "arrow.clockwise") }
                     .disabled(store.refreshing)
             }
             if let route {
@@ -26,23 +26,44 @@ struct ProxyQuotaView: View {
                 if !store.accounts.isEmpty { Text("Showing the previous results.").font(.caption).foregroundStyle(.secondary) }
             }
             if store.accounts.isEmpty && !store.refreshing && store.problem == nil {
-                ContentUnavailableView("No Claude or Codex accounts", systemImage: "person.crop.circle.badge.questionmark", description: Text("Add accounts in EasyCLIProxyAPI, then refresh."))
+                ContentUnavailableView("No Claude or Codex accounts in the proxy", systemImage: "person.crop.circle.badge.questionmark", description: Text("Add accounts in EasyCLIProxyAPI, then refresh."))
             }
             forProvider("claude", title: "Claude")
             forProvider("codex", title: "Codex")
+            geminiSection
             if let date = store.lastRefresh {
                 Text("Last refreshed \(date.formatted(date: .omitted, time: .shortened))").font(.caption).foregroundStyle(.secondary)
             }
             Text("Read-only. Manage accounts and quota resets in EasyCLIProxyAPI.").font(.caption).foregroundStyle(.secondary)
         }
-        .task { await store.refreshIfNeeded() }
+        .task { async let gemini: Void = UsageMeter.fetchFromService(); await store.refreshIfNeeded(); await gemini }
     }
+    /// Gemini isn't in the proxy: its limits come from Antigravity's own `/usage` (GeminiUsage),
+    /// the same numbers as the usage meter in Gemini chats.
+    @ViewBuilder private var geminiSection: some View {
+        let windows = UsageLimits.shared.gemini
+        if !windows.isEmpty {
+            let account = ProxyQuotaAccount(id: "gemini", provider: "gemini", name: "Google account (Antigravity)", disabled: false,
+                                            windows: windows.map { ProxyQuotaWindow(title: $0.label == "Weekly" ? "Weekly limit" : "\($0.label) window",
+                                                                                     remaining: (1 - $0.utilization) * 100, reset: $0.resetsAt) })
+            HStack { Text("Gemini").font(.headline); Text("1 account").font(.caption).foregroundStyle(.secondary) }
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: compact ? 240 : 260), spacing: 12, alignment: .top)], spacing: 12) {
+                card(account)
+            }
+        }
+    }
+
     @ViewBuilder private func forProvider(_ provider: String, title: String) -> some View {
         let accounts = store.accounts.filter { $0.provider == provider }
         if !accounts.isEmpty {
-            HStack { Text(title).font(.headline); Text("\(accounts.count) accounts").font(.caption).foregroundStyle(.secondary) }
+            HStack { Text(title).font(.headline); Text("\(accounts.count) \(accounts.count == 1 ? "account" : "accounts")").font(.caption).foregroundStyle(.secondary) }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: compact ? 240 : 260), spacing: 12, alignment: .top)], spacing: 12) {
-                ForEach(accounts) { account in
+                ForEach(accounts) { account in card(account) }
+            }
+        }
+    }
+
+    private func card(_ account: ProxyQuotaAccount) -> some View {
                     VStack(alignment: .leading, spacing: 12) {
                         Text(account.name).font(.subheadline.weight(.semibold)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                         Label(account.status, systemImage: account.status == "Available" ? "checkmark.circle" : account.status == "Limited" ? "clock" : "info.circle")
@@ -76,9 +97,6 @@ struct ProxyQuotaView: View {
                     .padding(14).frame(maxWidth: .infinity, alignment: .topLeading)
                     .background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
                     .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.primary.opacity(0.1)))
-                }
-            }
-        }
     }
 }
 
