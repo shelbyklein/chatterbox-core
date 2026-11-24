@@ -1295,7 +1295,8 @@ private struct DeskRequestRow: View {
             if let confidence = request.confidence { DeskConfidenceLine(confidence: confidence).deskFrame("confidence:\(request.id)") }
             if let note = request.note, !note.isEmpty {
                 Label { Text(note) } icon: { Image(systemName: "text.quote") }
-                    .font(.subheadline).foregroundStyle(Color.metadata).lineLimit(3)
+                    .font(.subheadline).foregroundStyle(Color.metadata).lineLimit(2)
+                    .help(note)
             }
             // Mark done is already on the card: the warning is enough.
             DeskSourceLine(id: request.id, origin: request.origin, check: request.check,

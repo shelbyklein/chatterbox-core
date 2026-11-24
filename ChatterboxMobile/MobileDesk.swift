@@ -1290,7 +1290,7 @@ private struct DeskSwipe<Content: View>: View {
             .background(alignment: .trailing) { if offset < 0 { button } }
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
-            .simultaneousGesture(drag)
+            .modifier(SwipeRecognizer(drag: drag, moved: moved, finished: finished))
             .sensoryFeedback(.impact(weight: .medium), trigger: armed) { _, now in now }
     }
 
@@ -1311,33 +1311,42 @@ private struct DeskSwipe<Content: View>: View {
         .accessibilityIdentifier(action.identifier + id)
     }
 
+    /// iOS 17's fallback (SwipeRecognizer): a SwiftUI drag, which can keep the list from scrolling.
     private var drag: some Gesture {
         DragGesture(minimumDistance: 14)
             .onChanged { value in
                 if sideways == nil { sideways = abs(value.translation.width) > abs(value.translation.height) * 1.2 }
                 guard sideways == true else { return }
-                taps.swiping = true
-                // Without a full swipe, it stops a little past the button.
-                let x = max(fullSwipe ? -.infinity : -(reveal + 36), min(0, resting + value.translation.width))
-                offset = x
-                armed = fullSwipe && -x > commit
+                moved(value.translation.width)
             }
             .onEnded { value in
                 defer { sideways = nil }
                 guard sideways == true else { return }
-                taps.swiping = false
-                taps.endedAt = Date()
-                let x = resting + value.translation.width
-                if fullSwipe, -x > commit {
-                    now()
-                } else if -x > reveal / 2 || -(resting + value.predictedEndTranslation.width) > reveal {
-                    withAnimation(.spring(duration: 0.25)) { offset = -reveal; resting = -reveal }
-                    taps.open = true
-                    armed = false
-                } else {
-                    close()
-                }
+                finished(value.translation.width, predicted: value.predictedEndTranslation.width)
             }
+    }
+
+    private func moved(_ dx: CGFloat) {
+        taps.swiping = true
+        // Without a full swipe, it stops a little past the button.
+        let x = max(fullSwipe ? -.infinity : -(reveal + 36), min(0, resting + dx))
+        offset = x
+        armed = fullSwipe && -x > commit
+    }
+
+    private func finished(_ dx: CGFloat, predicted: CGFloat) {
+        taps.swiping = false
+        taps.endedAt = Date()
+        let x = resting + dx
+        if fullSwipe, -x > commit {
+            now()
+        } else if -x > reveal / 2 || -(resting + predicted) > reveal {
+            withAnimation(.spring(duration: 0.25)) { offset = -reveal; resting = -reveal }
+            taps.open = true
+            armed = false
+        } else {
+            close()
+        }
     }
 
     private func close() {
@@ -1359,6 +1368,7 @@ private struct DeskSwipe<Content: View>: View {
 
 /// Work waiting to be placed: where the Desk proposes it goes, and why.
 private struct DeskRequestCard: View {
+    @State private var noteOpen = false
     let request: Companion.DeskRequest
     let place: Companion.DeskPlace?
     /// Picked here from the place chip, instead of the Desk's proposal.
@@ -1430,8 +1440,13 @@ private struct DeskRequestCard: View {
             .accessibilityHint("Shows the Studios and projects it could go to")
             .accessibilityIdentifier("desk-place-\(request.id.uuidString)")
             if let note = request.note, !note.isEmpty {
+                // Two lines; tap for the rest (Shelby, November 24: the notes were too wordy).
                 Text(note).font(.footnote).foregroundStyle(Color.metadata)
+                    .lineLimit(noteOpen ? nil : 2)
                     .fixedSize(horizontal: false, vertical: true)
+                    .contentShape(Rectangle())
+                    .onTapGesture { withAnimation(.easeOut(duration: 0.15)) { noteOpen.toggle() } }
+                    .accessibilityHint(noteOpen ? "Shows less" : "Shows the whole note")
             }
             MobileDeskSourceLine(id: request.id.uuidString, origin: request.origin, check: request.check,
                                  writeBack: writeBack, taps: { taps($0) })
@@ -2087,5 +2102,55 @@ private struct MobileDeskHeldCard: View {
         .disabled(busy)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("desk-held-" + item.id.uuidString)
+    }
+}
+
+
+/// A card's swipe. On iOS 18 and later it's a UIKit pan that only begins for a sideways move,
+/// so an up-and-down drag anywhere on a card scrolls the Desk (Shelby, November 24: spots on
+/// the cards wouldn't scroll, where the SwiftUI drag took the touch from the list).
+private struct SwipeRecognizer<G: Gesture>: ViewModifier {
+    let drag: G
+    let moved: (CGFloat) -> Void
+    let finished: (CGFloat, CGFloat) -> Void
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.gesture(SidewaysPan(moved: moved, finished: finished))
+        } else {
+            content.simultaneousGesture(drag)
+        }
+    }
+}
+
+@available(iOS 18.0, *)
+private struct SidewaysPan: UIGestureRecognizerRepresentable {
+    let moved: (CGFloat) -> Void
+    let finished: (CGFloat, CGFloat) -> Void
+
+    func makeUIGestureRecognizer(context: Context) -> UIPanGestureRecognizer {
+        let pan = UIPanGestureRecognizer()
+        pan.delegate = context.coordinator
+        return pan
+    }
+
+    func makeCoordinator(converter: CoordinateSpaceConverter) -> Coordinator { Coordinator() }
+
+    func handleUIGestureRecognizerAction(_ pan: UIPanGestureRecognizer, context: Context) {
+        let dx = pan.translation(in: pan.view).x
+        switch pan.state {
+        case .began, .changed: moved(dx)
+        case .ended, .cancelled, .failed: finished(dx, dx + pan.velocity(in: pan.view).x * 0.25)
+        default: break
+        }
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        /// Only a sideways move is a swipe; anything else is left to the list's scrolling.
+        func gestureRecognizerShouldBegin(_ recognizer: UIGestureRecognizer) -> Bool {
+            guard let pan = recognizer as? UIPanGestureRecognizer else { return false }
+            let velocity = pan.velocity(in: pan.view)
+            return abs(velocity.x) > abs(velocity.y) * 1.2
+        }
     }
 }
