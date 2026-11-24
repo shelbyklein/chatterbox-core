@@ -1286,6 +1286,12 @@ private struct DeskRequestRow: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)
             Text(DeskText.origin(request)).font(.caption).foregroundStyle(Color.metadata)
+            if request.suggested == true {
+                Label("Suggested by the Desk \u{00B7} Start to approve", systemImage: "tray.and.arrow.down")
+                    .font(.caption.weight(.semibold)).foregroundStyle(Color.accentColor)
+                    .help("A Desk check found this. It waits for you: Start approves it; delete it if it isn't needed.")
+                    .accessibilityIdentifier("desk-suggested-\(request.id.uuidString)")
+            }
             if let confidence = request.confidence { DeskConfidenceLine(confidence: confidence).deskFrame("confidence:\(request.id)") }
             if let note = request.note, !note.isEmpty {
                 Label { Text(note) } icon: { Image(systemName: "text.quote") }

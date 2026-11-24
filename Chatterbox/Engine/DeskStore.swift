@@ -96,6 +96,9 @@ final class DeskStore {
         var heldAt: Date? = nil
         /// Why it's held: "response" (waiting for someone's reply), or nil for a plain hold.
         var heldReason: String? = nil
+        /// Added by a Desk source check (the always-on Desk, Check for updates): it waits for
+        /// Shelby to start it, whatever its score (Shelby, November 24: approve on the Desk).
+        var suggested: Bool? = nil
 
         init(_ request: Companion.DeskRequest) {
             id = request.id; text = request.text; source = request.source; createdAt = request.createdAt
@@ -103,7 +106,8 @@ final class DeskStore {
         }
         var request: Companion.DeskRequest {
             .init(id: id, text: text, source: source, createdAt: createdAt, proposed: proposed, note: note,
-                  origin: origin, check: DeskOriginRules.check(origin, column: .todo, since: createdAt), confidence: confidence)
+                  origin: origin, check: DeskOriginRules.check(origin, column: .todo, since: createdAt), confidence: confidence,
+                  suggested: suggested)
         }
         var isOpen: Bool { completedAt == nil }
     }
@@ -386,6 +390,7 @@ final class DeskStore {
                         throw Failure(status: 409, message: "This check updates existing tasks only; it cannot add new ones.")
                     }
                     added.insert(result.id)
+                    if let index = tasks.firstIndex(where: { $0.id == result.id }) { tasks[index].suggested = true }
                 }
             }
             for update in manifest.updates {
@@ -463,7 +468,7 @@ final class DeskStore {
         var slots = Self.autoStartLimit - running
         guard slots > 0 else { return }
         let ready = tasks.filter { task in
-            guard isToDo(task), !autoStartTried.contains(task.id), let score = task.confidence, score.canRunAlone,
+            guard isToDo(task), task.suggested != true, !autoStartTried.contains(task.id), let score = task.confidence, score.canRunAlone,
                   !score.reason.trimmingCharacters(in: .whitespaces).isEmpty, task.proposed != nil else { return false }
             return DeskOriginRules.check(task.origin, column: .todo, since: task.createdAt) == nil
         }.sorted { $0.createdAt < $1.createdAt }

@@ -694,6 +694,8 @@ enum Companion {
         var check: DeskOriginCheck? = nil
         /// Can an agent prepare it for review without Shelby? Nil until it's scored.
         var confidence: DeskConfidence? = nil
+        /// Found by a Desk check and waiting for Shelby's approval: Start approves it.
+        var suggested: Bool? = nil
     }
 
     /// The Desk's rubric (plans/desk-confidence.md): Yes when an agent can prepare a useful

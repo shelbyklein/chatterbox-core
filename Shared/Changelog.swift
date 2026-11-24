@@ -22,6 +22,7 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-24", changes: [
+            "What the always-on Desk finds now lands on the Desk as To do cards marked \u{201C}Suggested by the Desk\u{201D} (Mac and phone). They never start by themselves: Start approves one, delete it if it isn't needed.",
             "The always-on Desk keeps working when its reporting session (USAA Updates) is in a Studio; before, every new email failed. Outlook conversations are no longer counted twice.",
             "Account Usage in the Mac toolbar shows Gemini's 5-hour and weekly limits under Claude and Codex.",
             "In a Gemini chat on the Mac, the model button under the message box names the Gemini model and effort, not the Claude model the chat used before.",

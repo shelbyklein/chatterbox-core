@@ -1405,6 +1405,11 @@ private struct DeskRequestCard: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             Text("\(source) · \(request.createdAt.formatted(.relative(presentation: .named)))")
                 .font(.caption).foregroundStyle(Color.metadata)
+            if request.suggested == true {
+                Label("Suggested by the Desk \u{00B7} Start to approve", systemImage: "tray.and.arrow.down")
+                    .font(.caption.weight(.semibold)).foregroundStyle(Color.accentColor)
+                    .accessibilityIdentifier("desk-suggested-\(request.id.uuidString)")
+            }
             if let confidence = request.confidence {
                 MobileDeskConfidenceLine(confidence: confidence)
                     .accessibilityIdentifier("desk-confidence-\(request.id.uuidString)")
