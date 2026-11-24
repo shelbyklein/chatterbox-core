@@ -1,5 +1,4 @@
 import AppKit
-import ApplicationServices
 import Foundation
 import SQLite3
 
@@ -375,7 +374,10 @@ struct OutlookReader {
     static let bundleID = "com.microsoft.Outlook"
     /// Tests replace these with stand-ins.
     var available: () -> Bool = { !NSRunningApplication.runningApplications(withBundleIdentifier: OutlookReader.bundleID).isEmpty }
-    var inboxRows: () async throws -> [String] = { try await Task.detached { try OutlookReader.readInbox() }.value }
+    var inboxRows: () async throws -> [String] = {
+        let domain = OutlookReader().domain()
+        return try await Task.detached { try OutlookReader.readThroughHost(domain: domain) }.value
+    }
     var domain: () -> String = { AppPreferences.defaults.string(forKey: "deskMailDomain").flatMap { $0.isEmpty ? nil : $0 } ?? "usarchery.org" }
 
     /// One message-list row, from its accessibility text, which reads like
@@ -396,6 +398,9 @@ struct OutlookReader {
 
         init?(_ text: String) {
             let parts = text.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+            // An expanded conversation's header repeats the messages listed under it, and a
+            // conversation shows your own replies (Folder: Sent): neither is new mail.
+            guard !parts.contains("Expanded"), !parts.contains(where: { $0.hasPrefix("Folder:") && $0 != "Folder: Inbox" }) else { return nil }
             // The time: "2:48 PM", "Replied 11/20/26", "Mon 3:15 PM", "11/5/26"…
             guard let at = parts.firstIndex(where: Self.isWhen), at > 0 else { return nil }
             var head = Array(parts[..<at]).filter { !$0.isEmpty && !Self.flags.contains($0) }
@@ -423,67 +428,29 @@ struct OutlookReader {
         }
     }
 
-    /// The Inbox list's rows, top first. Throws a readable reason when it can't read them.
-    static func readInbox(domain: String = AppPreferences.defaults.string(forKey: "deskMailDomain").flatMap { $0.isEmpty ? nil : $0 } ?? "usarchery.org") throws -> [String] {
-        guard AXIsProcessTrusted() else {
-            askForAccess()
-            throw RuntimeFailure("Allow Chatterbox's background service in System Settings → Privacy & Security → Accessibility, so the Desk can read Outlook.")
+    /// The Inbox list's rows, top first, read by Chatterbox Host (`--read-outlook`), which
+    /// macOS holds responsible for itself: Accessibility is granted to it, not to the service.
+    static func readThroughHost(domain: String) throws -> [String] {
+        guard let binary = HostClient.hostBinary else { throw RuntimeFailure("Chatterbox's background host is missing from the app.") }
+        let out = FileManager.default.temporaryDirectory.appendingPathComponent("chatterbox-outlook-\(UUID().uuidString).json")
+        FileManager.default.createFile(atPath: out.path, contents: nil)
+        defer { try? FileManager.default.removeItem(at: out) }
+        let handle = try FileHandle(forWritingTo: out)
+        let pid = try HostClient.spawnOwnResponsibility(binary, output: handle.fileDescriptor, arguments: ["--read-outlook", domain], reap: false)
+        try? handle.close()
+        var code: Int32 = 0
+        let deadline = Date().addingTimeInterval(30)
+        while waitpid(pid, &code, WNOHANG) == 0 {
+            guard Date() < deadline else { kill(pid, SIGKILL); waitpid(pid, &code, 0); throw RuntimeFailure("Reading Outlook took too long.") }
+            Thread.sleep(forTimeInterval: 0.2)
         }
-        guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first else {
-            throw RuntimeFailure("Open Outlook (or add your \(domain) account to Apple Mail) so the Desk can see new mail.")
+        let data = (try? Data(contentsOf: out)) ?? Data()
+        // The last line is the answer (anything before it is the host's own logging).
+        let line = String(decoding: data, as: UTF8.self).split(separator: "\n").last.map(String.init) ?? ""
+        guard let json = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else {
+            throw RuntimeFailure("Couldn't read Outlook (the host gave no answer).")
         }
-        let ax = AXUIElementCreateApplication(app.processIdentifier)
-        AXUIElementSetMessagingTimeout(ax, 5)
-        let windows = (value(ax, kAXWindowsAttribute) as? [AXUIElement]) ?? []
-        // A main window (it has the folder list) that isn't searching, with the Inbox selected.
-        let inboxes = windows.filter { window in
-            let title = (value(window, kAXTitleAttribute) as? String) ?? ""
-            guard !title.hasPrefix("Searching") else { return false }
-            var budget = 1500
-            guard let folders = find(in: window, budget: &budget, where: { (value($0, kAXRoleAttribute) as? String) == kAXOutlineRole }) else { return false }
-            let selected = (value(folders, kAXSelectedRowsAttribute) as? [AXUIElement]) ?? []
-            return selected.contains { row in
-                let cell = ((value(row, kAXChildrenAttribute) as? [AXUIElement]) ?? []).first ?? row
-                return ((value(cell, kAXDescriptionAttribute) as? String) ?? "").hasPrefix("Inbox")
-            }
-        }
-        guard let window = inboxes.first else {
-            throw RuntimeFailure("Outlook isn't showing the \(domain) Inbox (a search or another folder is open); the Desk reads mail when it is.")
-        }
-        var budget = 4000
-        guard let table = find(in: window, budget: &budget, where: {
-            (value($0, kAXRoleAttribute) as? String) == kAXTableRole && (value($0, kAXDescriptionAttribute) as? String) == "Message List"
-        }) else { throw RuntimeFailure("Couldn't find Outlook's message list.") }
-        let rows = (value(table, kAXRowsAttribute) as? [AXUIElement]) ?? (value(table, kAXChildrenAttribute) as? [AXUIElement]) ?? []
-        return rows.prefix(200).compactMap { row in
-            let cell = ((value(row, kAXChildrenAttribute) as? [AXUIElement]) ?? []).first ?? row
-            return (value(cell, kAXDescriptionAttribute) as? String).flatMap { $0.isEmpty ? nil : $0 }
-        }
-    }
-
-    /// Asks macOS once per launch to list the service under Accessibility.
-    nonisolated(unsafe) private static var asked = false
-    private static func askForAccess() {
-        guard !asked else { return }
-        asked = true
-        _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
-    }
-
-    private static func value(_ element: AXUIElement, _ attribute: String) -> AnyObject? {
-        var result: AnyObject?
-        return AXUIElementCopyAttributeValue(element, attribute as CFString, &result) == .success ? result : nil
-    }
-
-    private static func find(in element: AXUIElement, budget: inout Int, where match: (AXUIElement) -> Bool) -> AXUIElement? {
-        guard budget > 0 else { return nil }
-        budget -= 1
-        if match(element) { return element }
-        // The folder list and toolbar are never the message list: don't descend into rows or cells.
-        let role = value(element, kAXRoleAttribute) as? String
-        guard role != kAXRowRole, role != kAXCellRole else { return nil }
-        for child in (value(element, kAXChildrenAttribute) as? [AXUIElement]) ?? [] {
-            if let found = find(in: child, budget: &budget, where: match) { return found }
-        }
-        return nil
+        if let error = json["error"] as? String { throw RuntimeFailure(error) }
+        return json["rows"] as? [String] ?? []
     }
 }

@@ -116,6 +116,18 @@ final class ModelSelection {
     }
 
     static func apply(_ choice: ModelChoice, effort: String, to session: ChatSession) {
+        // From the Mac app: the agent, model and effort go to the service together (the switch
+        // is confirmed later, so separate steps lost the model; it waits there for a running reply).
+        if session.record.backend != choice.backend, let remote = session.remoteCommand {
+            var body: [String: JSON] = ["backend": .string(choice.backend.rawValue)]
+            switch choice.backend {
+            case .claude: body["model"] = .string(choice.model ?? "default"); body["effort"] = .string(effort)
+            case .codex: body["codexModel"] = choice.model.map(JSON.string) ?? .null; body["codexEffort"] = effort.isEmpty ? .null : .string(effort)
+            case .gemini: body["geminiModel"] = .string(choice.model ?? GeminiModels.shared.defaultModel); body["geminiEffort"] = .string(effort)
+            }
+            remote("settings", .object(body))
+            return
+        }
         if session.record.backend != choice.backend { session.setBackend(choice.backend) }
         // The switch waits for a running reply; the other agent's settings wait with it.
         guard session.record.backend == choice.backend else { return }

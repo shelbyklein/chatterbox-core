@@ -1323,6 +1323,13 @@ struct ChatView: View {
             let chip = name + (effort.map { " \u{00B7} \(Self.effortLabel($0))" } ?? "")
             return (chip, chip)
         }
+        if session.record.backend == .gemini {
+            // "Gemini 3.1 Pro · High": Gemini's own model, never the Claude one the chat had before.
+            let gemini = session.record.gemini
+            let name = GeminiModels.shared.name(gemini?.model)
+            let chip = name + " \u{00B7} " + (gemini?.effort.map { Self.effortLabel($0) } ?? "Default effort")
+            return (chip, chip)
+        }
         let catalog = ClaudeModels.shared
         let current = catalog.info(session.record.model)
         // "Default" points at a real model; name that one rather than the alias.

@@ -180,7 +180,15 @@ final class ChatSession: Identifiable {
             DispatchQueue.main.async { [weak self] in self?.restartClaudeForNewTools() }
         }
         RuntimeHooks.turnEnded(self)
+        if pendingBackend != nil {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, !self.isRunning, let backend = self.pendingBackend else { return }
+                self.setBackend(backend)
+            }
+        }
     }
+    /// An agent picked while a reply ran: switched to once nothing is running.
+    @ObservationIgnored var pendingBackend: Backend?
     @ObservationIgnored var draftAttachments: [Attachment] = [] {didSet{syncRemoteDraft()}}
     /// Typing sends the background service the newest draft at most every 0.3 s, not every keystroke.
     @ObservationIgnored private var remoteDraftScheduled=false
@@ -550,7 +558,11 @@ final class ChatSession: Identifiable {
     func setBackend(_ backend: Backend) {
         guard !isRestartingThread else { return }
         if let remoteCommand {remoteCommand("settings",["backend":.string(backend.rawValue)]);return}
-        guard !isRunning, backend != record.backend else { return }
+        guard backend != record.backend else { pendingBackend = nil; return }
+        // During a reply the switch waits for it to end (turnEnded), with the other agent's
+        // model and effort, which are kept with that agent's settings meanwhile.
+        guard !isRunning else { pendingBackend = backend; return }
+        pendingBackend = nil
         let leaving = record.backend
         if !record.items.isEmpty {
             let last = record.items.last?.id

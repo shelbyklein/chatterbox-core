@@ -21,6 +21,11 @@ enum Changelog {
     }
 
     static let days: [Day] = [
+        Day(id: "2026-11-24", changes: [
+            "In a Gemini chat on the Mac, the model button under the message box names the Gemini model and effort, not the Claude model the chat used before.",
+            "Picking another agent's model while a reply runs now switches once the reply ends, with the model and effort you picked; before, the pick was lost.",
+            "The Desk reads Outlook through Chatterbox Host, which already has Accessibility permission; if Outlook isn't on the Inbox, the Desk's note says what it's showing instead.",
+        ]),
         Day(id: "2026-11-23", changes: [
             "The always-on Desk can read new USA Archery mail from Outlook (when it's open on the Inbox) if the account isn't in Apple Mail; it needs Chatterbox's background service allowed under Privacy & Security → Accessibility.",
             "A sidequest archives itself once its answer goes back to the session it came from (Mac and phone), instead of asking with Archive and Keep Open; send it a message to bring it back.",
