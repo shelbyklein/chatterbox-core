@@ -15,6 +15,8 @@ enum RuntimePaths {
 @MainActor enum RuntimeHooks {
     /// The service owns durable Desk receipts; a lightweight engine fails closed.
     static var sourceCheckComplete: (UUID) -> Bool = { _ in false }
+    /// A run thread starting its next Desk check drops the last one's receipt (DeskStore).
+    static var clearSourceCheck: (UUID) -> Void = { _ in }
     static var note: (String) -> Void = { _ in }
     static var clearSuggestions: (ChatSession) -> Void = { _ in }
     static var turnEnded: (ChatSession) -> Void = { $0.automaticTurn = false }

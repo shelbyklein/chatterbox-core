@@ -22,6 +22,7 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-24", changes: [
+            "An automation keeps one thread: each run (USAA Updates' checks included) continues the last run's thread instead of starting a new sidequest.",
             "On the phone's Desk, dragging up or down anywhere on a card scrolls the list; only a sideways swipe moves the card.",
             "Desk card notes are shorter: the Desk writes one sentence, and a card shows two lines (tap on the phone, or hover on the Mac, for the rest).",
             "What the always-on Desk finds now lands on the Desk as To do cards marked \u{201C}Suggested by the Desk\u{201D} (Mac and phone). They never start by themselves: Start approves one, delete it if it isn't needed.",

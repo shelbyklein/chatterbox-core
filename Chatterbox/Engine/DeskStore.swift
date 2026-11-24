@@ -356,6 +356,11 @@ final class DeskStore {
     }
 
     func sourceCheckResult(_ id: UUID) -> Companion.DeskIngestResult? { sourceChecks[id.uuidString] }
+    /// A run thread starting its next check (one thread per automation): its last receipt goes.
+    func clearSourceCheck(_ id: UUID) {
+        guard sourceChecks.removeValue(forKey: id.uuidString) != nil else { return }
+        try? persist()
+    }
 
     /// Commit individual source findings and their receipt together. Existing identities use
     /// the same de-duplication rules as `desk add`; task threads and their columns stay put.
