@@ -621,11 +621,12 @@ final class DeskModel {
     /// first message is the request's text), or sends the request to `continuing`, a session
     /// already there; on `settings`' agent and model when given (a session continued switches
     /// to them first). It runs in the background.
-    func start(_ request: Companion.DeskRequest, continuing: Companion.DeskThread? = nil, settings: Companion.SettingsRequest? = nil) async {
+    func start(_ request: Companion.DeskRequest, continuing: Companion.DeskThread? = nil, settings: Companion.SettingsRequest? = nil, title: String? = nil) async {
         guard let place = place(for: request), !busy.contains(request.id) else { return }
         busy.insert(request.id)
         defer { busy.remove(request.id) }
         var body: [String: JSON] = ["action": "start", "id": .string(request.id.uuidString)]
+        if let title { body["title"] = .string(title) }
         // The place you saw, proposed or chosen, goes with it.
         if let value = try? JSON.value(place) { body["place"] = value }
         if let continuing {
@@ -1394,9 +1395,13 @@ final class DeskStartStep {
     private(set) var picks = Companion.SettingsRequest()
     private(set) var loaded = false
 
+    /// The task's name, editable before it starts.
+    var title: String
+
     init(request: Companion.DeskRequest, desk: DeskModel) {
         self.request = request
         self.desk = desk
+        title = request.text
     }
 
     var place: Companion.DeskPlace? { desk.place(for: request) }
@@ -1499,7 +1504,8 @@ final class DeskStartStep {
             let open = options.openModel
             settings = .init(backend: options.backend, model: open == nil ? options.model : nil, effort: open == nil ? options.effort : nil, openModel: open)
         }
-        await desk.start(request, continuing: continued, settings: settings)
+        let name = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        await desk.start(request, continuing: continued, settings: settings, title: name.isEmpty || name == request.text ? nil : name)
     }
 }
 
@@ -1529,7 +1535,10 @@ struct DeskStartPopover: View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Start").font(.headline)
-                Text(step.request.text).font(.callout).foregroundStyle(.secondary).lineLimit(2)
+                // Its name: the task and its new thread take it (Shelby, November 24).
+                TextField("Name", text: Binding(get: { step.title }, set: { step.title = $0 }), axis: .vertical)
+                    .textFieldStyle(.roundedBorder).lineLimit(1...3)
+                    .deskFrame("startName")
             }
             if let place = step.place {
                 HStack(spacing: 8) {

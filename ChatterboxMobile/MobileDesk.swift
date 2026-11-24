@@ -1541,6 +1541,8 @@ private struct MobileDeskStartSheet: View {
     @State private var browsing: String?
     @State private var problem: String?
     @State private var changingPlace = false
+    /// The task's name, editable before it starts; nil: as it is.
+    @State private var name: String?
 
     private var placeKey: String { "\(place.kind)|\(place.id?.uuidString ?? place.name)" }
     private var continued: Companion.DeskThread? { threads?.first { $0.id == continuing } }
@@ -1549,7 +1551,10 @@ private struct MobileDeskStartSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    Text(request.text).lineLimit(4)
+                    // Its name: the task and its new thread take it (Shelby, November 24).
+                    TextField("Name", text: Binding(get: { name ?? request.text }, set: { name = $0 }))
+                        .submitLabel(.done)
+                        .accessibilityIdentifier("desk-start-name")
                     if let note = request.note, !note.isEmpty {
                         Text(note).font(.footnote).foregroundStyle(.secondary).lineLimit(3)
                     }
@@ -1735,6 +1740,7 @@ private struct MobileDeskStartSheet: View {
 
     private func begin() {
         var body = Companion.DeskStartRequest()
+        if let renamed = name?.trimmingCharacters(in: .whitespacesAndNewlines), !renamed.isEmpty, renamed != request.text { body.title = renamed }
         // The place shown goes along when it isn't where the Desk proposed.
         if !MobileDeskPlaces.same(request.proposed, place) { body.place = place }
         if let continued {

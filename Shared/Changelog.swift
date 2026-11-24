@@ -22,6 +22,7 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-24", changes: [
+            "Starting a Desk task (Mac and phone), its name is editable at the top of Start: the task and its new thread take the name you give it.",
             "An automation keeps one thread: each run (USAA Updates' checks included) continues the last run's thread instead of starting a new sidequest.",
             "On the phone's Desk, dragging up or down anywhere on a card scrolls the list; only a sideways swipe moves the card.",
             "Desk card notes are shorter: the Desk writes one sentence, and a card shows two lines (tap on the phone, or hover on the Mac, for the rest).",

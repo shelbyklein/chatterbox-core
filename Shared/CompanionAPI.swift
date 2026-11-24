@@ -939,6 +939,8 @@ enum Companion {
         /// Continuing a thread that already carries another open task: that task goes back to
         /// To do (else 409).
         var replace: Bool? = nil
+        /// A new name for the task, given as it starts: the task and its new thread take it.
+        var title: String? = nil
     }
 
     /// GET /v1/desk/<id>/threads?place=<id or "loose"> (socket: action "threads", with `place`):

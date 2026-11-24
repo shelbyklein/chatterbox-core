@@ -708,6 +708,8 @@ final class DeskStore {
     /// model given switch that session first, as Session Settings would.
     func start(_ id: UUID, _ body: Companion.DeskStartRequest = .init(), auto: Bool = false) throws -> ChatSession {
         guard let index = tasks.firstIndex(where: { $0.id == id && isToDo($0) }) else { throw Failure(status: 404, message: "That request is gone.") }
+        // Renamed in Start's step (Shelby, November 24): the task and its thread take the name.
+        if let title = Self.clean(body.title), title != tasks[index].text { tasks[index].text = String(title.prefix(500)) }
         let request = tasks[index].request
         if let chat = body.continueChat {
             guard let session = model?.sessions.first(where: { $0.id == chat }), session.record.archivedAt == nil else {
