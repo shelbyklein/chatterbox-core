@@ -1,4 +1,3 @@
-import AppKit
 import Foundation
 import SQLite3
 
@@ -20,8 +19,8 @@ struct DeskCheckpoints: Codable, Equatable {
     /// When each watcher last finished a check, and its problem if the last one failed.
     var lastChecked: [String: Date] = [:]
     var problems: [String: String] = [:]
-    /// Outlook (read through accessibility): messages already seen, newest last.
-    var outlookSeen: [String]?
+    /// Outlook's scheduled checks: the last time slot queued ("2026-11-24 12").
+    var mailSweepSlot: String?
 
     static var file: URL { RuntimePaths.data.appendingPathComponent("Desk/checkpoints.json") }
     static func load(_ file: URL = Self.file) -> DeskCheckpoints {
@@ -227,9 +226,9 @@ final class MailWatcher {
         do {
             let account: String
             do { account = try Self.accountID(domain: domain(), in: accountsFile) }
-            catch where outlook.available() {
-                // No account in Apple Mail, but Outlook is open: read it instead.
-                return try await checkOutlook(now: now, points: &points)
+            catch {
+                // No account in Apple Mail: Outlook is checked at set times instead.
+                return sweepIfDue(now: now, points: &points)
             }
             if keepMailOpen { Self.keepMailRunning() }
             let index = indexFile, after = points.mailAfterRow
@@ -255,35 +254,41 @@ final class MailWatcher {
         }
     }
 
-    /// Where Outlook's rows come from: the real app, or a test's stand-in.
-    var outlook = OutlookReader()
+    /// Outlook without Apple Mail (Shelby, November 24: reading Outlook's window was blind
+    /// whenever another folder showed, and started a run per email): at set times on weekdays
+    /// (Settings' hours, 9, 12 and 3 by default) the Desk queues one Outlook check, which the
+    /// Desk's run does with computer use in native Outlook, read-only, as the routine says.
+    var sweepHours: () -> [Int] = {
+        let saved = AppPreferences.defaults.string(forKey: "deskMailSweepHours") ?? ""
+        let hours = saved.split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }.filter { (0..<24).contains($0) }
+        return hours.isEmpty ? [9, 12, 15] : hours.sorted()
+    }
 
-    /// Outlook's Inbox, as its window lists it: the first check learns what's there; after
-    /// that, each row received today that wasn't seen becomes an event.
-    private func checkOutlook(now: Date, points: inout DeskCheckpoints) async throws -> Int {
-        let rows = try await outlook.inboxRows()
-        let firstLook = points.outlookSeen == nil
-        var seen = points.outlookSeen ?? []
-        var added = 0
+    /// The latest slot today at or before `now` (weekdays only), e.g. "2026-11-24 12".
+    func dueSlot(_ now: Date) -> (key: String, hour: Int)? {
+        let calendar = Calendar.current
+        guard !calendar.isDateInWeekend(now) else { return nil }
+        let hour = calendar.component(.hour, from: now)
+        guard let slot = sweepHours().last(where: { $0 <= hour }) else { return nil }
         let day = now.formatted(.iso8601.year().month().day())
-        let messages = rows.compactMap(OutlookReader.Message.init)
-        // A conversation whose messages are listed below it is reported through them, not twice.
-        let listed = Set(messages.filter { !$0.conversation }.map(\.topic))
-        for message in messages.reversed() where !(message.conversation && listed.contains(message.topic)) {
-            let key = "\(day)|\(message.key)"
-            guard message.today, !seen.contains(key) else { continue }
-            seen.append(key)
-            guard !firstLook else { continue }
-            let event = DeskEvent(source: "mail", sourceEventID: "outlook:\(ClickUpWatcher.stableHash(key))", kind: "email.new",
-                                  title: message.subject.isEmpty ? "(no subject)" : message.subject,
-                                  detail: "From: \(message.from)\nReceived: today, \(message.time)\n\(message.preview)\n(Read from Outlook's message list: \(message.text))")
-            if inbox.add(event) { added += 1 }
-        }
-        points.outlookSeen = Array(seen.suffix(500))
-        points.lastChecked["mail"] = now
+        return ("\(day) \(slot)", slot)
+    }
+
+    private func sweepIfDue(now: Date, points: inout DeskCheckpoints) -> Int {
         points.problems["mail"] = nil
-        points.save(checkpointsFile)
-        return added
+        defer { points.save(checkpointsFile) }
+        guard let slot = dueSlot(now), points.mailSweepSlot != slot.key else { return 0 }
+        let since = points.lastChecked["mail"].map { "since " + $0.formatted(date: .abbreviated, time: .shortened) } ?? "since the start of yesterday"
+        let event = DeskEvent(source: "mail", sourceEventID: "sweep:\(slot.key)", kind: "email.check",
+            title: "Check the USA Archery Outlook Inbox",
+            detail: """
+                Scheduled Outlook check (\(slot.hour > 12 ? slot.hour - 12 : slot.hour) \(slot.hour < 12 ? "a.m." : "p.m.")): read mail received \(since) in sklein@\(domain()), Focused and Other.
+                Use computer use with native Outlook, read-only, as your standing rules say (don't send, move, flag or mark anything). Go back to Outlook's Inbox when done.
+                Put each actionable request on the Desk as its own card (they're Suggested and wait for Shelby); update the source of cards you already have. Skip newsletters, notifications and Shelby's own replies.
+                """)
+        points.mailSweepSlot = slot.key
+        points.lastChecked["mail"] = now
+        return inbox.add(event) ? 1 : 0
     }
 
     struct Row { var row: Int64; var messageID: Int64; var from: String; var subject: String; var summary: String; var received: Date }
@@ -294,7 +299,7 @@ final class MailWatcher {
             (column(stmt, 0), column(stmt, 1))
         }
         guard let id = rows.first?.0, !id.isEmpty else {
-            throw RuntimeFailure("Open Outlook on its Inbox, or add your \(domain) account to Apple Mail (Mail → Settings → Accounts), so the Desk can see new mail.")
+            throw RuntimeFailure("Add your \(domain) account to Apple Mail (Mail → Settings → Accounts), or the Desk checks Outlook at set times.")
         }
         return id
     }
@@ -363,101 +368,5 @@ final class MailWatcher {
         var rows: [T] = []
         while sqlite3_step(stmt) == SQLITE_ROW { rows.append(row(stmt)) }
         return rows
-    }
-}
-
-
-/// Outlook's message list, read through the Mac's accessibility features: no AI, no mouse,
-/// nothing in Outlook changes. The new Outlook has no scripting, so its window is the way in.
-/// It reads only a main window showing the Inbox of the account at `domain` (not a search or
-/// another folder), and only the rows Outlook has drawn, which always include the newest.
-/// Needs Chatterbox's service allowed under Privacy & Security → Accessibility.
-struct OutlookReader {
-    static let bundleID = "com.microsoft.Outlook"
-    /// Tests replace these with stand-ins.
-    var available: () -> Bool = { !NSRunningApplication.runningApplications(withBundleIdentifier: OutlookReader.bundleID).isEmpty }
-    var inboxRows: () async throws -> [String] = {
-        let domain = OutlookReader().domain()
-        return try await Task.detached { try OutlookReader.readThroughHost(domain: domain) }.value
-    }
-    var domain: () -> String = { AppPreferences.defaults.string(forKey: "deskMailDomain").flatMap { $0.isEmpty ? nil : $0 } ?? "usarchery.org" }
-
-    /// One message-list row, from its accessibility text, which reads like
-    /// "Unread, High priority, 3 messages, Allison Collins, Re: Jerseys, 2:48 PM, Folder: Inbox, Has attachments, Hi Shelby…".
-    struct Message: Equatable {
-        var from: String
-        var subject: String
-        var time: String
-        var preview: String
-        var text: String
-        /// Received today: Outlook shows a time alone ("2:48 PM"), not a day or date.
-        var today: Bool
-        /// A conversation's summary row ("3 messages, …"); its messages may be listed too.
-        var conversation = false
-        /// The subject without "Re:"/"FW:", to match a conversation with its messages.
-        var topic: String { subject.replacingOccurrences(of: #"^((re|fw|fwd):\s*)+"#, with: "", options: [.regularExpression, .caseInsensitive]).lowercased() }
-        /// Stays the same while the row does: sender, subject and time (not read or flag state).
-        var key: String { "\(from)|\(subject)|\(time)" }
-
-        static let flags: Set<String> = ["Unread", "Read", "Expanded", "Collapsed", "High priority", "Low priority", "Flagged", "Pinned",
-                                         "Has attachments", "Replied", "Forwarded", "Meeting request", "Mentioned", "Draft"]
-
-        init?(_ text: String) {
-            let parts = text.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }
-            // An expanded conversation's header repeats the messages listed under it, and a
-            // conversation shows your own replies (Folder: Sent): neither is new mail.
-            guard !parts.contains("Expanded"), !parts.contains(where: { $0.hasPrefix("Folder:") && $0 != "Folder: Inbox" }) else { return nil }
-            // The time: "2:48 PM", "Replied 11/20/26", "Mon 3:15 PM", "11/5/26"…
-            guard let at = parts.firstIndex(where: Self.isWhen), at > 0 else { return nil }
-            var head = Array(parts[..<at]).filter { !$0.isEmpty && !Self.flags.contains($0)
-                && $0.range(of: #"^\d+ unread messages?$"#, options: .regularExpression) == nil }
-            conversation = head.first.map { $0.range(of: #"^\d+ messages?$"#, options: .regularExpression) != nil } ?? false
-            if conversation { head.removeFirst() }
-            guard !head.isEmpty else { return nil }
-            // A conversation lists its senders, then the subject; a message, one sender.
-            if conversation, head.count > 1 {
-                subject = head.removeLast(); from = head.joined(separator: ", ")
-            } else {
-                from = head.removeFirst(); subject = head.joined(separator: ", ")
-            }
-            var when = parts[at]
-            for word in ["Replied", "Forwarded"] where when.hasPrefix(word) { when = String(when.dropFirst(word.count)).trimmingCharacters(in: .whitespaces) }
-            time = when
-            today = when.range(of: #"^\d{1,2}:\d{2}\s?[AP]M$"#, options: .regularExpression) != nil
-            let tail = parts[(at + 1)...].filter { !$0.isEmpty && !$0.hasPrefix("Folder:") && !Self.flags.contains($0) }
-            preview = String(tail.joined(separator: ", ").prefix(1500))
-            self.text = String(text.trimmingCharacters(in: .whitespaces).prefix(2000))
-        }
-
-        static func isWhen(_ part: String) -> Bool {
-            part.range(of: #"^((Replied|Forwarded)\s+)?((Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+)?(\d{1,2}:\d{2}\s?[AP]M|\d{1,2}/\d{1,2}/\d{2,4})$"#,
-                       options: .regularExpression) != nil
-        }
-    }
-
-    /// The Inbox list's rows, top first, read by Chatterbox Host (`--read-outlook`), which
-    /// macOS holds responsible for itself: Accessibility is granted to it, not to the service.
-    static func readThroughHost(domain: String) throws -> [String] {
-        guard let binary = HostClient.hostBinary else { throw RuntimeFailure("Chatterbox's background host is missing from the app.") }
-        let out = FileManager.default.temporaryDirectory.appendingPathComponent("chatterbox-outlook-\(UUID().uuidString).json")
-        FileManager.default.createFile(atPath: out.path, contents: nil)
-        defer { try? FileManager.default.removeItem(at: out) }
-        let handle = try FileHandle(forWritingTo: out)
-        let pid = try HostClient.spawnOwnResponsibility(binary, output: handle.fileDescriptor, arguments: ["--read-outlook", domain], reap: false)
-        try? handle.close()
-        var code: Int32 = 0
-        let deadline = Date().addingTimeInterval(30)
-        while waitpid(pid, &code, WNOHANG) == 0 {
-            guard Date() < deadline else { kill(pid, SIGKILL); waitpid(pid, &code, 0); throw RuntimeFailure("Reading Outlook took too long.") }
-            Thread.sleep(forTimeInterval: 0.2)
-        }
-        let data = (try? Data(contentsOf: out)) ?? Data()
-        // The last line is the answer (anything before it is the host's own logging).
-        let line = String(decoding: data, as: UTF8.self).split(separator: "\n").last.map(String.init) ?? ""
-        guard let json = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else {
-            throw RuntimeFailure("Couldn't read Outlook (the host gave no answer).")
-        }
-        if let error = json["error"] as? String { throw RuntimeFailure(error) }
-        return json["rows"] as? [String] ?? []
     }
 }
