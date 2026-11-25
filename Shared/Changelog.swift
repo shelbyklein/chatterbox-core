@@ -22,6 +22,7 @@ enum Changelog {
 
     static let days: [Day] = [
         Day(id: "2026-11-25", changes: [
+            "Interactive A2UI cards now recover from small JSON typos (like a dropped key or missing closing brace) instead of falling back to raw JSON on Mac and phone.",
             "Under a reply, \u{201C}Made this turn\u{201D} shows the pictures, videos, 3D models and PDFs the agent made while it worked, even when the reply only gave a link or didn't name them; web images, videos and PDFs a reply links are copied and shown too (Mac and phone).",
         ]),
         Day(id: "2026-11-24", changes: [

@@ -366,10 +366,12 @@ enum A2UIParser {
         for (idx, rawLine) in lines.enumerated() {
             let line = rawLine.trimmingCharacters(in: .whitespaces)
             guard !line.isEmpty else { continue }
-            guard let data = line.data(using: .utf8),
-                  let obj = try? JSONSerialization.jsonObject(with: data) else {
+            let isStreamingTail = !closed && idx == lastNonEmptyIndex
+            let parsed: Any? = parseJSONObject(line, balanceEnd: !isStreamingTail)
+                ?? (isStreamingTail ? nil : salvageUpdateComponents(line))
+            guard let obj = parsed else {
                 // While streaming, an unfinished trailing line is expected and ignored until complete.
-                if !closed, idx == lastNonEmptyIndex {
+                if isStreamingTail {
                     hasIncompleteTrailingLine = true
                 }
                 continue
@@ -384,8 +386,10 @@ enum A2UIParser {
         }
 
         // Fallback for pretty-printed multi-line JSON array or single surface object.
-        if validMessages == 0, let data = trimmed.data(using: .utf8),
-           let obj = try? JSONSerialization.jsonObject(with: data) {
+        let fallbackObj: Any? = validMessages == 0
+            ? (parseJSONObject(trimmed, balanceEnd: closed) ?? (closed ? salvageUpdateComponents(trimmed) : nil))
+            : nil
+        if let obj = fallbackObj {
             if let arr = obj as? [[String: Any]] {
                 for dict in arr where builder.apply(message: dict) {
                     validMessages += 1
@@ -405,6 +409,184 @@ enum A2UIParser {
             validMessageCount: validMessages,
             hasIncompleteTrailingLine: hasIncompleteTrailingLine
         )
+    }
+
+    // MARK: Tolerant JSON recovery (LLM typos on large JSONL lines)
+
+    /// Attempts to decode a JSONL line (or whole payload), falling back to repairing common LLM
+    /// typos (a missing property key like `"component":"Text":"..."`, trailing commas, or a
+    /// missing closing brace at EOF). Returns `nil` for non-JSON text.
+    private static func parseJSONObject(_ raw: String, balanceEnd: Bool) -> Any? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.first == "{" || trimmed.first == "[" else { return nil }
+        if let data = trimmed.data(using: .utf8),
+           let obj = try? JSONSerialization.jsonObject(with: data) {
+            return obj
+        }
+        let repaired = repairJSON(trimmed, balanceEnd: balanceEnd)
+        guard repaired != trimmed,
+              let data = repaired.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) else {
+            return nil
+        }
+        return obj
+    }
+
+    /// Fixes frequent single-character LLM JSON slips without corrupting string contents:
+    /// 1. Missing default property key after `"component":"Text":"..."` (and Badge/Button/Icon/Image).
+    /// 2. Trailing commas before `}` or `]`.
+    /// 3. Unclosed (or extra) trailing `}` / `]` at the end of a completed line.
+    private static func repairJSON(_ raw: String, balanceEnd: Bool) -> String {
+        var text = raw
+
+        let missingKeyPatterns: [(type: String, prop: String)] = [
+            ("Text", "text"),
+            ("Badge", "text"),
+            ("Chip", "text"),
+            ("Tag", "text"),
+            ("Button", "label"),
+            ("Icon", "name"),
+            ("Image", "url"),
+        ]
+        for (type, prop) in missingKeyPatterns {
+            let pattern = #""(component|type)"\s*:\s*"(\#(type))"\s*:\s*(?=["\[{0-9tfn-])"#
+            if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) {
+                let ns = text as NSString
+                text = regex.stringByReplacingMatches(
+                    in: text,
+                    range: NSRange(location: 0, length: ns.length),
+                    withTemplate: #""$1":"$2","\#(prop)":"#
+                )
+            }
+        }
+
+        var out: [Character] = []
+        out.reserveCapacity(text.count + 4)
+        var stack: [Character] = []
+        var inString = false
+        var escaped = false
+        let chars = Array(text)
+        var i = 0
+        while i < chars.count {
+            let ch = chars[i]
+            if inString {
+                out.append(ch)
+                if escaped {
+                    escaped = false
+                } else if ch == "\\" {
+                    escaped = true
+                } else if ch == "\"" {
+                    inString = false
+                }
+                i += 1
+                continue
+            }
+            if ch == "\"" {
+                inString = true
+                out.append(ch)
+                i += 1
+                continue
+            }
+            if ch == "," {
+                var j = i + 1
+                while j < chars.count && chars[j].isWhitespace { j += 1 }
+                if j < chars.count && (chars[j] == "}" || chars[j] == "]") {
+                    i += 1
+                    continue
+                }
+            }
+            if ch == "{" || ch == "[" {
+                stack.append(ch)
+                out.append(ch)
+            } else if ch == "}" || ch == "]" {
+                let expected: Character = ch == "}" ? "{" : "["
+                if stack.last == expected {
+                    stack.removeLast()
+                    out.append(ch)
+                } else if balanceEnd && stack.isEmpty {
+                    // Drop stray extra closing delimiter at top level.
+                } else {
+                    out.append(ch)
+                }
+            } else {
+                out.append(ch)
+            }
+            i += 1
+        }
+
+        if balanceEnd && !inString && !stack.isEmpty && stack.count <= 4 {
+            for opener in stack.reversed() {
+                out.append(opener == "{" ? "}" : "]")
+            }
+        }
+        return String(out)
+    }
+
+    /// Last-resort salvage for a damaged `updateComponents` / `surfaceUpdate` line: extracts
+    /// each individual `{...}` component object from `"components":[...]` so one broken entry
+    /// never discards the rest of the surface.
+    private static func salvageUpdateComponents(_ raw: String) -> Any? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.first == "{",
+              let compsKeyRange = trimmed.range(of: #""components"\s*:\s*\["#, options: .regularExpression) else {
+            return nil
+        }
+
+        let header = String(trimmed[..<compsKeyRange.lowerBound])
+        func firstString(named key: String) -> String? {
+            let pattern = #""\#(key)"\s*:\s*"([^"]+)""#
+            guard let regex = try? NSRegularExpression(pattern: pattern),
+                  let match = regex.firstMatch(in: header, range: NSRange(location: 0, length: (header as NSString).length)),
+                  match.numberOfRanges > 1 else { return nil }
+            return (header as NSString).substring(with: match.range(at: 1))
+        }
+
+        let surfaceId = firstString(named: "surfaceId") ?? "main"
+        let rootId = firstString(named: "root")
+
+        let arrayPart = Array(trimmed[compsKeyRange.upperBound...])
+        var components: [[String: Any]] = []
+        var i = 0
+        var inString = false
+        var escaped = false
+        var objDepth = 0
+        var objStart: Int? = nil
+
+        while i < arrayPart.count {
+            let ch = arrayPart[i]
+            if inString {
+                if escaped { escaped = false }
+                else if ch == "\\" { escaped = true }
+                else if ch == "\"" { inString = false }
+                i += 1
+                continue
+            }
+            if ch == "\"" {
+                inString = true
+            } else if ch == "{" {
+                if objDepth == 0 { objStart = i }
+                objDepth += 1
+            } else if ch == "}" {
+                if objDepth > 0 {
+                    objDepth -= 1
+                    if objDepth == 0, let start = objStart {
+                        let slice = String(arrayPart[start...i])
+                        if let dict = parseJSONObject(slice, balanceEnd: true) as? [String: Any] {
+                            components.append(dict)
+                        }
+                        objStart = nil
+                    }
+                }
+            } else if ch == "]" && objDepth == 0 {
+                break
+            }
+            i += 1
+        }
+
+        guard !components.isEmpty else { return nil }
+        var body: [String: Any] = ["surfaceId": surfaceId, "components": components]
+        if let rootId { body["root"] = rootId }
+        return ["updateComponents": body]
     }
 
     // MARK: Internal builder
