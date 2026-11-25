@@ -21,6 +21,9 @@ enum Changelog {
     }
 
     static let days: [Day] = [
+        Day(id: "2026-11-25", changes: [
+            "Under a reply, \u{201C}Made this turn\u{201D} shows the pictures, videos, 3D models and PDFs the agent made while it worked, even when the reply only gave a link or didn't name them; web images, videos and PDFs a reply links are copied and shown too (Mac and phone).",
+        ]),
         Day(id: "2026-11-24", changes: [
             "The always-on Desk checks USA Archery email in Outlook at 9, 12 and 3 on weekdays (Codex reads the Inbox, read-only), instead of reading Outlook's window all day; new requests land on the Desk as Suggested cards.",
             "Starting a Desk task (Mac and phone), its name is editable at the top of Start: the task and its new thread take the name you give it.",

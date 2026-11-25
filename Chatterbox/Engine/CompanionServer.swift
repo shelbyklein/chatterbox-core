@@ -766,11 +766,13 @@ final class CompanionServer {
     /// change to the chat, not by reading every reply for each image the phone loads.
     private var referencedFiles: [UUID: (key: String, files: [UUID: URL])] = [:]
     private func referencedFile(_ id: UUID, in session: ChatSession) -> URL? {
-        let key = "\(session.items.count)|\(session.items.last?.id.uuidString ?? "")|\(session.items.last?.phase.rawValue ?? "")|\(session.workingFolder ?? "")"
+        let key = "\(session.items.count)|\(session.items.last?.id.uuidString ?? "")|\(session.items.last?.phase.rawValue ?? "")|\(session.workingFolder ?? "")|\(session.items.last?.made?.count ?? 0)"
         if let cached = referencedFiles[session.id], cached.key == key { return cached.files[id] }
         var files: [UUID: URL] = [:]
         for item in session.items where item.kind == .assistant {
-            for url in ChatSession.referencedMedia(in: item.text, folder: session.workingFolder) + ChatSession.referencedImages(in: item.text, folder: session.workingFolder) + CompanionDocuments.referenced(in: item.text, folder: session.workingFolder) {
+            let made = ChatSession.madeFiles(item, folder: session.workingFolder)
+            for url in ChatSession.referencedMedia(in: item.text, folder: session.workingFolder) + ChatSession.referencedImages(in: item.text, folder: session.workingFolder) + CompanionDocuments.referenced(in: item.text, folder: session.workingFolder)
+                + made.images + made.media + made.documents {
                 files[ChatSession.mediaID(url.path)] = url
             }
         }
@@ -1458,6 +1460,16 @@ enum CompanionMapper {
                 .init(id: ChatSession.mediaID($0.path), name: $0.lastPathComponent, mediaType: "image/" + $0.pathExtension.lowercased(), isImage: true,
                       revision: fileRevision($0))
             }
+            // What the turn made that the reply didn't name (TurnOutputs), the same way.
+            let made = ChatSession.madeFiles(item, folder: folder)
+            mapped.attachments += made.images.map {
+                .init(id: ChatSession.mediaID($0.path), name: $0.lastPathComponent, mediaType: "image/" + $0.pathExtension.lowercased(), isImage: true,
+                      revision: fileRevision($0))
+            }
+            mapped.attachments += made.media.map {
+                .init(id: ChatSession.mediaID($0.path), name: $0.lastPathComponent, mediaType: "application/octet-stream", isImage: false)
+            }
+            mapped.attachments += made.documents.map { CompanionDocuments.metadata(id: ChatSession.mediaID($0.path), url: $0) }
         }
         var documents: [(URL, UUID)] = []
         for attachment in item.attachments ?? [] where attachment.url.pathExtension.lowercased() == "pdf" {

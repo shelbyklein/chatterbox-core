@@ -124,6 +124,11 @@ struct ItemView: View {
                         if let kind = MediaKind.of(url) { MediaPreview(url: url, kind: kind).frame(maxWidth: 640, alignment: .leading) }
                     }
                     ReplyImages(urls: ChatSession.referencedImages(in: item.text, folder: chatFolder))
+                    // What the turn made that the reply didn't name (TurnOutputs).
+                    let made = ChatSession.madeFiles(item, folder: chatFolder)
+                    if !made.images.isEmpty || !made.media.isEmpty || !made.documents.isEmpty {
+                        MadeThisTurn(images: made.images, media: made.media, documents: made.documents)
+                    }
                 }
                 if item.phase == .final {
                     HStack(spacing: 12) {

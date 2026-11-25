@@ -48,7 +48,7 @@ extension ChatSession {
             case .image, .user:
                 thumbnailLookupURL = item.attachments?.map(\.url).last(where: usable)
             case .assistant where item.phase == .final:
-                thumbnailLookupURL = Self.referencedImages(in: item.text, folder: workingFolder).last(where: usable)
+                thumbnailLookupURL = (Self.referencedImages(in: item.text, folder: workingFolder) + Self.madeFiles(item, folder: workingFolder).images).last(where: usable)
             default: break
             }
             if thumbnailLookupURL != nil { break }
@@ -87,5 +87,178 @@ enum ThumbnailMemory {
         guard paths[chat.uuidString] != url.path else { return }
         paths[chat.uuidString] = url.path
         try? JSONEncoder().encode(paths).write(to: file, options: .atomic)
+    }
+}
+
+
+/// What a turn made, shown under its reply even when the reply only links it or doesn't name
+/// it (Shelby, November 24: "some turns just provide links, no images, video, pdf"). Read by
+/// the service as a turn ends: media changed in the session's folder (and Codex's generated
+/// images) while it ran, and web images, videos and PDFs the reply links, copied locally.
+enum TurnOutputs {
+    static let limit = 12
+    /// Folders never looked in: build products, dependencies, caches.
+    static let skipped: Set<String> = ["node_modules", "build", "DerivedData", "Pods", ".build", "Library", "Caches", "venv", ".venv", "__pycache__", "vendor", "Reply Media"]
+
+    /// One spelling per file ("/private/var/…" and "/var/…" are the same), to compare paths.
+    nonisolated static func normal(_ path: String) -> String { (path as NSString).resolvingSymlinksInPath }
+    static let documentExtensions: Set<String> = ["pdf"]
+
+    /// Whether a file is something to show: a picture, GIF, video, animation, 3D model or PDF.
+    nonisolated static func shows(_ path: String) -> Bool {
+        let ext = (path as NSString).pathExtension.lowercased()
+        if MediaKind.isStillImage(path) || documentExtensions.contains(ext) || ext == "gif" || ext == "lottie" || ext == "usdz" { return true }
+        return MediaKind.videoExtensions.contains(ext) || MediaKind.modelExtensions.contains(ext)
+    }
+
+    /// Media files in `folders` changed at or after `since`, oldest first. Bounded: a few levels
+    /// deep (one in the home folder), skipping hidden and build folders, 40,000 entries at most.
+    nonisolated static func scan(folders: [String], since: Date) -> [(path: String, date: Date)] {
+        let fm = FileManager.default
+        let home = NSHomeDirectory()
+        var found: [(path: String, date: Date)] = []
+        var seen = Set<String>()
+        for folder in folders {
+            let root = URL(fileURLWithPath: folder).resolvingSymlinksInPath()
+            guard root.path != "/", fm.fileExists(atPath: root.path) else { continue }
+            let depth = root.path == home ? 1 : 4
+            guard let walker = fm.enumerator(at: root, includingPropertiesForKeys: [.contentModificationDateKey, .isDirectoryKey, .fileSizeKey],
+                                             options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { continue }
+            var visited = 0
+            while let url = walker.nextObject() as? URL {
+                visited += 1
+                if visited > 40_000 { break }
+                let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isDirectoryKey, .fileSizeKey])
+                if values?.isDirectory == true {
+                    if walker.level >= depth || skipped.contains(url.lastPathComponent) { walker.skipDescendants() }
+                    continue
+                }
+                guard shows(url.path), let date = values?.contentModificationDate, date >= since.addingTimeInterval(-2),
+                      (values?.fileSize ?? 0) > 0, seen.insert(normal(url.path)).inserted else { continue }
+                found.append((normal(url.path), date))
+            }
+        }
+        return found.sorted { $0.date < $1.date }
+    }
+
+    /// Of what the scan found, what this turn made: every file whose name the turn's rows
+    /// mention ("Writing banner.png", a command that saved it), every image Codex generated,
+    /// and the rest only when there are a few (a folder others are busy in shouldn't flood it).
+    nonisolated static func choose(_ found: [(path: String, date: Date)], mentioned: String, generated: String?) -> [String] {
+        let named = found.filter { item in
+            (generated.map { item.path.hasPrefix(normal($0)) } ?? false) || mentioned.contains((item.path as NSString).lastPathComponent)
+        }.map(\.path)
+        let rest = found.map(\.path).filter { !named.contains($0) }
+        return Array((named + (rest.count <= 3 ? rest : [])).suffix(limit))
+    }
+
+    // MARK: Web media
+
+    static let webExtensions: Set<String> = MediaKind.stillImageExtensions.union(MediaKind.videoExtensions).union(["gif", "pdf"])
+
+    /// Web links in a reply that are pictures, videos or PDFs: by their file name, or written
+    /// as a Markdown image. At most six.
+    nonisolated static func webMedia(in text: String) -> [URL] {
+        var urls: [URL] = []
+        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else { return [] }
+        let source = text as NSString
+        let images = (try? NSRegularExpression(pattern: #"!\[[^\]]*\]\((https?://[^)\s]+)\)"#))?
+            .matches(in: text, range: NSRange(location: 0, length: source.length))
+            .compactMap { URL(string: source.substring(with: $0.range(at: 1))) } ?? []
+        for url in images where !urls.contains(url) { urls.append(url) }
+        for match in detector.matches(in: text, range: NSRange(location: 0, length: source.length)) {
+            guard let url = match.url, ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+                  webExtensions.contains(url.pathExtension.lowercased()), !urls.contains(url) else { continue }
+            urls.append(url)
+        }
+        return Array(urls.prefix(6))
+    }
+
+    static var cache: URL { RuntimePaths.data.appendingPathComponent("Reply Media", isDirectory: true) }
+
+    /// A web file's copy is named by its address: "<hash>.<extension>".
+    nonisolated static func digest(_ url: URL) -> String {
+        SHA256.hash(data: Data(url.absoluteString.utf8)).prefix(10).map { String(format: "%02x", $0) }.joined()
+    }
+
+    nonisolated static func fileExtension(_ url: URL, type: String) -> String {
+        let ext = url.pathExtension.lowercased()
+        if webExtensions.contains(ext) { return ext }
+        if type == "application/pdf" { return "pdf" }
+        if type.hasPrefix("video/") { return type == "video/quicktime" ? "mov" : "mp4" }
+        let image = String(type.dropFirst("image/".count)).replacingOccurrences(of: "jpeg", with: "jpg")
+        return webExtensions.contains(image) ? image : "png"
+    }
+
+    /// Local copies of `urls` (kept ones reused). Pictures, videos and PDFs only, 100 MB at most each.
+    nonisolated static func download(_ urls: [URL], folder: URL) async -> [String] {
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        var copies: [String] = []
+        let kept = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+        for url in urls {
+            let key = digest(url)
+            if let copy = kept.first(where: { $0.hasPrefix(key + ".") }) { copies.append(normal(folder.appendingPathComponent(copy).path)); continue }
+            var request = URLRequest(url: url, timeoutInterval: 30)
+            request.setValue("Chatterbox", forHTTPHeaderField: "User-Agent")
+            guard let (file, response) = try? await URLSession.shared.download(for: request),
+                  let http = response as? HTTPURLResponse, http.statusCode == 200 else { continue }
+            let type = (http.mimeType ?? "").lowercased()
+            let size = (try? file.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+            guard type.hasPrefix("image/") || type.hasPrefix("video/") || type == "application/pdf", size > 0, size <= 100 * 1024 * 1024 else {
+                try? FileManager.default.removeItem(at: file); continue
+            }
+            let target = folder.appendingPathComponent(key + "." + fileExtension(url, type: type))
+            try? FileManager.default.removeItem(at: target)
+            guard (try? FileManager.default.moveItem(at: file, to: target)) != nil else { continue }
+            copies.append(normal(target.path))
+        }
+        return copies
+    }
+}
+
+extension ChatSession {
+    /// As a turn ends: what it made, on its final reply (TurnOutputs). Runs off the main thread.
+    func noteTurnOutputs(since started: Date?) {
+        guard let started,
+              let index = record.items.lastIndex(where: { $0.kind == .assistant && $0.phase == .final }),
+              record.items[index...].allSatisfy({ $0.kind != .user || $0.steered }),
+              (record.items[index].timestamp ?? .distantPast) >= started else { return }
+        let final = record.items[index]
+        let turn = record.items.filter { ($0.timestamp ?? .distantPast) >= started }
+        let mentioned = turn.map { $0.text + " " + ($0.detail ?? "") }.joined(separator: "\n")
+        var folders = [workingFolder].compactMap { $0 }
+        var generated: String?
+        if let thread = record.codex?.threadId, !thread.isEmpty {
+            generated = NSHomeDirectory() + "/.codex/generated_images/" + thread
+            folders.append(generated!)
+        }
+        let named = Set(PathLinks.referencedFiles(in: final.text, folder: workingFolder).map(TurnOutputs.normal))
+        let links = TurnOutputs.webMedia(in: final.text)
+        let cache = TurnOutputs.cache
+        Task { @MainActor [weak self] in
+            let local = await Task.detached(priority: .utility) {
+                TurnOutputs.choose(TurnOutputs.scan(folders: folders, since: started), mentioned: mentioned, generated: generated)
+            }.value
+            let web = links.isEmpty ? [] : await TurnOutputs.download(links, folder: cache)
+            var made: [String] = []
+            for path in local where !named.contains(path) && !made.contains(path) { made.append(path) }
+            for path in web where !made.contains(path) { made.append(path) }
+            guard !made.isEmpty, let self, let at = self.record.items.firstIndex(where: { $0.id == final.id }) else { return }
+            self.record.items[at].made = Array(made.prefix(TurnOutputs.limit))
+            self.onChange?(self)
+        }
+    }
+
+    /// A reply's made files that still exist and it doesn't already name: images, playable
+    /// media and documents, to show under it.
+    static func madeFiles(_ item: DisplayItem, folder: String?) -> (images: [URL], media: [URL], documents: [URL]) {
+        guard let made = item.made, !made.isEmpty else { return ([], [], []) }
+        let named = Set(PathLinks.referencedFiles(in: item.text, folder: folder).map(TurnOutputs.normal))
+        let fm = FileManager.default
+        var seen = Set<String>()
+        let urls = made.map(TurnOutputs.normal).filter { !named.contains($0) && fm.fileExists(atPath: $0) && seen.insert($0).inserted }.map { URL(fileURLWithPath: $0) }
+        return (urls.filter { MediaKind.isStillImage($0.path) },
+                urls.filter { !MediaKind.isStillImage($0.path) && $0.pathExtension.lowercased() != "pdf" && MediaKind.of($0) != nil },
+                urls.filter { $0.pathExtension.lowercased() == "pdf" })
     }
 }

@@ -119,6 +119,9 @@ struct DisplayItem: Identifiable, Codable, Equatable {
     var automatic: Bool?
     /// In the chat a sidequest (or a work thread) came from: the one this row starts or brings back.
     var sidequest: UUID?
+    /// On a final reply: media its turn made or linked (TurnOutputs), shown under it even
+    /// when the reply doesn't name them. Web media are local copies in the Reply Media cache.
+    var made: [String]?
 
     enum ApprovalStyle: String, Codable { case plan }
 }

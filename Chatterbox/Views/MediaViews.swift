@@ -279,3 +279,36 @@ private struct USDZPreview: View {
 
 /// Why a preview couldn't be made, said to the user.
 private struct PreviewProblem: Error { let message: String }
+
+
+/// Under a reply: what its turn made or linked that the reply didn't name (TurnOutputs):
+/// pictures, playable media and PDFs, each opening as named ones do.
+struct MadeThisTurn: View {
+    let images: [URL]
+    let media: [URL]
+    let documents: [URL]
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("Made this turn", systemImage: "sparkles")
+                .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            ReplyImages(urls: images)
+            ForEach(media, id: \.self) { url in
+                if let kind = MediaKind.of(url) { MediaPreview(url: url, kind: kind).frame(maxWidth: 640, alignment: .leading) }
+            }
+            if !documents.isEmpty {
+                HStack(spacing: 8) {
+                    ForEach(documents, id: \.self) { url in
+                        Button { openURL(url) } label: { Label(url.lastPathComponent, systemImage: "doc.richtext").lineLimit(1) }
+                            .buttonStyle(.bordered)
+                            .help("Open \(url.lastPathComponent)")
+                    }
+                }
+            }
+        }
+        .padding(.top, 2)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("made-this-turn")
+    }
+}

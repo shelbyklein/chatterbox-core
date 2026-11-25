@@ -56,6 +56,8 @@ final class ChatSession: Identifiable {
                     record.turnCompletions = Array(((record.turnCompletions ?? []) + [event]).suffix(500))
                     // A PC chat's new files come back to the Mac (a PC errand's, before its answer).
                     if !isPCErrand { mirrorPCWorkspace(changedSince: record.turnStartedAt) }
+                    // What the turn made, shown under its reply (TurnOutputs).
+                    noteTurnOutputs(since: record.turnStartedAt)
                 }
                 noteTurnDuration()
             }
